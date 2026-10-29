@@ -18,6 +18,11 @@ const (
 
 var errRateLimited = errors.New("attested: a verification was attempted within the reverify window")
 
+type attempt struct {
+	done chan struct{}
+	err  error
+}
+
 func (g *Gate[K]) Reverify(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, reverifyTimeout)
 	defer cancel()
@@ -25,26 +30,40 @@ func (g *Gate[K]) Reverify(ctx context.Context) error {
 }
 
 func (g *Gate[K]) refresh(ctx context.Context, window time.Duration) error {
-	g.mu.Lock()
-	limited := !g.verifying && g.now().Sub(g.lastAttempt) < window
-	g.mu.Unlock()
-	if limited {
-		return errRateLimited
+	if err := ctx.Err(); err != nil {
+		return err
 	}
-	_, err := g.flight.Do(ctx, "verify", backgroundRefreshTimeout, func(ctx context.Context) (struct{}, error) {
-		g.mu.Lock()
-		g.verifying, g.lastAttempt = true, g.now()
-		g.mu.Unlock()
-		err := g.verifyOnce(ctx)
-		if err != nil {
-			g.failed(err)
+	g.mu.Lock()
+	a := g.attempt
+	if a == nil {
+		if g.now().Sub(g.lastAttempt) < window {
+			g.mu.Unlock()
+			return errRateLimited
 		}
-		g.mu.Lock()
-		g.verifying = false
-		g.mu.Unlock()
-		return struct{}{}, err
-	})
-	return err
+		a = &attempt{done: make(chan struct{})}
+		g.attempt, g.lastAttempt = a, g.now()
+		go g.verify(context.WithoutCancel(ctx), a)
+	}
+	g.mu.Unlock()
+	select {
+	case <-a.done:
+		return a.err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (g *Gate[K]) verify(ctx context.Context, a *attempt) {
+	ctx, cancel := context.WithTimeout(ctx, backgroundRefreshTimeout)
+	defer cancel()
+	a.err = g.verifyOnce(ctx)
+	if a.err != nil {
+		g.failed(a.err)
+	}
+	g.mu.Lock()
+	g.attempt = nil
+	g.mu.Unlock()
+	close(a.done)
 }
 
 func (g *Gate[K]) earliestExpiry() (time.Time, bool) {

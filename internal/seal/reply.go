@@ -202,7 +202,6 @@ func (s *Stream) emit(data []byte, final bool) {
 	if s.err != nil {
 		return
 	}
-	s.last = time.Now()
 	frame := s.frames.Seal(data, final)
 	if s.unsentSalt != nil {
 		frame, s.unsentSalt = append(s.unsentSalt, frame...), nil
@@ -212,6 +211,7 @@ func (s *Stream) emit(data []byte, final bool) {
 		return
 	}
 	s.flush()
+	s.last = time.Now()
 }
 
 type Reply struct {

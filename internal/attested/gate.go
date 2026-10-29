@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"morse/backend/internal/attestation"
-	"morse/backend/internal/flight"
 )
 
 const (
@@ -120,14 +119,13 @@ type Gate[K Key] struct {
 
 	anchor atomic.Pointer[Anchor[K]]
 	wake   chan struct{}
-	flight flight.Group[struct{}]
 
 	mu          sync.Mutex
 	endpoints   map[string]endpoint[K]
 	serve       attestation.Serve
 	round       uint64
 	generation  uint64
-	verifying   bool
+	attempt     *attempt
 	lastAttempt time.Time
 }
 
