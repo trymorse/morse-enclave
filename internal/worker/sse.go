@@ -1,0 +1,218 @@
+package worker
+
+import (
+	"bytes"
+	"cmp"
+	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"math/rand/v2"
+	"net/http"
+	"slices"
+	"strings"
+	"sync"
+	"time"
+
+	"morse/backend/internal/apierr"
+	"morse/backend/internal/chat"
+)
+
+type eventStream struct {
+	w       http.ResponseWriter
+	rc      *http.ResponseController
+	mu      sync.Mutex
+	started bool
+	err     error
+}
+
+func (s *eventStream) start() {
+	if s.started {
+		return
+	}
+	s.started = true
+	s.w.Header().Set("Content-Type", eventStreamType)
+	setEventStreamHeaders(s.w.Header())
+	s.w.WriteHeader(http.StatusOK)
+}
+
+func setEventStreamHeaders(h http.Header) {
+	h.Set("Cache-Control", "no-cache")
+	h.Set("X-Accel-Buffering", "no")
+}
+
+func (s *eventStream) event(data io.WriterTo) error {
+	return s.write(func(w io.Writer) error { return writeEvent(w, data) })
+}
+
+func commentOf(text string) func(io.Writer) error {
+	return func(w io.Writer) error {
+		_, err := io.WriteString(w, ": "+text+"\n\n")
+		return err
+	}
+}
+
+func (s *eventStream) write(to func(io.Writer) error) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.writeLocked(to)
+}
+
+func (s *eventStream) writeLocked(to func(io.Writer) error) error {
+	if s.err != nil {
+		return s.err
+	}
+	s.start()
+	s.err = to(s.w)
+	return s.flush()
+}
+
+// Cloudflare cuts a response that sends nothing for 100 seconds.
+const keepalive = 25 * time.Second
+
+const eventStreamType = "text/event-stream"
+
+func (s *eventStream) keepAlive(ctx context.Context, every time.Duration) (stop func()) {
+	done := make(chan struct{})
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		tick := time.NewTicker(every)
+		defer tick.Stop()
+		for {
+			select {
+			case <-tick.C:
+				s.mu.Lock()
+				if s.started {
+					s.writeLocked(commentOf("keepalive"))
+				}
+				s.mu.Unlock()
+			case <-done:
+				return
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	return func() {
+		close(done)
+		<-stopped
+	}
+}
+
+func (s *eventStream) flush() error {
+	if s.err == nil {
+		s.err = s.rc.Flush()
+	}
+	return s.err
+}
+
+func writeEvent(w io.Writer, data io.WriterTo) error {
+	if _, err := io.WriteString(w, "data: "); err != nil {
+		return err
+	}
+	if _, err := data.WriteTo(w); err != nil {
+		return err
+	}
+	_, err := io.WriteString(w, "\n\n")
+	return err
+}
+
+type sseWriter struct {
+	eventStream
+	delivered  int
+	visible    int
+	shown      bool
+	finish     chat.Finish
+	transcript *chat.Transcript
+	clock      *thinkingClock
+}
+
+func (s *sseWriter) emit(c chat.Chunk) error {
+	d := c.Delta()
+	s.clock.observe(d)
+	finish, shown := cmp.Or(d.Finish, s.finish), s.shown || d.Shown()
+	if unanswered(finish, shown) {
+		c = c.MarkUnanswered()
+	}
+	var object bytes.Buffer
+	c.WriteTo(&object)
+	err := s.event(bytes.NewReader(padObject(object.Bytes(), filler())))
+	if err == nil {
+		s.delivered++
+		s.visible += d.VisibleBytes()
+		s.finish, s.shown = finish, shown
+		s.transcript.Add(d)
+	}
+	return err
+}
+
+func unanswered(finish chat.Finish, shown bool) bool { return finish == chat.FinishLength && !shown }
+
+var errEmptyReply = errors.New("worker: the stream ended having shown nothing")
+
+func (s *sseWriter) empty() bool {
+	return !s.shown && s.finish != chat.FinishLength && s.finish != chat.FinishContentFilter
+}
+
+const (
+	MinFiller      = 16
+	MaxFiller      = 64
+	fillerAlphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+)
+
+func filler() string {
+	b := make([]byte, MinFiller+rand.IntN(MaxFiller-MinFiller+1))
+	for i := range b {
+		b[i] = fillerAlphabet[rand.IntN(len(fillerAlphabet))]
+	}
+	return string(b)
+}
+
+func padObject(object []byte, filler string) []byte {
+	body := bytes.TrimRight(object, " \t\r\n")
+	if !bytes.HasSuffix(body, []byte("}")) {
+		return object
+	}
+	if !json.Valid(object) || hasPadding(object) {
+		return object
+	}
+	value, _ := json.Marshal(filler)
+	open := body[:len(body)-1]
+	padded := make([]byte, 0, len(object)+len(value)+len(`,"obfuscation":`))
+	padded = append(padded, open...)
+	if !bytes.HasSuffix(bytes.TrimRight(open, " \t\r\n"), []byte("{")) {
+		padded = append(padded, ',')
+	}
+	padded = append(padded, `"obfuscation":`...)
+	padded = append(padded, value...)
+	padded = append(padded, '}')
+	padded = append(padded, object[len(body):]...)
+	return padded
+}
+
+var paddingKeys = []string{`"obfuscation"`, `"p"`}
+
+// Only a chunk relayed in its upstream envelope can already carry padding, so a byte scan for the
+// quoted keys spares the proxy's own chunks the parse into a map.
+func hasPadding(object []byte) bool {
+	if !slices.ContainsFunc(paddingKeys, func(key string) bool { return bytes.Contains(object, []byte(key)) }) {
+		return false
+	}
+	var topLevel map[string]json.RawMessage
+	if json.Unmarshal(object, &topLevel) != nil {
+		return true
+	}
+	return slices.ContainsFunc(paddingKeys, func(key string) bool {
+		_, ok := topLevel[key[1:len(key)-1]]
+		return ok
+	})
+}
+
+func (s *sseWriter) done() {
+	s.event(strings.NewReader("[DONE]"))
+}
+
+func (s *sseWriter) errorEvent() {
+	s.event(bytes.NewReader(apierr.ErrUpstream.Envelope()))
+}

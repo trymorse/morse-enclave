@@ -1,0 +1,158 @@
+{
+  "gateway": {
+    "td_attributes": "0000001000000000",
+    "app_id": "f550fdfb4eb8ad787c1bcd423f091cbb4a4431ae",
+    "key_provider_ids": [
+      "3059301306072a8648ce3d020106082a8648ce3d03010703420004394aaed2c745e6a457cb835f7f47423f57ff3ead71b92abff6bdc14d905b319f2e13961b42c50740dae4498d9c51dd7a2e227660c9e5c504083cda06b6c11682"
+    ],
+    "tcb_statuses": [
+      "UpToDate",
+      "OutOfDate"
+    ],
+    "composes": [
+      {
+        "name": "dstack-0.5.4",
+        "compose_hash": "4abb5557f6e38db3ffc918949ddc47698ad1a496f8f95306a0072d1cb1bfe28a"
+      },
+      {
+        "name": "dstack-0.5.4-org-binding",
+        "compose_hash": "56abfa133f76ca0d586565f10ea1b126b7a55bde54462398a2925102474d9480"
+      },
+      {
+        "name": "dstack-0.5.4-d802e92a",
+        "compose_hash": "d802e92ad775669daeb3a310c05f4baa33946654736f1840689d47440cd6c553"
+      },
+      {
+        "name": "dstack-0.5.4-56444a2f",
+        "compose_hash": "56444a2f3f5a709d2067e0150cfe9442345fbde2dd0e1998e705485a029d3865"
+      },
+      {
+        "name": "dstack-0.5.4-9d93365e",
+        "compose_hash": "9d93365e75d64d6d59fbc0ea9999fba6398524e26de905519325a7a246b71daa"
+      },
+      {
+        "name": "dstack-0.5.12-f571e5da",
+        "compose_hash": "f571e5dafe8f96baf116a271b4be9cba228b447dd6ebe502bbda81ede7bcc7ce"
+      }
+    ],
+    "images": [
+      {
+        "name": "dstack-0.5.4",
+        "os_image_hash": "da9a3d5cc196a1a76d953fb27069be428ddf60a1ce10b0534c3cf968d3053fde",
+        "mrtd": "f06dfda6dce1cf904d4e2bab1dc370634cf95cefa2ceb2de2eee127c9382698090d7a4a13e14c536ec6c9c3c8fa87077",
+        "rtmr0": "fb14dc139f33d6fcf474bc8332cac001259fb31cfbcb6b34d4ceeb552a2c4466884a0cbde45ad98a05c5c060c23ad65a",
+        "rtmr1": "a7b523278d4f914ee8df0ec80cd1c3d498cbf1152b0c5eaf65bad9425072874a3fcf891e8b01713d3d9937e3e0d26c15",
+        "rtmr2": "24847f5c5a2360d030bc4f7b8577ce32e87c4d051452c937e91220cab69542daef83433947c492b9c201182fc9769bbe"
+      },
+      {
+        "name": "dstack-0.5.12",
+        "os_image_hash": "8db40cb23008d6213668b5816702d100b37b859a8a5bfd18d938ae3a1b3715bd",
+        "mrtd": "7fe60787222bd394cb516abca2435f22f035ab2cc9c0a4b4b3b148e46297f3d931a237b72f359052c6e657d8c1409173",
+        "rtmr0": "d090162bff4b1d1dc74dc59dc548838efc4b811b173da8536efa8e2a9c045da70ee092301293ad90afebee448bcd0211",
+        "rtmr1": "4ae609807c765916a31d724786ed74bcb97e168a9d937b04936aeef2015c907eba5ac352c6bcd749c246fd62ffb659ec",
+        "rtmr2": "764489f277a8540189761e72b4238ba36d4d647e11bd958d8ab5522af2a4867b0ff63e06b0c4967f1857236244040a5d"
+      }
+    ],
+    "instances": [
+      "d0228b7254e56a494cade16b8b54718dace3e2b3",
+      "441356aee50f346ed6c6bcabf3c7c2595c7d945e",
+      "96dd4d4c9b542fbec02dc92638e1cb07c5bc4c90",
+      "b30a74dde19ea35dce0aaa9dac2c56022d44e01c",
+      "f349a9428c8fac84c396db06ef30339c5e9ffc25",
+      "b078539bdf9290c42aea573d71bda2f8002d2a0b",
+      "5fbc42b4f2545cd2b723458062ec5f9327d6b0d3",
+      "3b2b121ed41fc381f282b1cd774340eb9ac94536",
+      "d707c38e0173391632fe41d8a413edb1f1171794",
+      "fe76cf4b26ba48d7547a3a6b905efe3fd5568647",
+      "bf4471526ad72a8c609cea5af50865b6bb16cdf9",
+      "9a05fa63d5ac80a6bb4b82d16c9aacea45b1b053",
+      "78d61c743dc32893c92f04d709e1fcf530cc6ee7",
+      "59645f7884f45cd66bc093ecee63db71b1aa2df0",
+      "105f9206f894eec38509660d0ea9f999506fb1cc",
+      "91ef68bbf2fd59b55969e5126fc0e34a40031e48",
+      "db9c7ea9a6b4ba5a4b9351a30509c02e42d65bbb",
+      "76958f3e352374f9cd424e5fcf383923f8789cb9",
+      "cb6bb356dfe1357efa0e22d8c89bb865b05f791b",
+      "c9ea083792752f6ac92820bf7010351e556da8f6",
+      "0c39ab2ae084bcf9f981c07a052083b0e6a67e72",
+      "02d8abc31432a11f5eb2f9f3c5f3b4e1480e0238",
+      "b257861b4fff542295f5d708cf24430718b52e3b",
+      "043a5db703230618793e4f4de9e66ff42c4814b5"
+    ]
+  },
+  "model": {
+    "td_attributes": "0000001000000000",
+    "app_id": "2c0a0c96cb6dbd659bf1446e2f3fce58172ff91b",
+    "key_provider_ids": [
+      "3059301306072a8648ce3d020106082a8648ce3d03010703420004228f800590a10442cba9d0e6adb2fa9f195eea9e75e23dd35990d52b59dda2415a63674c38adebde4ffd4d4b265bf818985933820c8053cee3ce29b5fb0fbcbc",
+      "3059301306072a8648ce3d020106082a8648ce3d03010703420004394aaed2c745e6a457cb835f7f47423f57ff3ead71b92abff6bdc14d905b319f2e13961b42c50740dae4498d9c51dd7a2e227660c9e5c504083cda06b6c11682"
+    ],
+    "tcb_statuses": [
+      "UpToDate",
+      "OutOfDate"
+    ],
+    "composes": [
+      {
+        "name": "dstack-nvidia-0.5.5",
+        "compose_hash": "d4c89033fb55cdac9db00c775fbbbeff6319fba7249344b2dca99b23ff048479"
+      },
+      {
+        "name": "dstack-nvidia-0.5.11",
+        "compose_hash": "55db164f4f8c6a837c2217c601c21bba4758f908536a6cd5b2978550205a9179"
+      },
+      {
+        "name": "dstack-nvidia-0.5.11-gpu04",
+        "compose_hash": "c82b1a2eaf6996154a5f39ae621643f034b082d5e51edd3d2ba6009273881d86"
+      },
+      {
+        "name": "dstack-nvidia-0.5.12-gpu13",
+        "compose_hash": "5e513dbd72e1c0f291f748ad06d4dbc1df55659869e649376213ac7b3c9d2e29"
+      },
+      {
+        "name": "dstack-nvidia-0.5.12-a0e3c6f4",
+        "compose_hash": "a0e3c6f4f21a60ea3f5c96bc7ef319b03a184ca2049605399275fbcea74e8c5f"
+      },
+      {
+        "name": "dstack-nvidia-0.5.11-945bcfad",
+        "compose_hash": "945bcfade2aec53a19da7638774a99caea11395ec03e572a13357a0c63b152b4"
+      },
+      {
+        "name": "dstack-nvidia-0.5.12-5f7ebd85",
+        "compose_hash": "5f7ebd85cf1f480a118f75dd10fd0cb277e4ddbb23845f1c20d8ea0f1e87efa6"
+      }
+    ],
+    "images": [
+      {
+        "name": "dstack-nvidia-0.5.5",
+        "os_image_hash": "9b69bb1698bacbb6985409a2c272bcb892e09cdcea63d5399c6768b67d3ff677",
+        "mrtd": "b24d3b24e9e3c16012376b52362ca09856c4adecb709d5fac33addf1c47e193da075b125b6c364115771390a5461e217",
+        "rtmr0": "bc122d143ab768565ba5c3774ff5f03a63c89a4df7c1f5ea38d3bd173409d14f8cbdcc36d40e703cccb996a9d9687590",
+        "rtmr1": "c0445b704e4c48139496ae337423ddb1dcee3a673fd5fb60a53d562f127d235f11de471a7b4ee12c9027c829786757dc",
+        "rtmr2": "564622c7ddc55a53272cc9f0956d29b3f7e0dd18ede432720b71fd89e5b5d76cb0b99be7b7ff2a6a92b89b6b01643135"
+      },
+      {
+        "name": "dstack-nvidia-0.5.11",
+        "os_image_hash": "a6eafc5f007f642d8ea90c7fa8881f1e6715720ccb531941a28218f4f26d7b02",
+        "mrtd": "df4d77c857de652bd0fafa343a2026b51071ee03773d076d283abf1a7d36ff91ffa279ee4a617ac664f7e2a2c8d5891b",
+        "rtmr0": "bc122d143ab768565ba5c3774ff5f03a63c89a4df7c1f5ea38d3bd173409d14f8cbdcc36d40e703cccb996a9d9687590",
+        "rtmr1": "ff61e68fa04516b1813d2d478397a97a58f9ccc402b6d96fb73f5e5104a4acf155913caec99a0c19afc16ae0f3a77726",
+        "rtmr2": "4d662c04766145dfe084fd014969b19c387afe9bb1d4f972c6968d28a7a8b4937c414603a2cf446105eddce67a86f9ce"
+      },
+      {
+        "name": "dstack-nvidia-0.5.12",
+        "os_image_hash": "91fd5d69ccee3e5ea4f2aeb8c9b632c4358c4ecfc29ba1aa6fb1e402af209829",
+        "mrtd": "df4d77c857de652bd0fafa343a2026b51071ee03773d076d283abf1a7d36ff91ffa279ee4a617ac664f7e2a2c8d5891b",
+        "rtmr0": "bc122d143ab768565ba5c3774ff5f03a63c89a4df7c1f5ea38d3bd173409d14f8cbdcc36d40e703cccb996a9d9687590",
+        "rtmr1": "4ae609807c765916a31d724786ed74bcb97e168a9d937b04936aeef2015c907eba5ac352c6bcd749c246fd62ffb659ec",
+        "rtmr2": "bd67ab7554dc27ab03a077bc1447a1a67d0624ff547c4c809a8626f12d6a89712f8ec60e781e99b98208574065d21a71"
+      }
+    ],
+    "instances": [
+      "112c1f2d03be6911d527afc116671cfff006dd65",
+      "19aea1693533dc2d529db03e3f725f20bde8d66d",
+      "7bb9af0ac5b0e22dde3903218f58e56f743164a1",
+      "a8a25faab3ef437d2da809382e05e59e3c55a0f5",
+      "cc796618bcd5a6b22907d8de7ac414a968d6a1aa"
+    ]
+  }
+}
