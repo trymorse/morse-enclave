@@ -433,6 +433,15 @@ func isInlineFile(raw json.RawMessage) bool {
 			return false
 		}
 	}
+	if data, ok := fields["file_data"]; ok {
+		var url string
+		if json.Unmarshal(data, &url) != nil {
+			return false
+		}
+		if _, err := dataurl.Parse(url); errors.Is(err, apierr.ErrRemoteMedia) {
+			return false
+		}
+	}
 	return true
 }
 

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"maps"
 	"regexp"
 	"slices"
@@ -38,13 +39,25 @@ type Service struct {
 }
 
 func ParseAppCompose(raw string) (AppCompose, error) {
-	var manifest struct {
-		DockerComposeFile string   `json:"docker_compose_file"`
-		PreLaunchScript   string   `json:"pre_launch_script"`
-		AllowedEnvs       []string `json:"allowed_envs"`
-	}
-	if err := json.Unmarshal([]byte(raw), &manifest); err != nil {
+	fields, err := manifestFields(raw)
+	if err != nil {
 		return AppCompose{}, fmt.Errorf("app_compose is not JSON: %w", err)
+	}
+	var manifest struct {
+		DockerComposeFile string
+		PreLaunchScript   string
+		AllowedEnvs       []string
+	}
+	for key, into := range map[string]any{
+		"docker_compose_file": &manifest.DockerComposeFile,
+		"pre_launch_script":   &manifest.PreLaunchScript,
+		"allowed_envs":        &manifest.AllowedEnvs,
+	} {
+		if value, ok := fields[key]; ok {
+			if err := json.Unmarshal(value, into); err != nil {
+				return AppCompose{}, fmt.Errorf("app_compose %s: %w", key, err)
+			}
+		}
 	}
 	var file struct {
 		Services map[string]struct {
@@ -65,6 +78,39 @@ func ParseAppCompose(raw string) (AppCompose, error) {
 		c.Services[name] = Service{Image: s.Image, Environment: env, Mounts: mounts(s.Volumes)}
 	}
 	return c, nil
+}
+
+// manifestFields reads the manifest's top-level keys by their exact names, as dstack does. encoding/json would match
+// a struct field case-insensitively and take the last of several spellings, so the checks could read a compose
+// other than the one dstack runs.
+func manifestFields(raw string) (map[string]json.RawMessage, error) {
+	dec := json.NewDecoder(strings.NewReader(raw))
+	if tok, err := dec.Token(); err != nil || tok != json.Delim('{') {
+		return nil, errors.New("not an object")
+	}
+	fields := map[string]json.RawMessage{}
+	for dec.More() {
+		tok, err := dec.Token()
+		if err != nil {
+			return nil, err
+		}
+		key, _ := tok.(string)
+		if _, seen := fields[key]; seen {
+			return nil, fmt.Errorf("repeats %q", key)
+		}
+		var value json.RawMessage
+		if err := dec.Decode(&value); err != nil {
+			return nil, err
+		}
+		fields[key] = value
+	}
+	if _, err := dec.Token(); err != nil {
+		return nil, err
+	}
+	if _, err := dec.Token(); err != io.EOF {
+		return nil, errors.New("holds more than one value")
+	}
+	return fields, nil
 }
 
 func resolve(n *yaml.Node) *yaml.Node {
