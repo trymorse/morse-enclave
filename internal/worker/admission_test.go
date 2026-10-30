@@ -149,7 +149,7 @@ var refusedOnE2EE = map[string]string{
 	"prediction": `{}`, "web_search_options": `{}`, "audio": `{}`, "user": `"alice"`, "safety_identifier": `"x"`, "metadata": `{}`,
 	"store": `true`, "prompt_cache_key": `"k"`, "response_format": `{"type":"json_schema","json_schema":{"name":"plaintext"}}`,
 	"stop": `["plaintext"]`, "chat_template": `"{{ plaintext }}"`, "documents": `[{"text":"plaintext"}]`, "request_id": `"r"`,
-	"cache_salt": `"s"`, "logit_bias": `{"1234":5}`, "best_of": `2`, "Model": `"kimi-e2ee"`, "n": `2`, "seed": `"plaintext"`,
+	"cache_salt": `"s"`, "logit_bias": `{"1234":5}`, "best_of": `2`, "n": `2`, "seed": `"plaintext"`,
 	"temperature": `"plaintext"`, "top_p": `[1]`, "stream_options": `{"include_usage":true,"note":"plaintext"}`,
 }
 

@@ -375,7 +375,7 @@ func stream(ctx context.Context, w http.ResponseWriter, rc *http.ResponseControl
 	case sw.started && ctx.Err() == nil && sw.err == nil:
 		sw.errorEvent()
 	}
-	return served{reported: reported, attempts: attempts, reply: measure.Streamed{Events: sw.delivered, VisibleBytes: sw.visible}, finish: sw.finish, unanswered: unanswered(sw.finish, sw.shown), writeErr: sw.err, callErr: err, thought: clock.thought()}
+	return served{reported: reported, attempts: attempts, reply: measure.Streamed{Events: sw.delivered, VisibleBytes: sw.visible}, finish: sw.finish, unanswered: unanswered(sw.finish, sw.sent), writeErr: sw.err, callErr: err, thought: clock.thought()}
 }
 
 func complete(ctx context.Context, w http.ResponseWriter, prov chat.BusyRetry, c chat.Call, transcript *chat.Transcript, clock *thinkingClock) served {
@@ -386,12 +386,12 @@ func complete(ctx context.Context, w http.ResponseWriter, prov chat.BusyRetry, c
 	}
 	w.Header().Set("Content-Type", "application/json")
 	d := body.Delta()
-	if unanswered(d.Finish, d.Shown()) {
+	if unanswered(d.Finish, d.Delivered()) {
 		body = body.MarkUnanswered()
 	}
 	written, writeErr := body.WriteTo(w)
 	if written > 0 {
 		transcript.Add(d)
 	}
-	return served{reported: tokens, attempts: attempts, reply: measure.Buffered{Bytes: int(written)}, finish: d.Finish, unanswered: unanswered(d.Finish, d.Shown()), writeErr: writeErr}
+	return served{reported: tokens, attempts: attempts, reply: measure.Buffered{Bytes: int(written)}, finish: d.Finish, unanswered: unanswered(d.Finish, d.Delivered()), writeErr: writeErr}
 }

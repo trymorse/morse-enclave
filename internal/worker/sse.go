@@ -123,6 +123,7 @@ type sseWriter struct {
 	delivered  int
 	visible    int
 	shown      bool
+	sent       bool
 	finish     chat.Finish
 	transcript *chat.Transcript
 	clock      *thinkingClock
@@ -131,8 +132,8 @@ type sseWriter struct {
 func (s *sseWriter) emit(c chat.Chunk) error {
 	d := c.Delta()
 	s.clock.observe(d)
-	finish, shown := cmp.Or(d.Finish, s.finish), s.shown || d.Shown()
-	if unanswered(finish, shown) {
+	finish, shown, sent := cmp.Or(d.Finish, s.finish), s.shown || d.Shown(), s.sent || d.Delivered()
+	if unanswered(finish, sent) {
 		c = c.MarkUnanswered()
 	}
 	var object bytes.Buffer
@@ -141,13 +142,15 @@ func (s *sseWriter) emit(c chat.Chunk) error {
 	if err == nil {
 		s.delivered++
 		s.visible += d.VisibleBytes()
-		s.finish, s.shown = finish, shown
+		s.finish, s.shown, s.sent = finish, shown, sent
 		s.transcript.Add(d)
 	}
 	return err
 }
 
-func unanswered(finish chat.Finish, shown bool) bool { return finish == chat.FinishLength && !shown }
+func unanswered(finish chat.Finish, delivered bool) bool {
+	return finish == chat.FinishLength && !delivered
+}
 
 var errEmptyReply = errors.New("worker: the stream ended having shown nothing")
 

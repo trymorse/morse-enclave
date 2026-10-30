@@ -33,8 +33,20 @@ type PhalaReport struct {
 	InstanceID string
 	RTMR3      Register
 	Keyset     aci.Keyset
-	VMConfig   json.RawMessage
+	VMConfig   VMConfig
 	Endpoint   Endpoint[aci.SPKI]
+}
+
+// VMConfig is the vm_config string a host serializes beside its quote, as dstack does. It is empty when the
+// report carries none, or carries it in another form.
+type VMConfig string
+
+func declaredVMConfig(raw json.RawMessage) VMConfig {
+	var text string
+	if json.Unmarshal(raw, &text) != nil {
+		return ""
+	}
+	return VMConfig(text)
 }
 
 type Workload struct {
@@ -46,6 +58,8 @@ type Workload struct {
 	InstanceID string   `json:"instance_id"`
 	RTMR3      Register `json:"rtmr3"`
 	TCB        TCB      `json:"tcb"`
+	// VMConfig is the VM shape the host declared beside its quote. The quote does not cover it.
+	VMConfig VMConfig `json:"vm_config,omitempty"`
 }
 
 type phalaReport struct {
@@ -128,7 +142,7 @@ func (p Policy) VerifyPhalaUnboundToHost(ctx context.Context, raw []byte, nonce 
 		InstanceID:     w.InstanceID,
 		RTMR3:          w.RTMR3,
 		Keyset:         keyset,
-		VMConfig:       a.Evidence.VMConfig,
+		VMConfig:       w.VMConfig,
 		Endpoint:       Endpoint[aci.SPKI]{ID: keyset.Digest.String(), NotAfter: keyset.NotAfter},
 	}, nil
 }
@@ -173,6 +187,7 @@ func (p Policy) measure(ctx context.Context, ev dstackEvidence, want [quoteRepor
 		InstanceID:     hex.EncodeToString(runtime.instanceID),
 		RTMR3:          m.RTMR3,
 		TCB:            standing,
+		VMConfig:       declaredVMConfig(ev.VMConfig),
 	}, nil
 }
 

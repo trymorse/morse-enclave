@@ -75,7 +75,6 @@ type NearModel struct {
 	Workload
 	Model          string
 	GPUs           []string
-	VMConfig       json.RawMessage
 	ComposeManager NearComposeManager
 	Gateway        NearGateway
 	Endpoint       Endpoint[aci.SPKI]
@@ -153,7 +152,6 @@ func (p Policy) verifyNearModel(ctx context.Context, m nearModelAttestation, gat
 		Workload:       td.Workload,
 		Model:          m.Model,
 		GPUs:           gpus,
-		VMConfig:       m.Info.VMConfig,
 		ComposeManager: composeManager,
 		Gateway:        gateway,
 		Endpoint:       Endpoint[aci.SPKI]{ID: hex.EncodeToString(key), NotAfter: verdict.Expires, Keys: []aci.SPKI{gateway.TLS}},
@@ -186,7 +184,7 @@ func (p Policy) verifyNearTD(ctx context.Context, a nearAttestation, key []byte,
 	if err := json.Unmarshal(unquoted(a.Info.TCBInfo), &tcb); err != nil || tcb.AppCompose == "" {
 		return NearGateway{}, fmt.Errorf("%w: info.tcb_info carries no app_compose", ErrNearReport)
 	}
-	w, err := p.measure(ctx, dstackEvidence{Quote: a.Quote, EventLog: a.EventLog, AppCompose: tcb.AppCompose}, nearReportData(sha256.Sum256(slices.Concat(key, fingerprint)), nonce), now, reportTCBStatus)
+	w, err := p.measure(ctx, dstackEvidence{Quote: a.Quote, EventLog: a.EventLog, AppCompose: tcb.AppCompose, VMConfig: a.Info.VMConfig}, nearReportData(sha256.Sum256(slices.Concat(key, fingerprint)), nonce), now, reportTCBStatus)
 	if err != nil {
 		return NearGateway{}, err
 	}

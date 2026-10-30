@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"strings"
+	"unicode"
 
 	"morse/backend/internal/strictjson"
 )
@@ -52,10 +54,11 @@ func checkShape(raw []byte) error {
 		}
 		if top != nil && top.isObject() && top.awaitingKey {
 			key := tok.(string)
-			if _, seen := top.keys[key]; seen {
+			folded := strings.Map(foldRune, key)
+			if _, seen := top.keys[folded]; seen {
 				return strictjson.ErrDuplicateKey
 			}
-			top.keys[key] = struct{}{}
+			top.keys[folded] = struct{}{}
 			top.lastKey, top.awaitingKey = key, false
 			continue
 		}
@@ -79,5 +82,18 @@ func checkShape(raw []byte) error {
 			isMessages := len(stack) == 1 && top.lastKey == "messages"
 			stack = append(stack, &shapeFrame{isMessages: isMessages})
 		}
+	}
+}
+
+// foldRune is the smallest rune in r's case-fold orbit, the fold encoding/json matches struct fields by. Keys that
+// fold alike count as one repeated key, so no decoder here reads a field under one spelling while a vendor reads
+// the raw bytes under another.
+func foldRune(r rune) rune {
+	for {
+		folded := unicode.SimpleFold(r)
+		if folded <= r {
+			return folded
+		}
+		r = folded
 	}
 }

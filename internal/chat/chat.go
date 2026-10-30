@@ -538,6 +538,9 @@ func (d Delta) Reasons() bool { return d.Reasoning != "" }
 
 func (d Delta) Shown() bool { return d.Answers() || d.Reasons() }
 
+// Delivered does not trim the content: whitespace alone is not an answer, but the client still received it.
+func (d Delta) Delivered() bool { return d.Content != "" || d.Refused || d.ToolCalled || d.Reasons() }
+
 func (d Delta) VisibleBytes() int { return len(d.Content) + len(d.Reasoning) + len(d.ToolArguments) }
 
 func (c Chunk) Delta() Delta { return deltaOf(c.object) }

@@ -18,7 +18,7 @@ import (
 
 var (
 	errNoSuchRoute        = apierr.Invalid(http.StatusNotFound, "not_found", "The worker serves no such route.")
-	errDuplicateKey       = apierr.Invalid(http.StatusBadRequest, "duplicate_json_key", "A JSON object in the request body repeats a key. Send each key once.")
+	errDuplicateKey       = apierr.Invalid(http.StatusBadRequest, "duplicate_json_key", "A JSON object in the request body repeats a key, or spells one key in two cases. Send each key once.")
 	errTooManyMessages    = apierr.Invalid(http.StatusBadRequest, "too_many_messages", "messages may hold at most "+strconv.Itoa(chat.MaxMessages)+" entries.")
 	errTooManyValues      = apierr.Invalid(http.StatusBadRequest, "request_too_complex", "The request body may hold at most "+strconv.Itoa(chat.MaxJSONValues)+" JSON values.")
 	errInvalidURL         = apierr.Invalid(http.StatusBadRequest, "invalid_url", "url must be an http or https URL of at most "+strconv.Itoa(web.MaxURLLength)+" characters, without credentials, on a public host and the default port, 80, or 443.")
