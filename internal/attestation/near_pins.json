@@ -119,6 +119,10 @@
       {
         "name": "dstack-nvidia-0.5.12-5f7ebd85",
         "compose_hash": "5f7ebd85cf1f480a118f75dd10fd0cb277e4ddbb23845f1c20d8ea0f1e87efa6"
+      },
+      {
+        "name": "dstack-nvidia-0.5.11-476c8083-cc846c45",
+        "compose_hash": "cc846c45cbdd7a5ba126ae2b362f359307a1dea05468c8f1a3f064f0bb3173d6"
       }
     ],
     "images": [
@@ -160,7 +164,8 @@
       "19aea1693533dc2d529db03e3f725f20bde8d66d",
       "7bb9af0ac5b0e22dde3903218f58e56f743164a1",
       "a8a25faab3ef437d2da809382e05e59e3c55a0f5",
-      "cc796618bcd5a6b22907d8de7ac414a968d6a1aa"
+      "cc796618bcd5a6b22907d8de7ac414a968d6a1aa",
+      "476c8083d13d8cc36c26ac96c56ded4107f391e2"
     ]
   }
 }
