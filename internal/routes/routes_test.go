@@ -800,3 +800,35 @@ func TestAChatRouteNamesItsOpenRouterModelOrTakesItsUpstreamModel(t *testing.T) 
 		t.Error("an image route took openrouter_id")
 	}
 }
+
+func TestARouteHedgesUnlessItIsAttestedOrItsProviderIsSilentWhileReasoningOrSlowsTogether(t *testing.T) {
+	anon := func(provider string) map[string]any {
+		return withRates(map[string]any{"provider": provider, "tier": "anon", "owned_by": "O", "api_key_env": "K"}, nil)
+	}
+	for name, c := range map[string]struct {
+		patch map[string]any
+		want  bool
+	}{
+		"openai":    {map[string]any{}, true},
+		"anthropic": {anon("anthropic"), false},
+		"responses": {anon("openai-responses"), true},
+		"gemini":    {anon("gemini"), false},
+		"xai":       {map[string]any{"provider": "xai", "retention": "zdr", "api_key_env": "K"}, true},
+	} {
+		rts, err := parse(patched(t, chatJSON, c.patch))
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if got := rts[0].Hedgeable(); got != c.want {
+			t.Errorf("%s: Hedgeable %t, want %t", name, got, c.want)
+		}
+	}
+	tee := strings.Replace(chatJSON, `"tier":"private"`, `"tier":"tee","attester":"phala"`, 1)
+	rts, err := parse([]byte(`[` + tee + `]`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rts[0].Hedgeable() {
+		t.Error("an attested plaintext route hedges")
+	}
+}

@@ -86,6 +86,7 @@ type Observation struct {
 	Overhead     time.Duration
 	OutputTokens int
 	Retries      int
+	Hedges       int
 }
 
 type Recorder struct {
@@ -119,7 +120,7 @@ type series struct {
 	duration, ttft, overhead Histogram
 	outputTokens             atomic.Uint64
 	generationMicros         atomic.Uint64
-	retries                  atomic.Uint64
+	retries, hedges          atomic.Uint64
 }
 
 func (m *Meter) Observe(o Observation) {
@@ -148,6 +149,9 @@ func (m *Meter) Observe(o Observation) {
 	if o.Retries > 0 {
 		s.retries.Add(uint64(o.Retries))
 	}
+	if o.Hedges > 0 {
+		s.hedges.Add(uint64(o.Hedges))
+	}
 }
 
 type Row struct {
@@ -158,12 +162,12 @@ type Row struct {
 	Duration, TTFT, Overhead Counts
 	OutputTokens             uint64
 	GenerationMicros         uint64
-	Retries                  uint64
+	Retries, Hedges          uint64
 }
 
 func (r Row) empty() bool {
 	return r.Requests == 0 && len(r.Duration) == 0 && len(r.TTFT) == 0 && len(r.Overhead) == 0 &&
-		r.OutputTokens == 0 && r.GenerationMicros == 0 && r.Retries == 0
+		r.OutputTokens == 0 && r.GenerationMicros == 0 && r.Retries == 0 && r.Hedges == 0
 }
 
 type Batch []Row
@@ -185,7 +189,7 @@ func (r *Recorder) Drain() Batch {
 				row := Row{
 					Key: m.key, Path: p, Outcome: o, Requests: s.requests.Swap(0),
 					Duration: s.duration.Drain(), TTFT: s.ttft.Drain(), Overhead: s.overhead.Drain(),
-					OutputTokens: s.outputTokens.Swap(0), GenerationMicros: s.generationMicros.Swap(0), Retries: s.retries.Swap(0),
+					OutputTokens: s.outputTokens.Swap(0), GenerationMicros: s.generationMicros.Swap(0), Retries: s.retries.Swap(0), Hedges: s.hedges.Swap(0),
 				}
 				if !row.empty() {
 					batch = append(batch, row)

@@ -43,10 +43,13 @@ type ChatUpstream interface {
 	count(o *openedChat, e measure.Evidence, got served) *pendingCount
 }
 
+// Plain streams a chat in the clear. Hedge races a stalled stream with a second call; the zero Hedge never does, as
+// on a route whose first chunk waits for reasoning the client never sees.
 type Plain struct {
 	chat.Provider
 	Attester  chat.Attester
 	BusyWaits []time.Duration
+	Hedge     chat.Hedge
 }
 
 type Verbatim struct{ Route chat.VerbatimRoute }

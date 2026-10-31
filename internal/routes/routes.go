@@ -95,6 +95,15 @@ func (rt Route) ReasoningUncapped() bool {
 	return vendor && up.Provider.ReasoningUncapped()
 }
 
+// Hedgeable is whether a first chunk that is late is the vendor's stall, so a second call may race the first. An
+// attested route never hedges: no measurement yet shows a second call escaping a TEE vendor's slow first chunk rather
+// than adding to a full queue.
+func (rt Route) Hedgeable() bool {
+	up, vendor := rt.Upstream.(Vendor)
+	c := capabilities[up.Provider]
+	return vendor && !c.silentWhileReasoning && !c.slowsTogether
+}
+
 type Upstream interface {
 	fmt.Stringer
 	check(Route) error

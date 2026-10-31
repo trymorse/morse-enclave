@@ -46,7 +46,7 @@ func TestADrainReturnsWhatWasObservedSinceTheLastOneUnderTheRoutesKey(t *testing
 	if again := r.Meter(route); again != m {
 		t.Fatal("the same route got a second meter, so one batch would name its key twice")
 	}
-	m.Observe(Observation{Path: PathStream, Outcome: OK, Duration: 2 * time.Second, TTFT: 300 * time.Millisecond, Overhead: time.Millisecond, OutputTokens: 40, Retries: 2})
+	m.Observe(Observation{Path: PathStream, Outcome: OK, Duration: 2 * time.Second, TTFT: 300 * time.Millisecond, Overhead: time.Millisecond, OutputTokens: 40, Retries: 2, Hedges: 1})
 	m.Observe(Observation{Path: PathStream, Outcome: OK, Duration: time.Second, TTFT: 200 * time.Millisecond, Overhead: time.Millisecond})
 	m.Observe(Observation{Path: PathBuffered, Outcome: Throttled, Overhead: time.Millisecond})
 	batch := r.Drain()
@@ -57,8 +57,8 @@ func TestADrainReturnsWhatWasObservedSinceTheLastOneUnderTheRoutesKey(t *testing
 	if ok.Key != route || ok.Requests != 2 || ok.Duration.Total() != 2 || ok.TTFT.Total() != 2 || ok.Overhead.Total() != 2 {
 		t.Errorf("stream/ok row %+v, want two requests with every latency under the route's key", ok)
 	}
-	if ok.OutputTokens != 40 || ok.GenerationMicros != 2_000_000 || ok.Retries != 2 {
-		t.Errorf("stream/ok sums %d tokens, %dµs, %d retries, want 40 over the 2s of the one call that reported them, and 2", ok.OutputTokens, ok.GenerationMicros, ok.Retries)
+	if ok.OutputTokens != 40 || ok.GenerationMicros != 2_000_000 || ok.Retries != 2 || ok.Hedges != 1 {
+		t.Errorf("stream/ok sums %d tokens, %dµs, %d retries, %d hedges, want 40 over the 2s of the one call that reported them, 2, and 1", ok.OutputTokens, ok.GenerationMicros, ok.Retries, ok.Hedges)
 	}
 	throttled := rowFor(t, batch, PathBuffered, Throttled)
 	if throttled.Requests != 1 || len(throttled.Duration) != 0 || len(throttled.TTFT) != 0 || throttled.Overhead.Total() != 1 {
@@ -92,7 +92,7 @@ func TestAnObservationRacingADrainIsNeitherLostNorDoubled(t *testing.T) {
 				meters[w%len(meters)].Observe(Observation{
 					Path: PathStream, Outcome: Outcome(i % int(outcomeCount)),
 					Duration: time.Duration(i+1) * time.Microsecond, TTFT: time.Millisecond, Overhead: time.Microsecond,
-					OutputTokens: 3, Retries: 1,
+					OutputTokens: 3, Retries: 1, Hedges: 1,
 				})
 			}
 		})
@@ -110,6 +110,7 @@ func TestAnObservationRacingADrainIsNeitherLostNorDoubled(t *testing.T) {
 			total.OutputTokens += row.OutputTokens
 			total.GenerationMicros += row.GenerationMicros
 			total.Retries += row.Retries
+			total.Hedges += row.Hedges
 			for into, from := range map[*Counts]Counts{&total.Duration: row.Duration, &total.TTFT: row.TTFT, &total.Overhead: row.Overhead} {
 				for bound, n := range from {
 					(*into)[bound] += n
@@ -130,7 +131,7 @@ func TestAnObservationRacingADrainIsNeitherLostNorDoubled(t *testing.T) {
 		t.Errorf("drains took %d requests, %d durations, %d ttfts, %d overheads, want %d each", total.Requests, total.Duration.Total(), total.TTFT.Total(), total.Overhead.Total(), want)
 	}
 	const micros = writers * each * (each + 1) / 2
-	if total.OutputTokens != 3*want || total.GenerationMicros != micros || total.Retries != want {
-		t.Errorf("drains took %d tokens, %dµs, %d retries, want %d, %d, %d", total.OutputTokens, total.GenerationMicros, total.Retries, 3*want, micros, want)
+	if total.OutputTokens != 3*want || total.GenerationMicros != micros || total.Retries != want || total.Hedges != want {
+		t.Errorf("drains took %d tokens, %dµs, %d retries, %d hedges, want %d, %d, %d, %d", total.OutputTokens, total.GenerationMicros, total.Retries, total.Hedges, 3*want, micros, want, want)
 	}
 }

@@ -19,16 +19,22 @@ type Reroutable interface {
 
 // BusyRetry calls again on a busy refusal that arrives before the first chunk: at once on the provider a Reroutable
 // refusal names, otherwise on its own provider after the next of Waits. Reroutes and waits each get len(Waits), so a
-// call reaches the vendor at most 1+2*len(Waits) times. A refusal after a chunk went out stands.
+// call reaches the vendor at most 1+2*len(Waits) times, twice that when each is hedged. A refusal after a chunk went
+// out stands. A Stream call that has emitted nothing by HedgeAfter is raced by a second identical call: the first to
+// emit serves the client and the other is cut, and when both fail before emitting the first call's error stands. Zero
+// never races.
 type BusyRetry struct {
 	Provider
-	Waits []time.Duration
+	Waits      []time.Duration
+	HedgeAfter time.Duration
 }
 
-// Attempts is what the retries left behind. Refused is set when the last call ended in a busy refusal before any
-// chunk: the vendor served nothing and has nothing in flight, whoever cut the request meanwhile.
+// Attempts is what the retries left behind. Hedges counts the second calls the hedge made. Refused is set when the
+// last call ended in a busy refusal before any chunk: the vendor served nothing and has nothing in flight, whoever
+// cut the request meanwhile.
 type Attempts struct {
 	Retries int
+	Hedges  int
 	Refused bool
 }
 
@@ -40,9 +46,9 @@ func (r BusyRetry) Stream(ctx context.Context, c Call, emit func(Chunk) error) (
 	}
 	t := tries{BusyRetry: r}
 	for p := r.Provider; ; {
-		u, err := p.Stream(ctx, c, counted)
+		u, err := t.stream(ctx, p, c, counted)
 		if emitted {
-			return u, Attempts{Retries: t.retries}, err
+			return u, t.attempts(), err
 		}
 		if p = t.next(ctx, err); p == nil {
 			return u, t.ended(err), err
@@ -62,10 +68,27 @@ func (r BusyRetry) Complete(ctx context.Context, c Call) (Chunk, Usage, Attempts
 
 type tries struct {
 	BusyRetry
-	retries, rerouted, waited int
+	retries, rerouted, waited, hedges int
 }
 
-func (t *tries) ended(err error) Attempts { return Attempts{Retries: t.retries, Refused: busy(err)} }
+func (t *tries) stream(ctx context.Context, p Provider, c Call, emit func(Chunk) error) (Usage, error) {
+	if t.HedgeAfter == 0 {
+		return p.Stream(ctx, c, emit)
+	}
+	u, hedged, err := hedged(ctx, p, c, emit, t.HedgeAfter)
+	if hedged {
+		t.hedges++
+	}
+	return u, err
+}
+
+func (t *tries) attempts() Attempts { return Attempts{Retries: t.retries, Hedges: t.hedges} }
+
+func (t *tries) ended(err error) Attempts {
+	a := t.attempts()
+	a.Refused = busy(err)
+	return a
+}
 
 func (t *tries) next(ctx context.Context, err error) Provider {
 	if !busy(err) {

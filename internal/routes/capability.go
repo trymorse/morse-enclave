@@ -26,6 +26,14 @@ type capability struct {
 	// The model reasons at the vendor's default effort when the request names none, so only an effort of none the
 	// route lists stops it. Anthropic's models think only at an effort the request names.
 	reasonsUnasked bool
+	// The client hears nothing until the model has finished reasoning it never sees, so a first chunk that is late is
+	// the model's doing, not a stall to hedge. Gemini's adapter drops the thought parts and emits at the first answer
+	// part. Anthropic emits at message_start, the Responses API at the reasoning item's output_item.added, and xAI
+	// streams reasoning_content deltas, each before the answer.
+	silentWhileReasoning bool
+	// A slow first chunk is the vendor slowing every request at once, so a second call is as late as the first and
+	// only adds to the bill. Anthropic's slow windows held a hedge's call as long as the first: it won 0 of 36.
+	slowsTogether bool
 }
 
 var (
@@ -37,13 +45,14 @@ var (
 var capabilities = map[Provider]capability{
 	ProviderOpenAI:          {kinds: servedAt{catalog.KindChat: anonAndPrivate, catalog.KindTranscription: anonAndPrivate}},
 	ProviderOpenAIResponses: {kinds: servedAt{catalog.KindChat: anonOnly}, needsKey: true, hides: true, reasonsUnasked: true},
-	ProviderAnthropic:       {kinds: servedAt{catalog.KindChat: anonOnly}, needsKey: true, lacks: []string{chat.NoEffort}, hides: true},
+	ProviderAnthropic:       {kinds: servedAt{catalog.KindChat: anonOnly}, needsKey: true, lacks: []string{chat.NoEffort}, hides: true, slowsTogether: true},
 	ProviderGemini: {
-		kinds:          servedAt{catalog.KindChat: anonOnly, catalog.KindImage: anonOnly},
-		needsKey:       true,
-		lacks:          []string{chat.NoEffort, "xhigh", "max"},
-		hides:          true,
-		reasonsUnasked: true,
+		kinds:                servedAt{catalog.KindChat: anonOnly, catalog.KindImage: anonOnly},
+		needsKey:             true,
+		lacks:                []string{chat.NoEffort, "xhigh", "max"},
+		hides:                true,
+		reasonsUnasked:       true,
+		silentWhileReasoning: true,
 	},
 	ProviderXAI: {
 		kinds:          servedAt{catalog.KindChat: anonAndPrivate, catalog.KindImage: privateOnly, catalog.KindVideo: privateOnly},

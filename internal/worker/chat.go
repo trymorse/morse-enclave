@@ -160,7 +160,7 @@ func (o *openedChat) run(_ context.Context, w *InProcess, h Handle, g Grant, rep
 	e := got.evidence(end, o.call, o.route, cg)
 	m := Measured{Measurement: e.Measure(), Cut: end.cut(), Served: got.callErr == nil, Refusal: end.refusal(got.callErr)}
 	m.Health = rw.observed(ctx, got.callErr, false, opened, returned)
-	m.Health.Retries = got.attempts.Retries
+	m.Health.Retries, m.Health.Hedges = got.attempts.Retries, got.attempts.Hedges
 	if refused, ok := errors.AsType[upstream.Refused](got.callErr); ok && vendorFaults[m.Health.Outcome] {
 		w.reports.VendorRefused(o.call.Model, refused.Status)
 	}
@@ -268,7 +268,7 @@ func (u Plain) serve(ctx context.Context, w *InProcess, o *openedChat, reply htt
 		clock = &thinkingClock{now: w.now}
 	}
 	var got served
-	retry := chat.BusyRetry{Provider: u.Provider, Waits: u.BusyWaits}
+	retry := chat.BusyRetry{Provider: u.Provider, Waits: u.BusyWaits, HedgeAfter: u.Hedge.Wait(o.promptBytes / limits.IncludedWindowBytesPerToken)}
 	if o.call.Stream {
 		got = stream(ctx, reply, http.NewResponseController(reply), retry, o.call, transcript, clock, w.keepaliveEvery)
 	} else {

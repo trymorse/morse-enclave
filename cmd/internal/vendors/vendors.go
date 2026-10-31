@@ -189,10 +189,17 @@ func chatBy(newProvider newChatProvider) builder[routes.Chat] {
 		if err != nil {
 			return nil, err
 		}
-		served.Upstream = worker.Plain{Provider: newProvider(rt, c, key, d), BusyWaits: chat.BusyWaits}
+		served.Upstream = worker.Plain{Provider: newProvider(rt, c, key, d), BusyWaits: chat.BusyWaits, Hedge: hedgeFor(rt)}
 		served.Reasoning, served.ReasoningUncapped = rt.Upstream.(routes.Vendor).Provider.Reasoning(c.ReasoningEfforts), rt.ReasoningUncapped()
 		return served, nil
 	}
+}
+
+func hedgeFor(rt routes.Route) chat.Hedge {
+	if rt.Hedgeable() {
+		return chat.DefaultHedge
+	}
+	return chat.Hedge{}
 }
 
 func openAIProvider(rt routes.Route, _ routes.Chat, key string, d Deps) chat.Provider {
@@ -233,7 +240,7 @@ func attestedChat(rt routes.Route, attested routes.Attested, key string, d Deps)
 		if !serves {
 			return nil, fmt.Errorf("route %q is tier %s, and %s serves no plaintext", rt.Model, rt.Tier, attested.Attester.Name)
 		}
-		served.Upstream = worker.Plain{Provider: plain, Attester: plain}
+		served.Upstream = worker.Plain{Provider: plain, Attester: plain, Hedge: hedgeFor(rt)}
 		return served, nil
 	}
 	served.Upstream = worker.Verbatim{Route: gate.Route(up)}
