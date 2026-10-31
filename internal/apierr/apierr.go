@@ -18,6 +18,7 @@ type Error struct {
 	Code    string
 	Message string
 	Reason  string
+	Param   string
 }
 
 func (e Error) Error() string { return fmt.Sprintf("%d %s", e.Status, e.Code) }
@@ -35,13 +36,17 @@ type errorBody struct {
 }
 
 func (e Error) Envelope() []byte {
-	body, _ := json.Marshal(errorEnvelope{errorBody{Message: e.Message, Type: e.Type, Code: e.Code, Reason: e.Reason}})
+	var param *string
+	if e.Param != "" {
+		param = &e.Param
+	}
+	body, _ := json.Marshal(errorEnvelope{errorBody{Message: e.Message, Type: e.Type, Param: param, Code: e.Code, Reason: e.Reason}})
 	return body
 }
 
-func (e Error) EnvelopeNaming(param string) []byte {
-	body, _ := json.Marshal(errorEnvelope{errorBody{Message: e.Message, Type: e.Type, Param: &param, Code: e.Code, Reason: e.Reason}})
-	return body
+func (e Error) Naming(param string) Error {
+	e.Param = param
+	return e
 }
 
 func (e Error) EnvelopeWith(field string, value any) []byte {

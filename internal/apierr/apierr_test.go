@@ -83,8 +83,8 @@ func TestAnEnvelopeNamesItsParameterOnlyWhenAsked(t *testing.T) {
 	e := apierr.Invalid(400, "invalid_request", "limit must be a whole number from 1 to 100.")
 	const named = `{"error":{"message":"limit must be a whole number from 1 to 100.","type":"invalid_request_error","param":"limit","code":"invalid_request"}}`
 	const unnamed = `{"error":{"message":"limit must be a whole number from 1 to 100.","type":"invalid_request_error","param":null,"code":"invalid_request"}}`
-	if got := string(e.EnvelopeNaming("limit")); got != named {
-		t.Errorf("EnvelopeNaming(limit) = %s, want %s", got, named)
+	if got := string(e.Naming("limit").Envelope()); got != named {
+		t.Errorf("Naming(limit).Envelope() = %s, want %s", got, named)
 	}
 	if got := string(e.Envelope()); got != unnamed {
 		t.Errorf("Envelope() = %s, want %s", got, unnamed)
