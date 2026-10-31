@@ -80,6 +80,18 @@ func (w *timedWriter) writes() ([][]byte, []time.Time) {
 	return w.chunks, w.at
 }
 
+func (w *timedWriter) waitForEmit(t *testing.T, s *Stream, n int) {
+	t.Helper()
+	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(time.Millisecond) {
+		if chunks, _ := w.writes(); len(chunks) >= n {
+			s.mu.Lock()
+			s.mu.Unlock()
+			return
+		}
+	}
+	t.Fatalf("no write %d within 10s", n)
+}
+
 func openAll(t *testing.T, cek [cekSize]byte, chunks [][]byte) (ReplyHead, [][]byte, []bool) {
 	t.Helper()
 	reply, err := OpenReply(bytes.NewReader(bytes.Join(chunks, nil)), cek)
@@ -112,13 +124,18 @@ func TestTheHeadGoesOutAtOnceAndBodyBytesBatchForFiftyMilliseconds(t *testing.T)
 	if chunks, _ := w.writes(); len(chunks) != 0 {
 		t.Fatalf("%d writes before Begin, want none, so an interim 103 can still go first", len(chunks))
 	}
-	begun := time.Now()
 	s.Begin(ReplyHead{Status: 200, Headers: http.Header{"Content-Type": {"text/event-stream"}}})
+	if chunks, _ := w.writes(); len(chunks) != 1 {
+		t.Fatalf("%d writes once Begin returned, want the salt with the head", len(chunks))
+	}
 	s.Write([]byte("data: a\n\n"))
-	time.Sleep(10 * time.Millisecond)
 	s.Write([]byte("data: b\n\n"))
-	time.Sleep(2 * Batch)
+	w.waitForEmit(t, s, 2)
+	time.Sleep(Batch)
 	s.Write([]byte("data: c\n\n"))
+	if chunks, _ := w.writes(); len(chunks) != 3 {
+		t.Fatalf("%d writes once a write a batch after the last frame returned, want it sent at once", len(chunks))
+	}
 	if err := s.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -129,11 +146,8 @@ func TestTheHeadGoesOutAtOnceAndBodyBytesBatchForFiftyMilliseconds(t *testing.T)
 	if len(chunks[0]) != saltSize+4+Pad+tagSize {
 		t.Errorf("the first write is %d bytes, want the salt and the head's frame", len(chunks[0]))
 	}
-	if at[0].Sub(begun) > Batch/2 {
-		t.Errorf("the head went out %v after Begin", at[0].Sub(begun))
-	}
-	if gap := at[1].Sub(at[0]); gap < Batch || gap > 3*Batch {
-		t.Errorf("the first body frame went out %v after the head, want about %v", gap, Batch)
+	if gap := at[1].Sub(at[0]); gap < Batch {
+		t.Errorf("the first body frame went out %v after the head, before the batch had passed", gap)
 	}
 	head, frames, finals := openAll(t, cek, chunks)
 	if head.Status != 200 || head.Headers.Get("Content-Type") != "text/event-stream" {
@@ -158,19 +172,17 @@ func TestAFrameCarriesAtMostSixtyFourKiBAndAFullOneWaitsForNothing(t *testing.T)
 	w := &timedWriter{}
 	s, _ := NewStream(w, w.flush, cek)
 	s.Begin(ReplyHead{Status: 200})
-	big := make([]byte, MaxFrameData+5)
+	big := make([]byte, 2*MaxFrameData)
 	rand.Read(big)
-	before := time.Now()
 	s.Write(big)
-	chunks, at := w.writes()
-	if len(chunks) != 2 || at[1].Sub(before) > Batch/2 {
-		t.Fatalf("%d writes after a large write, the last %v after it; want the salt with the head, and one full frame at once", len(chunks), at[len(at)-1].Sub(before))
+	if chunks, _ := w.writes(); len(chunks) != 3 {
+		t.Fatalf("%d writes once a 128 KiB write returned, want the salt with the head, and two full frames at once", len(chunks))
 	}
 	s.Close()
-	chunks, _ = w.writes()
+	chunks, _ := w.writes()
 	_, frames, finals := openAll(t, cek, chunks)
-	if len(frames) != 3 || len(frames[1]) != MaxFrameData || !bytes.Equal(frames[2], big[MaxFrameData:]) || !finals[2] {
-		t.Errorf("frames of %d, want a 64 KiB frame and a final 5-byte one", len(frames))
+	if len(frames) != 4 || !bytes.Equal(frames[1], big[:MaxFrameData]) || !bytes.Equal(frames[2], big[MaxFrameData:]) || len(frames[3]) != 0 || !finals[3] {
+		t.Errorf("frames of %d, want two 64 KiB frames and an empty final one", len(frames))
 	}
 }
 

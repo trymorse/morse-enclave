@@ -209,6 +209,8 @@ func (c common) route(serves Serves) (Route, error) {
 		APIKeyEnv:     c.APIKeyEnv,
 		Label:         c.Label,
 		OwnedBy:       cmp.Or(c.OwnedBy, defaultOwner),
+		Lab:           c.Lab,
+		OpenWeights:   c.OpenWeights,
 		Retention:     retention,
 		Serves:        serves,
 		Included:      c.Included,

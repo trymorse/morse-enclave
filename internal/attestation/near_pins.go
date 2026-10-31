@@ -53,8 +53,11 @@ func (p WorkloadPins) Check(w Workload) []Drift {
 	if !slices.Contains(p.KeyProviderIDs, w.KeyProviderID) {
 		drifts = append(drifts, Drift{Kind: DriftAnchor, Field: keyProviderIDField, Observed: w.KeyProviderID})
 	}
-	if !slices.Contains(p.TCBStatuses, w.TCB.Status) {
+	switch {
+	case !slices.Contains(p.TCBStatuses, w.TCB.Status):
 		drifts = append(drifts, Drift{Kind: DriftAnchor, Field: tcbStatusField, Observed: string(w.TCB.Status)})
+	case w.TCB.Status != TCBUpToDate:
+		drifts = append(drifts, Drift{Kind: DriftStaleTCB, Field: tcbStatusField, Pinned: string(TCBUpToDate), Observed: string(w.TCB.Status)})
 	}
 	if !slices.ContainsFunc(p.Composes, func(c Compose) bool { return c.ComposeHash == w.ComposeHash }) {
 		pinned := make([]string, len(p.Composes))

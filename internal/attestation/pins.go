@@ -172,6 +172,7 @@ const (
 	DriftAnchor      DriftKind = "anchor"
 	DriftRelease     DriftKind = "release"
 	DriftNewInstance DriftKind = "new_instance"
+	DriftStaleTCB    DriftKind = "stale_tcb"
 )
 
 const (

@@ -22,7 +22,7 @@ var tierNames = enum.Names[Tier]{Anon: "anon", Private: "private", TEE: "tee", E
 func ParseTier(name string) (Tier, error) {
 	t, ok := tierNames.Parse(name)
 	if !ok {
-		return 0, fmt.Errorf("tier %q must be one of %s", name, tierNames.List())
+		return 0, fmt.Errorf("tier %q must be one of %s", name, TierNames())
 	}
 	return t, nil
 }
@@ -46,6 +46,8 @@ var tierTable = [...]tierTerms{
 }
 
 func Tiers() []Tier { return tierNames.Values() }
+
+func TierNames() string { return tierNames.List() }
 
 func (t Tier) Attested() bool { return t.Valid() && tierTable[t].attested }
 

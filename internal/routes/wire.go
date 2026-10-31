@@ -18,6 +18,8 @@ type common struct {
 	Provider      string       `json:"provider"`
 	Label         string       `json:"label"`
 	OwnedBy       string       `json:"owned_by"`
+	Lab           string       `json:"lab"`
+	OpenWeights   bool         `json:"open_weights"`
 	Retention     string       `json:"retention"`
 	Kind          catalog.Kind `json:"kind"`
 	Included      *Included    `json:"included"`

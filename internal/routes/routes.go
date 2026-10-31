@@ -63,6 +63,8 @@ type Route struct {
 	APIKeyEnv     string
 	Label         string
 	OwnedBy       string
+	Lab           string
+	OpenWeights   bool
 	Retention     catalog.Retention
 	Serves        Serves
 	Included      *Included

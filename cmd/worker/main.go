@@ -53,6 +53,9 @@ func build(getenv func(string) string, log *logger) (built, error) {
 		return built{}, errors.New("PROXY_ENVIRONMENT must be dev or prod, the environment the web app checks in each attestation")
 	}
 	attester := nitro.Open()
+	if _, enclave := attester.(nitro.NSM); !enclave && environment == "prod" {
+		return built{}, errors.New("PROXY_ENVIRONMENT=prod needs /dev/nsm: off an enclave the worker could attest only with a stand-in document")
+	}
 	identity, err := nitro.Key(attester, getenv("PROXY_HPKE_DEV_KEY"))
 	if err != nil {
 		return built{}, err

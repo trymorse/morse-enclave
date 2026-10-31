@@ -49,7 +49,7 @@ func unknownFieldsOf(data []byte, isCiphertext func([]byte) bool) (unknown []str
 			for key, value := range fields {
 				switch {
 				case key == "role" && string(value) == `"assistant"`, isEmpty(value), key != "role" && isCiphertext(value):
-				case key == "role" || textFields[key] || !loggableFieldName.MatchString(key):
+				case key == "role" || textFields[key] || !loggableFieldName.MatchString(key) || value[0] == '"':
 					return nil, false
 				default:
 					unknown = append(unknown, key)
