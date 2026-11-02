@@ -59,6 +59,7 @@ func (c *Chat) routed(ignore []string) openaicompat.Provider {
 		LimitField:         openaicompat.MaxTokens,
 		UsageOnFinalChoice: true,
 		AnswersInReasoning: true,
+		NamesHost:          true,
 		// OpenRouter runs a server tool on its own backends and parses a file with Mistral OCR when the model reads
 		// no files, and its zdr filter covers neither.
 		Admit:        openaicompat.FunctionToolsTextAndImages,

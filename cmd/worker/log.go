@@ -12,6 +12,7 @@ import (
 
 	"morse/backend/internal/attestation"
 	"morse/backend/internal/attested"
+	"morse/backend/internal/chat"
 	"morse/backend/internal/health"
 )
 
@@ -25,6 +26,7 @@ const (
 	routeFailed
 	lookupVendorBusy
 	vendorRefused
+	upstreamErrorChunk
 	unknownReplyField
 	researchUnwrapped
 	upstreamAttested
@@ -44,6 +46,7 @@ var messages = [...]struct {
 	routeFailed:           {"route failed", slog.LevelWarn},
 	lookupVendorBusy:      {"lookup vendor busy", slog.LevelWarn},
 	vendorRefused:         {"vendor refused", slog.LevelWarn},
+	upstreamErrorChunk:    {"upstream error chunk", slog.LevelWarn},
 	unknownReplyField:     {"e2ee reply carried a field the gate does not know", slog.LevelWarn},
 	researchUnwrapped:     {"parallel research report unwrapped from its answer object", slog.LevelWarn},
 	upstreamAttested:      {"upstream attested", slog.LevelInfo},
@@ -58,6 +61,7 @@ type fields struct {
 	Service    string
 	Outcome    *health.Outcome
 	Status     int
+	Code       *chat.ErrorCode
 	Duration   time.Duration
 	Count      int
 	Generation uint64
@@ -100,6 +104,9 @@ func (l *logger) log(m message, f fields) {
 	if f.Status != 0 {
 		attrs = append(attrs, slog.Int("status", f.Status))
 	}
+	if f.Code != nil {
+		attrs = append(attrs, slog.String("code", f.Code.String()))
+	}
 	if f.Duration != 0 {
 		attrs = append(attrs, slog.Int64("duration_ms", f.Duration.Milliseconds()))
 	}
@@ -131,6 +138,10 @@ func (l *logger) LookupBusy(service string) { l.log(lookupVendorBusy, fields{Ser
 
 func (l *logger) VendorRefused(model string, status int) {
 	l.log(vendorRefused, fields{Route: model, Status: status})
+}
+
+func (l *logger) UpstreamErrorChunk(model string, code chat.ErrorCode) {
+	l.log(upstreamErrorChunk, fields{Route: model, Code: &code})
 }
 
 func (l *logger) UnknownReplyField(model, _ string) { l.log(unknownReplyField, fields{Route: model}) }

@@ -17,8 +17,6 @@ const (
 
 const IncludedEncryptedAllowanceBytes = 1 << 20
 
-const IncludedOutputTokens = 32_768
-
 const MaxRateLimitRPM = 1_000_000
 
 func ValidRateLimitRPM(rpm int) bool { return rpm >= 1 && rpm <= MaxRateLimitRPM }

@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"morse/backend/internal/chat"
 	"morse/backend/internal/jobs"
 	"morse/backend/internal/lookup"
 	"morse/backend/internal/media"
@@ -41,14 +42,16 @@ type Reporter interface {
 	Failed(route string, err error)
 	LookupBusy(service string)
 	VendorRefused(model string, status int)
+	UpstreamErrorChunk(model string, code chat.ErrorCode)
 }
 
 type NopReporter struct{}
 
-func (NopReporter) UnknownReplyField(string, string) {}
-func (NopReporter) Failed(string, error)             {}
-func (NopReporter) LookupBusy(string)                {}
-func (NopReporter) VendorRefused(string, int)        {}
+func (NopReporter) UnknownReplyField(string, string)          {}
+func (NopReporter) Failed(string, error)                      {}
+func (NopReporter) LookupBusy(string)                         {}
+func (NopReporter) VendorRefused(string, int)                 {}
+func (NopReporter) UpstreamErrorChunk(string, chat.ErrorCode) {}
 
 type Config struct {
 	Models        map[string]Model

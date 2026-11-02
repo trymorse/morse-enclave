@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 
+	"morse/backend/internal/chat"
 	"morse/backend/internal/completions"
 	"morse/backend/internal/jsonx"
 )
@@ -20,6 +21,7 @@ type reply struct {
 	dropped map[string]bool
 	choices int
 	usage   *completions.Usage
+	host    chat.Host
 }
 
 func (p *Provider) decodeReply(object []byte) (reply, error) {
@@ -33,6 +35,9 @@ func (p *Provider) decodeReply(object []byte) (reply, error) {
 			return reply{}, err
 		}
 		r.choices = len(choices)
+	}
+	if p.NamesHost {
+		r.host = hostOf(r)
 	}
 	raw, ok := r.value("usage")
 	if !ok {
@@ -58,6 +63,16 @@ func (p *Provider) decodeReply(object []byte) (reply, error) {
 		return reply{}, err
 	}
 	return r, nil
+}
+
+func hostOf(r reply) chat.Host {
+	raw, _ := r.value("provider")
+	var name string
+	if json.Unmarshal(raw, &name) != nil {
+		return chat.Host{}
+	}
+	host, _ := chat.ParseHost(name)
+	return host
 }
 
 func parseReply(object []byte) (reply, bool) {

@@ -289,6 +289,7 @@ var (
 var (
 	mediaURLKeys   = []string{"image_url", "video_url", "audio_url", "file_url"}
 	inlineFileKeys = []string{"file_data", "filename"}
+	attachmentKeys = append(slices.Clone(mediaURLKeys), "file", "input_audio")
 )
 
 func (r *Request) Messages() ([]Message, error) { return r.messages() }
@@ -332,6 +333,29 @@ func (r *Request) PromptTextBytes() (int, error) {
 		n += len(m.ToolCalls()) + m.TextBytes()
 	}
 	return n, nil
+}
+
+func (r *Request) Attachments() (n, bytes int, err error) {
+	msgs, err := r.Messages()
+	if err != nil {
+		return 0, 0, err
+	}
+	for _, m := range msgs {
+		for _, p := range m.parts {
+			parts, size := p.attachment()
+			n, bytes = n+parts, bytes+size
+		}
+	}
+	return n, bytes, nil
+}
+
+func (p Part) attachment() (n, bytes int) {
+	for _, key := range attachmentKeys {
+		if ref, ok := p.fields[key]; ok {
+			return 1, len(ref)
+		}
+	}
+	return 0, 0
 }
 
 func (r *Request) parseMessages() ([]Message, error) {
@@ -470,9 +494,19 @@ func (r Request) GoString() string { return r.String() }
 
 func NewReplyID() string { return "chatcmpl-" + rand.Text() }
 
-type Chunk struct{ object []byte }
+type Chunk struct {
+	object []byte
+	host   Host
+}
 
 func NewChunk(object []byte) Chunk { return Chunk{object: bytes.Clone(object)} }
+
+func (c Chunk) WithHost(h Host) Chunk {
+	c.host = h
+	return c
+}
+
+func (c Chunk) Host() Host { return c.host }
 
 func (c Chunk) WriteTo(w io.Writer) (int64, error) {
 	n, err := w.Write(c.object)
@@ -498,7 +532,8 @@ func (c Chunk) MarkUnanswered() Chunk {
 		if string(bytes.TrimSpace(value[1:len(value)-1])) == "" {
 			marker = marker[1:]
 		}
-		return Chunk{object: slices.Concat(c.object[:end], []byte(marker), c.object[end:])}
+		c.object = slices.Concat(c.object[:end], []byte(marker), c.object[end:])
+		return c
 	}
 	return c
 }

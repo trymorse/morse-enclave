@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 
 	"morse/backend/internal/apierr"
@@ -132,7 +133,7 @@ func (w *Writer) Start() error {
 // the vendor's code can no longer choose the answer.
 func (w *Writer) Fail(code string, otherwise apierr.Error) error {
 	if w.started {
-		return ErrStreamFailed
+		return fmt.Errorf("%w: %w", ErrStreamFailed, chat.ErrorChunkCoded(code))
 	}
 	if known, ok := apierr.VendorCode(code); ok {
 		return known

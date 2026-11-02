@@ -31,10 +31,12 @@ type Evidence struct {
 	Upstream           chat.Usage
 	Counted            Counted
 	PromptBytes        int
+	Attachments        int
 	PromptBound        int
 	Budgeted           bool
 	Reply              Reply
 	Finish             chat.Finish
+	ServedBy           chat.Host
 	Unanswered         bool
 	ReasoningRequested bool
 	HidesReasoning     bool
@@ -96,7 +98,10 @@ func (Opaque) delivered(outputLimit int, _ float64) Reading {
 	return reading(outputLimit, MethodOutputLimit)
 }
 
-const overestimateBytesPerToken = 2
+const (
+	overestimateBytesPerToken = 2
+	AttachmentTokens          = 4784
+)
 
 func bytesEstimate(bytes int) int {
 	return (max(bytes, 0) + overestimateBytesPerToken - 1) / overestimateBytesPerToken
@@ -186,6 +191,7 @@ type Measurement struct {
 	Sides      Sides
 	Thinking   Thinking
 	Finish     chat.Finish
+	ServedBy   chat.Host `json:",omitzero"`
 	Unanswered bool
 }
 
@@ -208,7 +214,7 @@ func (e Evidence) Measure() Measurement {
 		sides.Hidden = MethodThinkingTime
 	}
 	m := measured(e.Outcome, u, sides)
-	m.Thinking, m.Finish, m.Unanswered = hidden, e.Finish, e.Unanswered
+	m.Thinking, m.Finish, m.Unanswered, m.ServedBy = hidden, e.Finish, e.Unanswered, e.ServedBy
 	return m
 }
 
@@ -228,10 +234,11 @@ func unmeasured(o Outcome) UsageSource {
 }
 
 func (e Evidence) promptEstimate() Reading {
-	if e.Budgeted {
-		return reading(e.PromptBound, MethodRequestBytes)
+	text := e.PromptBytes
+	if !e.Budgeted {
+		text = bytesEstimate(text)
 	}
-	return reading(min(bytesEstimate(e.PromptBytes), e.PromptBound), MethodRequestBytes)
+	return reading(min(text+e.Attachments*AttachmentTokens, e.PromptBound), MethodRequestBytes)
 }
 
 func rung(reported int, counted, estimate Reading) Reading {

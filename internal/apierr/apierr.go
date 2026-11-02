@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"regexp"
 	"strconv"
 	"time"
 )
@@ -177,22 +178,72 @@ func VendorCode(code string) (Error, bool) {
 	return e, ok
 }
 
-func SanitizedUpstreamError(status int, vendorBody []byte) Error {
-	var peek struct {
-		Error struct {
-			Code json.RawMessage `json:"code"`
-			Type json.RawMessage `json:"type"`
-		} `json:"error"`
+var contextOverflowMessages = []*regexp.Regexp{
+	regexp.MustCompile(`^prompt is too long`),
+	regexp.MustCompile(`^The input token count (\(\d+\) )?exceeds the maximum number of tokens allowed`),
+	regexp.MustCompile(`^This (model|endpoint)'s maximum (context|prompt) length is \d+`),
+	regexp.MustCompile(`^'max_tokens' or 'max_completion_tokens' is too large: \d+\. This model's maximum context length is \d+`),
+	regexp.MustCompile(`^Input length \(\d+\) exceeds model's maximum context length`),
+	regexp.MustCompile(`^The input \(\d+ tokens\) is longer than the model's context length`),
+	regexp.MustCompile(`^Requested token count exceeds the model's maximum context length`),
+}
+
+type vendorReply struct {
+	codes   []string
+	message string
+}
+
+func readVendorReply(body []byte) (vendorReply, bool) {
+	var top struct {
+		Error   json.RawMessage `json:"error"`
+		Message json.RawMessage `json:"message"`
 	}
-	if status/100 == 4 && json.Unmarshal(vendorBody, &peek) == nil {
-		for _, raw := range []json.RawMessage{peek.Error.Code, peek.Error.Type} {
-			var name string
-			if json.Unmarshal(raw, &name) != nil {
-				continue
-			}
-			if e, ok := VendorCode(name); ok {
+	if json.Unmarshal(body, &top) != nil {
+		return vendorReply{}, false
+	}
+	if message := text(top.Error); message != "" {
+		return vendorReply{message: message}, true
+	}
+	var nested struct {
+		Code, Type, Message json.RawMessage
+		Metadata            struct {
+			ErrorType json.RawMessage `json:"error_type"`
+		}
+	}
+	json.Unmarshal(top.Error, &nested)
+	r := vendorReply{codes: []string{text(nested.Code), text(nested.Type), text(nested.Metadata.ErrorType)}, message: text(nested.Message)}
+	if r.message == "" {
+		r.message = text(top.Message)
+	}
+	return r, true
+}
+
+func text(raw json.RawMessage) string {
+	var s string
+	if json.Unmarshal(raw, &s) != nil {
+		return ""
+	}
+	return s
+}
+
+func (r vendorReply) overflowsContext() bool {
+	for _, pattern := range contextOverflowMessages {
+		if pattern.MatchString(r.message) {
+			return true
+		}
+	}
+	return false
+}
+
+func SanitizedUpstreamError(status int, vendorBody []byte) Error {
+	if reply, ok := readVendorReply(vendorBody); status/100 == 4 && ok {
+		for _, code := range reply.codes {
+			if e, ok := VendorCode(code); ok {
 				return e
 			}
+		}
+		if status == 400 && reply.overflowsContext() {
+			return ErrContextLengthExceeded
 		}
 	}
 	switch {

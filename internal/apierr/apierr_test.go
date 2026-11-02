@@ -33,6 +33,23 @@ func TestSanitizedUpstreamErrorMapsStatusAndNeverCarriesVendorText(t *testing.T)
 		{529, ``, 503, "upstream_busy"},
 		{500, `<html>cf-ray ` + canary + `</html>`, 502, "upstream_error"},
 		{502, `{"error":{"code":"context_length_exceeded"}}`, 502, "upstream_error"},
+		{400, `{"type":"error","error":{"type":"invalid_request_error","message":"prompt is too long: 208310 tokens > 200000 maximum ` + canary + `"}}`, 400, "context_length_exceeded"},
+		{400, `{"error":{"code":400,"message":"The input token count exceeds the maximum number of tokens allowed 1237083. ` + canary + `","status":"INVALID_ARGUMENT"}}`, 400, "context_length_exceeded"},
+		{400, `{"error":{"code":400,"message":"The input token count (1196265) exceeds the maximum number of tokens allowed (1048575). ` + canary + `","status":"INVALID_ARGUMENT"}}`, 400, "context_length_exceeded"},
+		{400, `{"error":{"message":"This model's maximum context length is 131072 tokens. However, your prompt contains 140000 input tokens ` + canary + `","type":"BadRequestError","param":"input_tokens","code":400}}`, 400, "context_length_exceeded"},
+		{400, `{"error":{"message":"'max_tokens' or 'max_completion_tokens' is too large: 9000. This model's maximum context length is 131072 tokens ` + canary + `","type":"BadRequestError","code":400}}`, 400, "context_length_exceeded"},
+		{400, `{"error":{"message":"Input length (140000) exceeds model's maximum context length (131072). ` + canary + `","type":"BadRequestError","code":400}}`, 400, "context_length_exceeded"},
+		{400, `{"object":"error","message":"The input (140000 tokens) is longer than the model's context length (131072 tokens). ` + canary + `","type":"BadRequest","param":null,"code":400}`, 400, "context_length_exceeded"},
+		{400, `{"object":"error","message":"Requested token count exceeds the model's maximum context length of 131072 tokens. ` + canary + `","type":"BadRequestError","code":400}`, 400, "context_length_exceeded"},
+		{400, `{"error":{"message":"This model's maximum context length is 131072 tokens ` + canary + `","type":"invalid_request_error"}}`, 400, "context_length_exceeded"},
+		{400, `{"code":"Client specified an invalid argument","error":"This model's maximum prompt length is 131072 but the request contains 537812 tokens. ` + canary + `"}`, 400, "context_length_exceeded"},
+		{400, `{"error":{"code":400,"message":"This endpoint's maximum context length is 131072 tokens. ` + canary + `","metadata":{"provider_name":"Together"}}}`, 400, "context_length_exceeded"},
+		{400, `{"error":{"code":400,"message":"` + canary + `","metadata":{"error_type":"context_length_exceeded"}}}`, 400, "context_length_exceeded"},
+		{413, `{"error":{"code":413,"message":"` + canary + `","metadata":{"error_type":"context_length_exceeded"}}}`, 400, "context_length_exceeded"},
+		{400, `{"error":{"type":"invalid_request_error","message":"` + canary + ` prompt is too long"}}`, 400, "invalid_request"},
+		{400, `{"code":"Client specified an invalid argument","error":"` + canary + `"}`, 400, "invalid_request"},
+		{422, `{"error":{"message":"prompt is too long ` + canary + `"}}`, 400, "invalid_request"},
+		{500, `{"error":{"message":"This model's maximum context length is 131072 tokens"}}`, 502, "upstream_error"},
 	}
 	for _, tc := range cases {
 		up := apierr.SanitizedUpstreamError(tc.status, []byte(tc.vendorBody))

@@ -46,8 +46,7 @@ const (
 var limitFieldNames = [...]string{MaxCompletionTokens: "max_completion_tokens", MaxTokens: "max_tokens"}
 
 var (
-	errUpstreamErrorEvent = errors.New("openaicompat: upstream sent an error event")
-	errNotAnObject        = errors.New("openaicompat: upstream sent a reply that is not a JSON object")
+	errNotAnObject = errors.New("openaicompat: upstream sent a reply that is not a JSON object")
 )
 
 type Sender interface {
@@ -68,6 +67,7 @@ type Provider struct {
 	// OpenRouter does when a model skips its thinking. That text reaches the client as content too: in a stream,
 	// before the stop.
 	AnswersInReasoning bool
+	NamesHost          bool
 	// Admit refuses a call before it is sent, or is nil to send every call.
 	Admit func(chat.Call) error
 	// ChargeFields are the usage fields that carry what the vendor charged the proxy, which the client is not shown.
@@ -101,7 +101,7 @@ func (p *Provider) Stream(ctx context.Context, c chat.Call, emit func(chat.Chunk
 			usage = r.usage.Domain()
 		}
 		if errEvent, ok := r.value("error"); ok && string(errEvent) != "null" {
-			return false, errUpstreamErrorEvent
+			return false, chat.ErrorChunkOf(errEvent)
 		}
 		if r.choices == 0 && r.usage != nil && !c.IncludeUsage {
 			return false, nil
@@ -115,7 +115,7 @@ func (p *Provider) Stream(ctx context.Context, c chat.Call, emit func(chat.Chunk
 				if err != nil {
 					return false, err
 				}
-				if err := emit(chat.NewChunk(answer)); err != nil {
+				if err := emit(chat.NewChunk(answer).WithHost(r.host)); err != nil {
 					return false, err
 				}
 				answered = true
@@ -136,7 +136,7 @@ func (p *Provider) Stream(ctx context.Context, c chat.Call, emit func(chat.Chunk
 		if err != nil {
 			return false, err
 		}
-		if err := emit(chat.NewChunk(data)); err != nil || trailing == nil {
+		if err := emit(chat.NewChunk(data).WithHost(r.host)); err != nil || trailing == nil {
 			return false, err
 		}
 		r.set("choices", json.RawMessage("[]"))
@@ -145,7 +145,7 @@ func (p *Provider) Stream(ctx context.Context, c chat.Call, emit func(chat.Chunk
 		if err != nil {
 			return false, err
 		}
-		return false, emit(chat.NewChunk(data))
+		return false, emit(chat.NewChunk(data).WithHost(r.host))
 	})
 	return usage, err
 }
@@ -179,7 +179,7 @@ func (p *Provider) Complete(ctx context.Context, c chat.Call) (chat.Chunk, chat.
 	if err != nil {
 		return chat.Chunk{}, chat.Usage{}, err
 	}
-	return chat.NewChunk(body), usage, nil
+	return chat.NewChunk(body).WithHost(r.host), usage, nil
 }
 
 func (p *Provider) admit(c chat.Call) error {

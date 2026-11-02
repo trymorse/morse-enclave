@@ -125,6 +125,7 @@ type sseWriter struct {
 	shown      bool
 	sent       bool
 	finish     chat.Finish
+	host       chat.Host
 	transcript *chat.Transcript
 	clock      *thinkingClock
 }
@@ -143,6 +144,7 @@ func (s *sseWriter) emit(c chat.Chunk) error {
 		s.delivered++
 		s.visible += d.VisibleBytes()
 		s.finish, s.shown, s.sent = finish, shown, sent
+		s.host = cmp.Or(c.Host(), s.host)
 		s.transcript.Add(d)
 	}
 	return err
