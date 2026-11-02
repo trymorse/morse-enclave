@@ -16,9 +16,9 @@ func TestThresholdIsEightyPercentOfTheWindowWhenTheReservesFit(t *testing.T) {
 
 func TestThresholdDropsSoTheOutputAndTheSummaryCallStillFit(t *testing.T) {
 	cases := map[string]struct{ window, defaultMax, want int }{
-		"a 128K window with a 32K default": {128_000, 32768, 128_000 - 32768 - SummaryReserve},
-		"a default above the reserve cap":  {200_000, 128_000, 200_000 - MaxOutputReserve - SummaryReserve},
-		"a window too small to compact":    {40_000, 32768, 40_000 - 32768 - SummaryReserve},
+		"a 128K window with an 8K default": {128_000, 8192, 128_000 - 8192 - SummaryReserve},
+		"a default above the reserve cap":  {128_000, 32768, 128_000 - MaxOutputReserve - SummaryReserve},
+		"a window too small to compact":    {30_000, 16384, 30_000 - 16384 - SummaryReserve},
 	}
 	for name, c := range cases {
 		got := Threshold(c.window, c.defaultMax)

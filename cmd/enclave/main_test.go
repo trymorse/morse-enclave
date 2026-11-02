@@ -24,22 +24,22 @@ var imageSettings = []string{"PROXY_WORKER_ADDR", "PROXY_ROUTES_FILE", "PROXY_EN
 var neverInAnImage = []string{"PROXY_HPKE_DEV_KEY"}
 
 func TestTheHostSetsOnlyCredentialsAndTheImagesValuesWin(t *testing.T) {
-	image := []string{"PROXY_ROUTES_FILE=/routes.json", "NEON_AUTH_URL=https://auth.example"}
+	image := []string{"PROXY_ROUTES_FILE=/routes.json", "AUTH_URL=https://auth.example"}
 	host := []secret{
 		{"PHALA_API_KEY", "k"},
 		{"DATABASE_URL", "postgres://db"},
-		{"NEON_AUTH_URL", "https://evil.example"},
-		{"VIDEO_STORE_URL", "https://evil.example"},
+		{"AUTH_URL", "https://evil.example"},
+		{"STORAGE_URL", "https://evil.example"},
 		{"SSL_CERT_FILE", "/evil.pem"},
 		{"HTTPS_PROXY", "http://evil"},
 		{"GODEBUG", "x509ignoreCN=1"},
 		{"PROXY_ROUTES_FILE", "/evil.json"},
 		{"DATABASE_URL_DIRECT", "postgres://direct"},
-		{"SLACK_BOT_TOKEN", "x"},
+		{"ALERTS_TOKEN", "x"},
 		{"PROXY_HPKE_DEV_KEY", "00"},
 	}
 	env, dropped := environ(image, host, []string{"PHALA_API_KEY", "DATABASE_URL"})
-	want := []string{"PROXY_ROUTES_FILE=/routes.json", "NEON_AUTH_URL=https://auth.example", "PHALA_API_KEY=k", "DATABASE_URL=postgres://db"}
+	want := []string{"PROXY_ROUTES_FILE=/routes.json", "AUTH_URL=https://auth.example", "PHALA_API_KEY=k", "DATABASE_URL=postgres://db"}
 	if !slices.Equal(env, want) {
 		t.Errorf("env = %q, want %q", env, want)
 	}
@@ -60,7 +60,7 @@ func TestTheRelaysOwnSecretsNeverReachTheWorker(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	relay := []secret{{"ATREST_KEY", "a"}, {"ATREST_KEY_2", "b"}, {"DATABASE_URL", "postgres://db"}, {"STRIPE_SECRET_KEY", "sk"}, {"GUEST_IP_KEY", "g"}, {"VIDEO_STORE_SECRET_ACCESS_KEY", "v"}}
+	relay := []secret{{"AT_REST_KEY", "a"}, {"AT_REST_KEY_2", "b"}, {"DATABASE_URL", "postgres://db"}, {"PAYMENTS_SECRET_KEY", "sk"}, {"IP_HASH_KEY", "g"}, {"STORAGE_SECRET_KEY", "v"}}
 	env, dropped := environ(nil, relay, credentials(rts))
 	if len(env) != 0 || len(dropped) != len(relay) {
 		t.Errorf("env %q dropped %q; want every relay secret dropped", env, dropped)
@@ -81,7 +81,7 @@ func TestTheCredentialsTheHostMayServeAreExactlyThoseTheEnclaveKeeps(t *testing.
 			t.Errorf("%s is kept by the enclave but missing from credentials", name)
 		}
 	}
-	for _, name := range []string{"DATABASE_URL", "ATREST_KEY", "STRIPE_SECRET_KEY"} {
+	for _, name := range []string{"DATABASE_URL", "AT_REST_KEY", "PAYMENTS_SECRET_KEY"} {
 		if slices.Contains(names, name) {
 			t.Errorf("credentials lists %s", name)
 		}

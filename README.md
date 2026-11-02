@@ -6,9 +6,9 @@ Morse exports this code from its private monorepo on each release. The export ho
 
 ## How this repository is published
 
-Morse publishes this repository from its private monorepo. Each commit here is one image Morse pinned for production. A bot makes the commit when the deploy pins the image, and the commit message lists the image's PCR0, PCR1, and PCR2. The bot tags the commit with the release, such as `v2026.10.0`. An image rebuilt with newer pins for the same release gets its own tag, such as `v2026.10.0-pins-60db229`. Morse does not publish its day-to-day commits.
+Morse publishes this repository from its private monorepo. Each commit here is one image Morse pinned for production. A bot makes the commit when the deploy pins the image, and the commit message lists the image's PCR0, PCR1, and PCR2. The bot tags the commit with the release, such as `v2026.10.1`. An image rebuilt with newer pins for the same release gets its own tag, such as `v2026.10.5-pins-6ab5d36`. Morse does not publish its day-to-day commits.
 
-The first release here is `v2026.10.0`. [morse-pins](https://github.com/trymorse/morse-pins) also lists older prod images, `v0.6.26` to `v0.6.34`, that ran before Morse published this source. This repository has no source for them. An entry marked `revoked: true` is an image the app no longer accepts. If Morse revoked an image before it deployed, its tag may be missing here too.
+The first release here is `v2026.10.1`. [morse-pins](https://github.com/trymorse/morse-pins) also lists older prod images, `v0.6.26` to `v0.6.34`, that ran before Morse published this source. This repository has no source for them. An entry marked `revoked: true` is an image the app no longer accepts. If Morse revoked an image before it deployed, its tag may be missing here too.
 
 This repository does not take pull requests. To report a bug, open an issue. To report a security problem, follow `SECURITY.md`.
 
@@ -58,7 +58,9 @@ Attestation checks for the NEAR AI and Phala enclaves:
 
 ## What is not here
 
-The relay, billing, accounts, and the rest of Morse's servers are not in this repo. None of them run in the enclave. The relay does not have the key that opens a sealed request, so it can pass the request along but cannot read it.
+The relay, accounts, payments, and the rest of Morse's servers are not in this repo. None of them run in the enclave. The relay does not have the key that opens a sealed request, so it can pass the request along but cannot read it.
+
+Only the enclave can read a request and its reply, so the enclave counts the tokens each request uses and reports that usage, priced at the vendor's list price in `routes.json`. It does not hold account balances, plan prices, or what Morse charges.
 
 ## Rebuild the image
 
@@ -87,7 +89,7 @@ You need an arm64 Linux machine with Docker, `jq`, and `sha256sum`. The Nitro CL
 
 The app refuses an enclave whose attestation document does not carry PCRs from that file. If your PCRs match, this source builds the image Morse runs.
 
-To check only the build's root filesystem, run `build.sh rootfs` instead of `eif`. It stops after writing `/tmp/out/rootfs.sha256` and works on any machine with Docker.
+To check only the build's root filesystem, run `build.sh rootfs` instead of `eif`. It stops after writing `/tmp/out/rootfs.sha256` and works on any machine with Docker. Compare that hash with the `rootfs sha256` line in the tag's commit message. Older tags have no such line. A match shows this source gives the files the image runs. Only the PCRs show the kernel and init that `nitro-cli` adds.
 
 ## Check the running enclave
 
@@ -99,7 +101,7 @@ A rebuild shows what this source builds. To see what Morse runs right now, ask t
 uv run check-enclave.py
 ```
 
-For each enclave, the script checks that the document's certificate chain ends at AWS's Nitro root certificate, as [Verifying the root of trust](https://docs.aws.amazon.com/enclaves/latest/user/verify-root.html) describes. It checks that the signature verifies and that the document is under 30 minutes old. Then it looks the PCRs up in `enclave_pins.json` in morse-pins. It prints each enclave's PCRs and the tag here whose source the enclave runs. It exits 1 if any enclave fails a check, or runs an image that morse-pins does not list or marks revoked.
+For each enclave, the script checks that the document's certificate chain ends at AWS's Nitro root certificate, as [Verifying the root of trust](https://docs.aws.amazon.com/enclaves/latest/user/verify-root.html) describes. It checks that the signature verifies and that the document is under 30 minutes old. Then it looks the PCRs up among the `prod` entries of `enclave_pins.json` in morse-pins. It prints each enclave's PCRs and the tag here whose source the enclave runs. It exits 1 if any enclave fails a check, or runs an image that morse-pins does not list for prod or marks revoked.
 
 The document's `user_data` holds the public key the app seals requests to. The enclave makes that key when it starts and refuses one from outside (`internal/nitro/key.go`), so only an enclave with those PCRs can open a sealed request.
 

@@ -51,8 +51,13 @@ func (r *Request) UnderSystemPrompt(prompt string) (*Request, error) {
 	if text != "" {
 		prompt += "\n\n" + text
 	}
+	return r.withFirstText(msgs, prompt), nil
+}
+
+// withFirstText is the request with its first message's content text, and every other message as it was.
+func (r *Request) withFirstText(msgs []Message, text string) *Request {
 	first := maps.Clone(msgs[0].raw)
-	first["content"], _ = json.Marshal(prompt)
+	first["content"], _ = json.Marshal(text)
 	var list bytes.Buffer
 	list.WriteByte('[')
 	list.Write(encodeObject(first))
@@ -61,7 +66,7 @@ func (r *Request) UnderSystemPrompt(prompt string) (*Request, error) {
 		list.Write(encodeObject(m.raw))
 	}
 	list.WriteByte(']')
-	return r.withMessages(list.Bytes()), nil
+	return r.withMessages(list.Bytes())
 }
 
 // Prepend puts a message of role and content before the chat's messages, and keeps every byte of theirs.

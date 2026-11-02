@@ -128,9 +128,9 @@ def main():
         print(f"  AWS Nitro signed this document {age:.0f} seconds ago.")
         for i, value in enumerate(pcrs):
             print(f"  PCR{i}  {value}")
-        entry = next((p for p in pins if [p["pcr0"], p["pcr1"], p["pcr2"]] == pcrs), None)
+        entry = next((p for p in pins if p["environment"] == "prod" and [p["pcr0"], p["pcr1"], p["pcr2"]] == pcrs), None)
         if entry is None:
-            print("  FAIL: morse-pins lists no image with these PCRs.\n")
+            print("  FAIL: morse-pins lists no prod image with these PCRs.\n")
             failed = True
         elif entry["revoked"]:
             print(f"  FAIL: these are the PCRs of {entry['tag']}, which morse-pins marks revoked.\n")

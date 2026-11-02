@@ -45,10 +45,9 @@ type Attester interface {
 }
 
 type SealedOpening struct {
-	Body    []byte
-	Cast    chat.Cast
-	Launch  *chat.Launch
-	Writing *chat.Writing
+	Body []byte
+	Cast chat.Cast
+	Framing
 }
 
 type SealedAdmission struct {
@@ -123,7 +122,7 @@ func (w *InProcess) OpenSealed(ctx context.Context, o SealedOpening) (SealedAdmi
 		header.Set(name, value)
 	}
 	cek := req.CEK
-	admitted, err := w.Open(ctx, Opening{Method: req.Method, Path: target.Path, Query: target.RawQuery, Header: ContentHeaders(header), Body: bytes.NewReader(req.Body), Cast: o.Cast, Launch: o.Launch, Writing: o.Writing, cek: &cek})
+	admitted, err := w.Open(ctx, Opening{Method: req.Method, Path: target.Path, Query: target.RawQuery, Header: ContentHeaders(header), Body: bytes.NewReader(req.Body), Cast: o.Cast, Framing: o.Framing, cek: &cek})
 	if err != nil {
 		refusal := refusalWire(contentRefusal(err))
 		return refuse(refusal.Envelope(), refusal.Status)

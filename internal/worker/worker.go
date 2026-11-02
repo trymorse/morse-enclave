@@ -43,16 +43,23 @@ type Worker interface {
 	Sessions(ctx context.Context, v Vendor) ([]chat.ListedSession, error)
 }
 
-type Opening struct {
-	Method  string
-	Path    string
-	Query   string
-	Header  http.Header
-	Body    io.Reader
-	Cast    chat.Cast
+// Framing is what the proxy puts around a chat once it checked the caller may have it: a launch character's
+// prompt, or the rules for one of the user's own characters (never both), and the character writer's examples.
+type Framing struct {
 	Launch  *chat.Launch
+	Own     *chat.OwnFrame
 	Writing *chat.Writing
-	cek     *[32]byte
+}
+
+type Opening struct {
+	Method string
+	Path   string
+	Query  string
+	Header http.Header
+	Body   io.Reader
+	Cast   chat.Cast
+	Framing
+	cek *[32]byte
 }
 
 func ContentHeaders(from http.Header) http.Header {

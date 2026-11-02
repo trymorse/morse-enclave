@@ -18,7 +18,7 @@ const (
 	OutputLimit      = 16384
 	PromptOverhead   = 2048
 	SummaryReserve   = OutputLimit + PromptOverhead
-	MaxOutputReserve = 32768
+	MaxOutputReserve = 16384
 	ThresholdPercent = 80
 )
 

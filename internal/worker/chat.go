@@ -80,17 +80,21 @@ type openedChat struct {
 	call          chat.Call
 	asked         int
 	launch        *chat.Launch
+	own           *chat.OwnFrame
 	writing       *chat.Writing
 	promptComment []byte
 	character     chat.Character
 	promptBytes   int
 }
 
-// played is the character the chat plays: the launch the proxy checked, or the one whose prompt opens the client's
-// system message.
+// played is the character the chat plays: the launch the proxy checked, the user's own character whose rules it
+// checked, or the one whose prompt opens the client's system message.
 func (o *openedChat) played(cast chat.Cast) chat.Character {
 	if o.launch != nil {
 		return o.launch.Character()
+	}
+	if o.own != nil {
+		return o.own.Character()
 	}
 	text, _ := o.call.SystemText()
 	return cast.Plays(text)
@@ -113,6 +117,9 @@ func (w *InProcess) openChat(o Opening, compaction bool) (Admission, error) {
 	if o.Launch != nil && !o.Cast.Casts(*o.Launch) {
 		return nil, errLaunchNotCast
 	}
+	if o.Own != nil && (o.Launch != nil || o.Own.Base != o.Cast.Rules()) {
+		return nil, errOwnNotCast
+	}
 	if o.Writing != nil {
 		for _, e := range o.Writing.Examples {
 			if !o.Cast.Casts(e.Launch) {
@@ -120,7 +127,7 @@ func (w *InProcess) openChat(o Opening, compaction bool) (Admission, error) {
 			}
 		}
 	}
-	oc := &openedChat{cuts: newCuts(), route: route, protocol: p, call: chat.Call{Request: req, RouteEffort: route.DefaultReasoningEffort, Efforts: route.ReasoningEfforts}, launch: o.Launch, writing: o.Writing}
+	oc := &openedChat{cuts: newCuts(), route: route, protocol: p, call: chat.Call{Request: req, RouteEffort: route.DefaultReasoningEffort, Efforts: route.ReasoningEfforts}, launch: o.Launch, own: o.Own, writing: o.Writing}
 	if compaction {
 		err = oc.compact(o.Cast)
 	} else {
@@ -184,6 +191,7 @@ var (
 	errCompactionSealed        = apierr.Invalid(http.StatusBadRequest, "compaction_not_sealable", "Compaction is refused on e2ee models, because the proxy adds the compaction instruction and cannot read or change a sealed body. Fetch the instruction from GET /v1/compaction and send it as the last sealed user message of an ordinary chat request.")
 	errOpenToolCall            = apierr.Invalid(http.StatusBadRequest, "compaction_open_tool_call", "The last message calls tools whose results are not in the request. Compact up to a turn whose tool calls all have results.")
 	errLaunchNotCast           = fmt.Errorf("%w: the launch prompt is not the cast's", apierr.ErrUnavailable)
+	errOwnNotCast              = fmt.Errorf("%w: the own character's rules are not the cast's", apierr.ErrUnavailable)
 	errLaunchPromptSent        = apierr.Invalid(http.StatusBadRequest, "character_prompt_sent", "With X-Character-Content the proxy writes the character's prompt into the chat, so the system message must not open with it.")
 	errExamplesNotChat         = apierr.InvalidParameter("X-Writer-Examples goes on POST /v1/chat/completions alone.")
 	errExamplesSealed          = apierr.InvalidParameter("X-Writer-Examples goes on a chat request to a model whose messages the proxy can read, which no e2ee model's are.")
@@ -224,14 +232,25 @@ func latestUserTextBytes(msgs []chat.Message) int {
 	return 0
 }
 
-// underLaunch opens a plaintext chat's system message with the launch's prompt. A chat whose system message opens
-// with a launch prompt already is refused: its client sent the prompt the proxy writes.
+// underLaunch opens a plaintext chat's system message with the launch's prompt, or puts the rules of the user's own
+// character around it. A chat whose system message opens with a character's prompt already is refused: its client
+// sent what the proxy writes.
 func (o *openedChat) underLaunch(cast chat.Cast) error {
-	if o.launch == nil {
+	if o.launch == nil && o.own == nil {
 		return nil
 	}
-	if text, _ := o.call.SystemText(); cast.Plays(text).Kind == chat.CatalogCharacter {
+	text, _ := o.call.SystemText()
+	switch played := cast.Plays(text).Kind; {
+	case played == chat.CatalogCharacter, o.own != nil && played == chat.OwnCharacter:
 		return errLaunchPromptSent
+	}
+	if o.own != nil {
+		req, err := o.call.Request.UnderOwnFrame(*o.own)
+		if err != nil {
+			return err
+		}
+		o.call.Request = req
+		return nil
 	}
 	req, err := o.call.Request.UnderSystemPrompt(o.launch.Prompt)
 	if err != nil {

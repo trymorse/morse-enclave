@@ -193,18 +193,19 @@ type openingWire struct {
 	Prompts []chat.PromptHash `json:"prompts,omitempty"`
 	Rules   string            `json:"rules,omitempty"`
 	Launch  *chat.Launch      `json:"launch,omitempty"`
+	Own     *chat.OwnFrame    `json:"own,omitempty"`
 	Writing *chat.Writing     `json:"writing,omitempty"`
 }
 
-func setOpening(header http.Header, c chat.Cast, l *chat.Launch, w *chat.Writing) {
-	raw, _ := json.Marshal(openingWire{Prompts: c.Prompts(), Rules: c.Rules(), Launch: l, Writing: w})
+func setOpening(header http.Header, c chat.Cast, f Framing) {
+	raw, _ := json.Marshal(openingWire{Prompts: c.Prompts(), Rules: c.Rules(), Launch: f.Launch, Own: f.Own, Writing: f.Writing})
 	header.Set(headerOpening, base64.StdEncoding.EncodeToString(raw))
 }
 
 func openingOf(header http.Header) (openingWire, error) {
 	var o openingWire
 	raw, err := base64.StdEncoding.DecodeString(header.Get(headerOpening))
-	if err != nil || json.Unmarshal(raw, &o) != nil || o.Launch != nil && o.Launch.ID == "" ||
+	if err != nil || json.Unmarshal(raw, &o) != nil || o.Launch != nil && o.Launch.ID == "" || o.Launch != nil && o.Own != nil ||
 		o.Writing != nil && slices.ContainsFunc(o.Writing.Examples, func(e chat.Example) bool { return e.ID == "" }) {
 		return openingWire{}, errors.New("worker: malformed " + headerOpening)
 	}

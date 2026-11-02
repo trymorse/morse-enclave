@@ -118,7 +118,7 @@ func (c *Client) Open(ctx context.Context, o Opening) (Admission, error) {
 	req.Header.Set(headerMethod, o.Method)
 	req.Header.Set(headerPath, o.Path)
 	req.Header.Set(headerQuery, o.Query)
-	setOpening(req.Header, o.Cast, o.Launch, o.Writing)
+	setOpening(req.Header, o.Cast, o.Framing)
 	data, _, err := c.call(req)
 	if sent.err != nil {
 		return nil, sent.err
@@ -136,7 +136,7 @@ func (c *Client) OpenSealed(ctx context.Context, o SealedOpening) (SealedAdmissi
 		return SealedAdmission{}, err
 	}
 	req.Header.Set("Content-Type", SealedContentType)
-	setOpening(req.Header, o.Cast, o.Launch, o.Writing)
+	setOpening(req.Header, o.Cast, o.Framing)
 	data, header, err := c.call(req)
 	switch {
 	case err != nil:

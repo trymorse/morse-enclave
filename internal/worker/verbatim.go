@@ -85,18 +85,27 @@ func (u Verbatim) admit(o *openedChat, _ chat.Cast) error {
 	if o.writing != nil {
 		return errExamplesSealed
 	}
-	if o.launch != nil {
-		if err := u.sealLaunch(o); err != nil {
+	switch {
+	case o.launch != nil:
+		if err := u.sealLaunch(o, o.launch.Prompt); err != nil {
 			return err
 		}
 		o.character = o.launch.Character()
+	case o.own != nil:
+		// The worker can't read the name lines inside the client's seal, so the rules say "the character".
+		if err := u.sealLaunch(o, o.own.Unnamed()); err != nil {
+			return err
+		}
+		o.character = o.own.Character()
 	}
 	n, err := o.call.PromptTextBytes()
 	o.promptBytes = hex.DecodedLen(n)
 	return err
 }
 
-func (u Verbatim) sealLaunch(o *openedChat) error {
+// sealLaunch seals prompt, a launch character's or an own character's rules, in front of an e2ee chat as its system
+// message. The client sends its own additions as a user turn: a model takes one system message, first.
+func (u Verbatim) sealLaunch(o *openedChat, prompt string) error {
 	msgs, err := o.call.Messages()
 	if err != nil {
 		return err
@@ -104,7 +113,7 @@ func (u Verbatim) sealLaunch(o *openedChat) error {
 	if slices.ContainsFunc(msgs, func(m chat.Message) bool { return m.Role == "system" }) {
 		return errLaunchSystemSealed
 	}
-	sealed, err := u.Route.SealPrompt(o.protocol.params, o.launch.Prompt)
+	sealed, err := u.Route.SealPrompt(o.protocol.params, prompt)
 	if err != nil {
 		return err
 	}

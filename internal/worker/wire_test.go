@@ -351,26 +351,30 @@ func TestTheOpeningCrossesTheWireWithItsNSFWPromptsNamed(t *testing.T) {
 	launch := &chat.Launch{ID: "noah", Prompt: "You are Noah."}
 	writing := &chat.Writing{Examples: []chat.Example{{Launch: *launch, Name: "Noah"}}}
 	header := http.Header{}
-	setOpening(header, cast, launch, writing)
+	setOpening(header, cast, Framing{Launch: launch, Writing: writing})
 	got, err := openingOf(header)
 	want := openingWire{Prompts: cast.Prompts(), Rules: cast.Rules(), Launch: launch, Writing: writing}
 	if err != nil || !reflect.DeepEqual(got, want) {
 		t.Fatalf("the opening came back as %+v (%v), want %+v", got, err, want)
 	}
+	own := &chat.OwnFrame{Base: "Rules {name}.", Content: "Content: NSFW.", NSFW: true}
+	setOpening(header, cast, Framing{Own: own})
+	got, err = openingOf(header)
+	if want := (openingWire{Prompts: cast.Prompts(), Rules: cast.Rules(), Own: own}); err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("the own character's opening came back as %+v (%v), want %+v", got, err, want)
+	}
 }
 
-func TestAnOpeningWithALaunchOrAnExampleThatNamesNoCharacterIsMalformed(t *testing.T) {
-	for _, o := range []struct {
-		launch  *chat.Launch
-		writing *chat.Writing
-	}{
-		{launch: &chat.Launch{Prompt: "You are Noah."}},
-		{writing: &chat.Writing{Examples: []chat.Example{{Launch: chat.Launch{Prompt: "You are Noah."}}}}},
+func TestAnOpeningWithALaunchOrAnExampleThatNamesNoCharacterOrALaunchAndOwnRulesIsMalformed(t *testing.T) {
+	for _, f := range []Framing{
+		{Launch: &chat.Launch{Prompt: "You are Noah."}},
+		{Writing: &chat.Writing{Examples: []chat.Example{{Launch: chat.Launch{Prompt: "You are Noah."}}}}},
+		{Launch: &chat.Launch{ID: "noah", Prompt: "You are Noah."}, Own: &chat.OwnFrame{Base: "Rules."}},
 	} {
 		header := http.Header{}
-		setOpening(header, chat.Cast{}, o.launch, o.writing)
+		setOpening(header, chat.Cast{}, f)
 		if _, err := openingOf(header); err == nil {
-			t.Errorf("an opening of %+v %+v was taken", o.launch, o.writing)
+			t.Errorf("an opening of %+v was taken", f)
 		}
 	}
 }
