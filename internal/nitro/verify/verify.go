@@ -66,10 +66,39 @@ func mustRoot() *x509.Certificate {
 
 var ErrUnpinned = errors.New("verify: no pin names the document's PCRs")
 
+// Image is the enclave image a pin trusts. It is a public release named by its tag, as morse-pins lists them, or a
+// private build named by its commit and version, as the private pins do. Tagged and Built make the two shapes.
+type Image struct{ tag, commit, version string }
+
+func Tagged(tag string) Image { return Image{tag: tag} }
+
+func Built(commit, version string) Image { return Image{commit: commit, version: version} }
+
+// Tag is a public release's tag, and false for a private build.
+func (i Image) Tag() (string, bool) { return i.tag, i.tag != "" }
+
+// Name is a public release's tag or a private build's version.
+func (i Image) Name() string {
+	if i.tag != "" {
+		return i.tag
+	}
+	return i.version
+}
+
 type Pin struct {
-	Tag         string `json:"tag,omitempty"`
-	Commit      string `json:"commit,omitempty"`
-	Version     string `json:"version,omitempty"`
+	Image       Image
+	Environment string
+	PCR0        string
+	PCR1        string
+	PCR2        string
+	BuiltAt     string
+	Revoked     bool
+}
+
+type pinEntry struct {
+	Tag         string `json:"tag"`
+	Commit      string `json:"commit"`
+	Version     string `json:"version"`
 	Environment string `json:"environment"`
 	PCR0        string `json:"pcr0"`
 	PCR1        string `json:"pcr1"`
@@ -78,33 +107,41 @@ type Pin struct {
 	Revoked     bool   `json:"revoked"`
 }
 
+func (e pinEntry) image() (Image, bool) {
+	switch {
+	case e.Tag != "" && e.Commit == "" && e.Version == "":
+		return Tagged(e.Tag), true
+	case e.Tag == "" && e.Commit != "" && e.Version != "":
+		return Built(e.Commit, e.Version), true
+	}
+	return Image{}, false
+}
+
 var (
 	pcrPattern = regexp.MustCompile(`^[0-9a-f]{96}$`)
 	zeroPCR    = strings.Repeat("0", 96)
 )
 
-func (p Pin) Name() string {
-	if p.Tag != "" {
-		return p.Tag
-	}
-	return p.Version
-}
+func (p Pin) Name() string { return p.Image.Name() }
 
 func (p Pin) names(pcr0, pcr1, pcr2 string) bool {
 	return p.PCR0 == pcr0 && p.PCR1 == pcr1 && p.PCR2 == pcr2
 }
 
 func ParsePins(data []byte) ([]Pin, error) {
-	var pins []Pin
-	if err := json.Unmarshal(data, &pins); err != nil {
+	var entries []pinEntry
+	if err := json.Unmarshal(data, &entries); err != nil {
 		return nil, fmt.Errorf("verify: pins: %w", err)
 	}
+	pins := make([]Pin, len(entries))
 	seen := map[[4]string]int{}
-	for i, p := range pins {
-		public, private := p.Tag != "" && p.Commit == "" && p.Version == "", p.Tag == "" && p.Commit != "" && p.Version != ""
-		if !public && !private || p.Environment == "" {
+	for i, e := range entries {
+		image, ok := e.image()
+		if !ok || e.Environment == "" {
 			return nil, fmt.Errorf("verify: pins[%d] needs an environment and either a tag, as morse-pins lists, or a commit and version, as the private pins do", i)
 		}
+		p := Pin{Image: image, Environment: e.Environment, PCR0: e.PCR0, PCR1: e.PCR1, PCR2: e.PCR2, BuiltAt: e.BuiltAt, Revoked: e.Revoked}
+		pins[i] = p
 		if _, err := time.Parse(time.RFC3339, p.BuiltAt); err != nil {
 			return nil, fmt.Errorf("verify: pins[%d].built_at: %w", i, err)
 		}
@@ -116,11 +153,11 @@ func ParsePins(data []byte) ([]Pin, error) {
 		if p.names(zeroPCR, zeroPCR, zeroPCR) {
 			return nil, fmt.Errorf("verify: pins[%d] pins all-zero PCRs, which only a debug enclave reports", i)
 		}
-		image := [4]string{p.Environment, p.PCR0, p.PCR1, p.PCR2}
-		if first, ok := seen[image]; ok {
+		pinned := [4]string{p.Environment, p.PCR0, p.PCR1, p.PCR2}
+		if first, ok := seen[pinned]; ok {
 			return nil, fmt.Errorf("verify: pins[%d] and pins[%d] pin the same %s PCRs", first, i, p.Environment)
 		}
-		seen[image] = i
+		seen[pinned] = i
 	}
 	return pins, nil
 }

@@ -59,7 +59,7 @@ func (r chatRoute) refuseBelow(floor catalog.Tier) error {
 	if r.tier >= floor {
 		return nil
 	}
-	return apierr.Invalid(http.StatusBadRequest, "privacy_floor_unmet", fmt.Sprintf("This model is tier %s, below the request's provider.min_privacy of %s. Choose a model of tier %s or above from GET /v1/models, or lower min_privacy.", r.tier, floor, floor))
+	return catalog.FloorError{Tier: r.tier, Floor: floor}
 }
 
 func namesFloor(provider json.RawMessage) bool {

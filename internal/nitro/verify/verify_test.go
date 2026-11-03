@@ -27,7 +27,7 @@ import (
 var pcr = struct{ pcr0, pcr1, pcr2 string }{strings.Repeat("a0", 48), strings.Repeat("a1", 48), strings.Repeat("a2", 48)}
 
 func pinOf(mutate func(*verify.Pin)) verify.Pin {
-	p := verify.Pin{Commit: "c0ffee", Version: "v1.2.3", Environment: "dev", PCR0: pcr.pcr0, PCR1: pcr.pcr1, PCR2: pcr.pcr2, BuiltAt: "2026-10-01T00:00:00Z"}
+	p := verify.Pin{Image: verify.Built("c0ffee", "v1.2.3"), Environment: "dev", PCR0: pcr.pcr0, PCR1: pcr.pcr1, PCR2: pcr.pcr2, BuiltAt: "2026-10-01T00:00:00Z"}
 	if mutate != nil {
 		mutate(&p)
 	}
@@ -250,7 +250,7 @@ func TestParsePinsRefusesAnAllZeroEntryAndMalformedPins(t *testing.T) {
 	zero := strings.Repeat("0", 96)
 	good := `[{"commit":"c0ffee","version":"v1","environment":"dev","pcr0":"` + pcr.pcr0 + `","pcr1":"` + pcr.pcr1 + `","pcr2":"` + pcr.pcr2 + `","built_at":"2026-10-01T00:00:00Z","revoked":false}]`
 	pins, err := verify.ParsePins([]byte(good))
-	if err != nil || len(pins) != 1 || pins[0].Version != "v1" {
+	if err != nil || len(pins) != 1 || pins[0].Image != verify.Built("c0ffee", "v1") {
 		t.Fatalf("good pins: %v, %v", pins, err)
 	}
 	if pins, err := verify.ParsePins([]byte(strings.Replace(good, `"revoked"`, `"signed_by":"morse","revoked"`, 1))); err != nil || len(pins) != 1 {
@@ -276,7 +276,7 @@ func TestParsePinsRefusesAnAllZeroEntryAndMalformedPins(t *testing.T) {
 func TestParsePinsReadsMorsePinsPublicFormatAndRefusesAMixOfBoth(t *testing.T) {
 	public := `[{"tag":"v2026.11.0","environment":"prod","pcr0":"` + pcr.pcr0 + `","pcr1":"` + pcr.pcr1 + `","pcr2":"` + pcr.pcr2 + `","built_at":"2026-11-02T00:30:17Z","revoked":false}]`
 	pins, err := verify.ParsePins([]byte(public))
-	if err != nil || len(pins) != 1 || pins[0].Name() != "v2026.11.0" {
+	if err != nil || len(pins) != 1 || pins[0].Image != verify.Tagged("v2026.11.0") {
 		t.Fatalf("public pins: %v, %v", pins, err)
 	}
 	for name, bad := range map[string]string{
@@ -301,7 +301,7 @@ func TestAcceptsAForgedDocumentAndVouchesForTheKeyItsUserDataNames(t *testing.T)
 		if err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}
-		if string(key.PublicKey) != string(publicKey) || !key.IssuedAt.Equal(f.now) || key.Pin.Version != "v1.2.3" {
+		if string(key.PublicKey) != string(publicKey) || !key.IssuedAt.Equal(f.now) || key.Pin.Name() != "v1.2.3" {
 			t.Fatalf("%s: key %x issued %v pin %+v", name, key.PublicKey, key.IssuedAt, key.Pin)
 		}
 	}
@@ -464,7 +464,7 @@ func TestRefusesPCRsNoPinNamesOrARevokedOrOtherEnvironmentPin(t *testing.T) {
 	}
 
 	revokedRebuild := f.expect(f.now)
-	revokedRebuild.Pins = []verify.Pin{pinOf(nil), pinOf(func(p *verify.Pin) { p.Version, p.Revoked = "v1.2.3-rebuild", true })}
+	revokedRebuild.Pins = []verify.Pin{pinOf(nil), pinOf(func(p *verify.Pin) { p.Image, p.Revoked = verify.Built("c0ffee", "v1.2.3-rebuild"), true })}
 	_, err = verify.Document(doc, revokedRebuild)
 	refused(t, err, "v1.2.3-rebuild is revoked")
 
@@ -518,7 +518,7 @@ func TestVerifiesARealNitroDocumentAgainstTheAWSRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 	issuedAt := time.UnixMilli(1792280904626)
-	pin := verify.Pin{Commit: "c0ffee", Version: "v1.2.3", Environment: "dev", BuiltAt: "2026-10-01T00:00:00Z",
+	pin := verify.Pin{Image: verify.Built("c0ffee", "v1.2.3"), Environment: "dev", BuiltAt: "2026-10-01T00:00:00Z",
 		PCR0: "1dab5ad4c661f95a9e7e3f57bcd83efd9fced7f749ac21ea85a1853131bb5e43b41eb58615efef998d478ce485fcff53",
 		PCR1: "3b4a7e1b5f13c5a1000b3ed32ef8995ee13e9876329f9bc72650b918329ef9cf4e2e4d1e1e37375dab0ba56ba0974d03",
 		PCR2: "f9d2c68436810c46556535a583870e2913ec1f05ecca361b4e78eaa00d0b365dee6570e7699c4f34165fbf635bf35c6a"}
