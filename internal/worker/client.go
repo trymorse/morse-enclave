@@ -50,16 +50,14 @@ func NewClient(base string, client *http.Client) *Client {
 	return &Client{base: strings.TrimSuffix(base, "/"), http: client, counting: map[Handle]struct{}{}}
 }
 
-func (c *Client) Routes(ctx context.Context) (string, error) {
+func (c *Client) Routes(ctx context.Context) (Served, error) {
 	data, _, err := c.get(ctx, "/routes")
 	if err != nil {
-		return "", err
+		return Served{}, err
 	}
-	var reply routesReply
-	if err := json.Unmarshal(data, &reply); err != nil {
-		return "", err
-	}
-	return reply.Digest, nil
+	var reply Served
+	err = json.Unmarshal(data, &reply)
+	return reply, err
 }
 
 func (c *Client) call(req *http.Request) ([]byte, http.Header, error) {

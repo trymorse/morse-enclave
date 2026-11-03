@@ -168,8 +168,11 @@ type pollRequest struct {
 	Deadline time.Time `json:"deadline"`
 }
 
-type routesReply struct {
+const WireVersion = 2
+
+type Served struct {
 	Digest string `json:"digest"`
+	Wire   int    `json:"wire"`
 }
 
 type evidenceRequest struct {

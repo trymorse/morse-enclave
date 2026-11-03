@@ -87,7 +87,7 @@ func NewInProcess(cfg Config) (*InProcess, error) {
 		for _, vendor := range append([]Model{m}, m.Fallbacks...) {
 			switch s := vendor.Serves.(type) {
 			case Chat:
-				w.chats[name] = append(w.chats[name], s.route(vendor.Attester, vendor.Tier))
+				w.chats[name] = append(w.chats[name], s.route(m.ID, vendor))
 			case Images:
 				w.images[name] = s.ImageGenerator
 			case Videos:

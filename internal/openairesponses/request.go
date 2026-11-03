@@ -20,9 +20,13 @@ type request struct {
 	ParallelToolCalls *bool      `json:"parallel_tool_calls,omitempty"`
 	Reasoning         *reasoning `json:"reasoning,omitempty"`
 	MaxOutputTokens   int        `json:"max_output_tokens"`
-	Store             bool       `json:"store"`
+	Store             unstored   `json:"store"`
 	Stream            bool       `json:"stream"`
 }
+
+type unstored struct{}
+
+func (unstored) MarshalJSON() ([]byte, error) { return []byte("false"), nil }
 
 type reasoning struct {
 	Effort string `json:"effort"`

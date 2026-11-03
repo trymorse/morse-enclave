@@ -18,6 +18,8 @@ import (
 )
 
 type Model struct {
+	ID        catalog.ModelID
+	Endpoint  catalog.EndpointID
 	Tier      catalog.Tier
 	Attester  string
 	Serves    Serving
@@ -154,10 +156,15 @@ func (m Model) Validate() error {
 	if err := m.Serves.validate(m.Tier); err != nil {
 		return err
 	}
+	served := map[catalog.EndpointID]bool{m.Endpoint: true}
 	for _, fb := range m.Fallbacks {
 		if err := fb.Validate(); err != nil {
 			return fmt.Errorf("has fallback %s that %w", fb.Attester, err)
 		}
+		if served[fb.Endpoint] {
+			return fmt.Errorf("has two vendors at endpoint %q", fb.Endpoint)
+		}
+		served[fb.Endpoint] = true
 	}
 	return nil
 }

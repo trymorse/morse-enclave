@@ -9,6 +9,7 @@ import (
 
 	"morse/backend/internal/billing/measure"
 	"morse/backend/internal/billing/money"
+	"morse/backend/internal/catalog"
 	"morse/backend/internal/chat"
 	"morse/backend/internal/enum"
 	"morse/backend/internal/health"
@@ -91,8 +92,8 @@ func (a *admitted) take(h Handle) { a.handle = h }
 
 type ChatAdmission struct {
 	admitted
-	Route       string
-	Attester    string
+	Model       catalog.ModelID
+	Candidates  []catalog.EndpointID
 	PromptBound int
 	PromptBytes limits.Kibibytes
 	OutputAsked int
@@ -137,6 +138,7 @@ func (LookupAdmission) kind() admissionKind { return admitsLookup }
 type Grant interface{ kind() grantKind }
 
 type ChatGrant struct {
+	Endpoints    []catalog.EndpointID
 	OutputLimit  int
 	ReasoningCap int
 	Budgeted     bool
@@ -202,6 +204,7 @@ type Measured struct {
 	Follow            Follow
 	Unsampled         bool                `json:"-"`
 	Refusal           measure.RefusalCode `json:",omitempty"`
+	Endpoint          catalog.EndpointID  `json:",omitempty"`
 	Counted           <-chan Count        `json:"-"`
 }
 

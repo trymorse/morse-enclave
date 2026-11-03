@@ -44,19 +44,22 @@ func Read(path string, defaultMarkup money.Markup) (rts []Route, digest string, 
 }
 
 func Parse(data []byte, defaultMarkup money.Markup) ([]Route, error) {
-	var raw []json.RawMessage
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return nil, fmt.Errorf("routes must be a JSON array of objects: %w", err)
+	flat, err := Flatten(data)
+	if err != nil {
+		return nil, err
 	}
-	if len(raw) == 0 {
+	if len(flat) == 0 {
 		return nil, errors.New("routes file has no routes")
 	}
 	seen := map[string]bool{}
-	routes := make([]Route, 0, len(raw))
-	for i, object := range raw {
-		parsed, err := parseRoute(object, defaultMarkup)
+	routes := make([]Route, 0, len(flat))
+	for i, f := range flat {
+		parsed, err := parseRoute(f.Route, defaultMarkup)
 		if err != nil {
 			return nil, fmt.Errorf("route %d: %w", i, err)
+		}
+		for j := range parsed {
+			parsed[j].identify(f)
 		}
 		for _, rt := range parsed {
 			if seen[rt.Model] {

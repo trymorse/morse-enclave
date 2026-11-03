@@ -285,7 +285,7 @@ func (s *Server) poll(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) serveRoutes(w http.ResponseWriter, r *http.Request) {
-	apierr.WriteJSON(w, http.StatusOK, routesReply{Digest: s.routesDigest})
+	apierr.WriteJSON(w, http.StatusOK, Served{Digest: s.routesDigest, Wire: WireVersion})
 }
 
 func (s *Server) attestation(w http.ResponseWriter, r *http.Request) {

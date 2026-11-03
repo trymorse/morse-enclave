@@ -8,9 +8,12 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hf/nsm/request"
 	"github.com/hf/nsm/response"
+
+	"morse/backend/internal/nitro/verify"
 )
 
 type recordingSession struct {
@@ -86,23 +89,9 @@ func TestTheStandInNamesItselfAndCarriesTheKeyForADevClient(t *testing.T) {
 	if !bytes.HasPrefix(doc, []byte(`{"object":"proxy_attestation_stand_in","warning":"not an AWS Nitro attestation`)) {
 		t.Errorf("stand-in %s does not announce itself first", doc)
 	}
-	env, got, err := ParseStandIn(doc)
-	if err != nil || env != "dev" || !bytes.Equal(got, key) {
-		t.Errorf("parsed %q %x %v", env, got, err)
-	}
-	for name, bad := range map[string][]byte{
-		"cose":        {0xd2, 0x84},
-		"other json":  []byte(`{"object":"attestation"}`),
-		"short key":   []byte(`{"object":"proxy_attestation_stand_in","environment":"dev","user_data":"bW9yc2UtcHJveHktaHBrZS12MXxkZXZ8YWJj"}`),
-		"wrong env":   []byte(`{"object":"proxy_attestation_stand_in","environment":"prod","user_data":"` + "bW9yc2UtcHJveHktaHBrZS12MXxkZXZ8" + strings.Repeat("QUJD", 11) + `"}`),
-		"no key":      []byte(`{"object":"proxy_attestation_stand_in","environment":"dev"}`),
-		"empty":       nil,
-		"not an obj":  []byte(`[]`),
-		"bare string": []byte(`"x"`),
-	} {
-		if _, _, err := ParseStandIn(bad); err == nil {
-			t.Errorf("%s parsed as a stand-in", name)
-		}
+	standIn, err := verify.ParseStandIn(doc)
+	if err != nil || standIn.Environment != "dev" || !bytes.Equal(standIn.PublicKey, key) || time.Since(standIn.IssuedAt) > time.Minute {
+		t.Errorf("parsed %+v %v", standIn, err)
 	}
 }
 

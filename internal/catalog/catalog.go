@@ -8,6 +8,10 @@ import (
 	"morse/backend/internal/enum"
 )
 
+type ModelID string
+
+type EndpointID string
+
 type Tier uint8
 
 const (

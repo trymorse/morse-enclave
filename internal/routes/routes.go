@@ -1,6 +1,7 @@
 package routes
 
 import (
+	"cmp"
 	"fmt"
 	"slices"
 
@@ -55,6 +56,8 @@ func parseProvider(raw string) (Provider, error) {
 
 type Route struct {
 	Model         string
+	ID            catalog.ModelID
+	Endpoint      catalog.EndpointID
 	Tier          catalog.Tier
 	Upstream      Upstream
 	BaseURL       string
@@ -75,6 +78,24 @@ type Route struct {
 }
 
 func (rt Route) Upstreams() []Route { return append([]Route{rt}, rt.Fallbacks...) }
+
+func (rt *Route) identify(f Flat) {
+	rt.ID = cmp.Or(f.Model, catalog.ModelID(rt.Model))
+	for i, vendor := range rt.Upstreams() {
+		id := catalog.EndpointID(rt.Tier.String())
+		if a, attested := vendor.Upstream.(Attested); attested {
+			id = catalog.EndpointID(a.Attester.Name)
+		}
+		if i < len(f.Endpoints) {
+			id = f.Endpoints[i]
+		}
+		if i == 0 {
+			rt.Endpoint = id
+		} else {
+			rt.Fallbacks[i-1].ID, rt.Fallbacks[i-1].Endpoint = rt.ID, id
+		}
+	}
+}
 
 // KeyEnvs is every api_key_env that rts or their fallbacks name, sorted, each once.
 func KeyEnvs(rts []Route) []string {

@@ -155,7 +155,7 @@ func model(rt routes.Route, keys Keys, d Deps) (worker.Model, error) {
 	if err != nil {
 		return worker.Model{}, err
 	}
-	m := worker.Model{Tier: rt.Tier, Attester: Attester(rt), Serves: serves}
+	m := worker.Model{ID: rt.ID, Endpoint: rt.Endpoint, Tier: rt.Tier, Attester: Attester(rt), Serves: serves}
 	for _, fb := range rt.Fallbacks {
 		f, err := model(fb, keys, d)
 		if err != nil {

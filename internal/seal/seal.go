@@ -1,5 +1,5 @@
 // Package seal is the sealed transport between the web app and the proxy: a request sealed to the proxy's per-boot
-// HPKE key, and a reply framed under the request's content key. deploy/enclave/DESIGN.md section 3 is the wire format.
+// HPKE key, and a reply framed under the request's content key. It is the wire format POST /v1/sealed takes.
 package seal
 
 import (

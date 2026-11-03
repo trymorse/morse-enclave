@@ -5,6 +5,7 @@ go 1.27.3
 require (
 	filippo.io/edwards25519 v1.2.0
 	github.com/dlclark/regexp2 v1.12.0
+	github.com/fxamacker/cbor/v2 v2.2.0
 	github.com/google/go-tdx-guest v0.3.2-0.20261014222600-23b3eac9db39
 	github.com/hf/nsm v0.0.0-20220930140112-cd181bd646b9
 	golang.org/x/crypto v0.57.0
@@ -14,7 +15,6 @@ require (
 )
 
 require (
-	github.com/fxamacker/cbor/v2 v2.2.0 // indirect
 	github.com/google/logger v1.1.1 // indirect
 	github.com/kr/pretty v0.3.0 // indirect
 	github.com/rogpeppe/go-internal v1.16.0 // indirect

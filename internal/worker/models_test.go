@@ -30,7 +30,7 @@ func TestNewInProcessRefusesAModelWhoseUpstreamDisagreesWithItsTier(t *testing.T
 		"anon":    {Tier: catalog.Anon, Serves: Chat{Upstream: Plain{Provider: prov}}},
 		"private": {Tier: catalog.Private, Serves: Chat{Upstream: Plain{Provider: prov}}},
 		"tee":     {Tier: catalog.TEE, Serves: Chat{Upstream: Plain{Provider: prov, Attester: fakeAttester{}}}},
-		"e2ee":    {Tier: catalog.E2EE, Serves: Chat{Upstream: verbatim}, Fallbacks: []Model{{Tier: catalog.E2EE, Attester: "near", Serves: Chat{Upstream: Verbatim{Route: nearVerbatimRoute{}}}}}},
+		"e2ee":    {Tier: catalog.E2EE, Serves: Chat{Upstream: verbatim}, Fallbacks: []Model{{Endpoint: "near", Tier: catalog.E2EE, Attester: "near", Serves: Chat{Upstream: Verbatim{Route: nearVerbatimRoute{}}}}}},
 	}
 	if _, err := NewInProcess(Config{Models: equipped}); err != nil {
 		t.Errorf("models equipped for their tiers were refused: %v", err)

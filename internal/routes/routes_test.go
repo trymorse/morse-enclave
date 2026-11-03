@@ -279,7 +279,7 @@ func TestARouteIsAppOnlyOnlyWhenItSaysSo(t *testing.T) {
 
 func TestTheFileIsANonEmptyArrayOfUniqueModelsAndOneAttesterPerHost(t *testing.T) {
 	for name, c := range map[string]struct{ file, want string }{
-		"not an array":  {`{"model":"m"}`, "routes must be a JSON array of objects"},
+		"not an array":  {`"m"`, "routes must be a JSON array of routes or an object of models and aliases"},
 		"empty":         {`[]`, "routes file has no routes"},
 		"not objects":   {`[1]`, "route 0: json: cannot unmarshal number"},
 		"repeats model": {`[` + chatJSON + `,` + chatJSON + `]`, `route 1 repeats model "m"`},

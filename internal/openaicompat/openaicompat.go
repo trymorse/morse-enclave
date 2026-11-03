@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"maps"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -23,6 +25,8 @@ const (
 )
 
 var anonymousFields = []string{"stream", "tools", "tool_choice", "parallel_tool_calls"}
+
+var retentionSwitches = []string{"store"}
 
 var forwardedMessageKeys = map[string][]string{
 	"assistant": {"content", "tool_calls"},
@@ -240,6 +244,11 @@ func (p *Provider) encode(c chat.Call, stream bool) ([]byte, error) {
 			return nil, err
 		}
 		set["messages"] = chat.EncodeMessages(msgs, messageKeys)
+	}
+	for _, name := range retentionSwitches {
+		if _, forced := set[name]; forced || slices.Contains(anonymousFields, name) {
+			return nil, fmt.Errorf("openaicompat: the request to %s would carry %s, which asks a vendor to keep the conversation", p.Model, name)
+		}
 	}
 	return c.EncodeOnly(anonymousFields, set), nil
 }

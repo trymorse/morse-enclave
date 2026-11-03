@@ -26,13 +26,19 @@ type chatRoute struct {
 	Reasoning         chat.Reasoning
 	ReasoningUncapped bool
 	Counter           *tokenizer.Tokenizer
+	model             catalog.ModelID
+	endpoint          catalog.EndpointID
 	attester          string
 	speaks            *chat.Scheme
-	sealed            bool
+	tier              catalog.Tier
 }
 
-func (c Chat) route(attester string, tier catalog.Tier) chatRoute {
-	return chatRoute{ChatTerms: c.ChatTerms, Upstream: c.Upstream, Reasoning: c.Reasoning, ReasoningUncapped: c.ReasoningUncapped, Counter: c.Counter, attester: attester, speaks: c.Upstream.Speaks(), sealed: tier.Sealed()}
+func (c Chat) route(model catalog.ModelID, vendor Model) chatRoute {
+	return chatRoute{ChatTerms: c.ChatTerms, Upstream: c.Upstream, Reasoning: c.Reasoning, ReasoningUncapped: c.ReasoningUncapped, Counter: c.Counter, model: model, endpoint: vendor.Endpoint, attester: vendor.Attester, speaks: c.Upstream.Speaks(), tier: vendor.Tier}
+}
+
+func (r chatRoute) runsOnly(proposed []catalog.EndpointID) bool {
+	return len(proposed) > 0 && !slices.ContainsFunc(proposed, func(id catalog.EndpointID) bool { return id != r.endpoint })
 }
 
 func vendorFor(vendors []chatRoute, p protocol) chatRoute {
@@ -45,7 +51,7 @@ func vendorFor(vendors []chatRoute, p protocol) chatRoute {
 }
 
 func (r chatRoute) misserved(p protocol, compaction bool) error {
-	if compaction && r.sealed {
+	if compaction && r.tier.Sealed() {
 		return errCompactionSealed
 	}
 	return refuseProtocol(r.speaks, p)
@@ -114,6 +120,15 @@ func (w *InProcess) openChat(o Opening, compaction bool) (Admission, error) {
 	if err := route.misserved(p, compaction); err != nil {
 		return nil, err
 	}
+	if !route.tier.Sealed() {
+		floor, err := floorOf(req)
+		if err != nil {
+			return nil, err
+		}
+		if err := route.refuseBelow(floor); err != nil {
+			return nil, err
+		}
+	}
 	if o.Launch != nil && !o.Cast.Casts(*o.Launch) {
 		return nil, errLaunchNotCast
 	}
@@ -137,7 +152,7 @@ func (w *InProcess) openChat(o Opening, compaction bool) (Admission, error) {
 		return nil, err
 	}
 	return ChatAdmission{
-		admitted: admitted{w.keep(o, oc)}, Route: req.Model, Attester: route.attester,
+		admitted: admitted{w.keep(o, oc)}, Model: route.model, Candidates: []catalog.EndpointID{route.endpoint},
 		PromptBound: route.promptBound(oc.call.Size()), PromptBytes: limits.KibibytesCovering(oc.promptBytes), OutputAsked: oc.asked,
 		Stream: req.Stream, Compaction: compaction, Character: oc.character,
 	}, nil
@@ -149,7 +164,7 @@ func (o *openedChat) cut(reason measure.Cut) { o.cuts.cut(reason, true) }
 
 func (o *openedChat) run(_ context.Context, w *InProcess, h Handle, g Grant, reply http.ResponseWriter) Measured {
 	cg, ok := g.(ChatGrant)
-	if !ok {
+	if !ok || !o.route.runsOnly(cg.Endpoints) {
 		return unrunnable(reply)
 	}
 	o.call.OutputLimit = o.route.clamp(cg.OutputLimit, o.asked)
@@ -165,7 +180,7 @@ func (o *openedChat) run(_ context.Context, w *InProcess, h Handle, g Grant, rep
 		end = verdictOf(got.callErr)
 	}
 	e := got.evidence(end, o.call, o.route, cg)
-	m := Measured{Measurement: e.Measure(), Cut: end.cut(), Served: got.callErr == nil, Refusal: end.refusal(got.callErr)}
+	m := Measured{Measurement: e.Measure(), Cut: end.cut(), Served: got.callErr == nil, Refusal: end.refusal(got.callErr), Endpoint: o.route.endpoint}
 	m.Health = rw.observed(ctx, got.callErr, false, opened, returned)
 	m.Health.Retries, m.Health.Hedges = got.attempts.Retries, got.attempts.Hedges
 	if refused, ok := errors.AsType[upstream.Refused](got.callErr); ok && vendorFaults[m.Health.Outcome] {
