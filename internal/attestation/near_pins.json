@@ -33,6 +33,10 @@
       {
         "name": "dstack-0.5.12-f571e5da",
         "compose_hash": "f571e5dafe8f96baf116a271b4be9cba228b447dd6ebe502bbda81ede7bcc7ce"
+      },
+      {
+        "name": "dstack-0.5.12-c579aade",
+        "compose_hash": "c579aadec728a15f18d389d70f6b529302986868afd9ae3a93960b28043ef303"
       }
     ],
     "images": [
@@ -77,7 +81,11 @@
       "0c39ab2ae084bcf9f981c07a052083b0e6a67e72",
       "02d8abc31432a11f5eb2f9f3c5f3b4e1480e0238",
       "b257861b4fff542295f5d708cf24430718b52e3b",
-      "043a5db703230618793e4f4de9e66ff42c4814b5"
+      "043a5db703230618793e4f4de9e66ff42c4814b5",
+      "35ffa27b69f1db44897bebdfb2a325224777f75f",
+      "8e69cffeef7f35233a7edf34850dd0bcc1c41aa9",
+      "f78fdd9f3a7e5ef13d5244874a9626b50e80ecc2",
+      "bce29b560f4c0049d08a4af46e9cf5786063c317"
     ]
   },
   "model": {
