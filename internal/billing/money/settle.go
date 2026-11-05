@@ -4,21 +4,26 @@ import (
 	"time"
 
 	"morse/backend/internal/billing/measure"
+	"morse/backend/internal/catalog"
 	"morse/backend/internal/chat"
 )
 
 type Settlement struct {
-	Outcome    measure.Outcome
-	Tokens     chat.Usage
-	Duration   time.Duration
-	Cost       Micros
-	Source     measure.UsageSource
-	Sides      measure.Sides
-	Thinking   measure.Thinking
-	Refusal    measure.RefusalCode
-	Finish     chat.Finish
-	ServedBy   chat.Host
-	Unanswered bool
+	Outcome      measure.Outcome
+	Tokens       chat.Usage
+	Duration     time.Duration
+	Cost         Micros
+	Source       measure.UsageSource
+	Sides        measure.Sides
+	Thinking     measure.Thinking
+	Refusal      measure.RefusalCode
+	Finish       chat.Finish
+	ServedBy     chat.Host
+	Unanswered   bool
+	Endpoint     catalog.EndpointID
+	Tier         catalog.Tier
+	EndpointCost EndpointCost
+	Provider     string
 }
 
 func Unbilled(o measure.Outcome) Settlement { return Settlement{Outcome: o, Source: measure.UsageNone} }

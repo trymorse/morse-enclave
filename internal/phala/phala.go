@@ -3,6 +3,8 @@ package phala
 import (
 	"bytes"
 	"context"
+	"crypto/ecdh"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +13,8 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"strings"
+	"time"
 
 	"morse/backend/internal/apierr"
 	"morse/backend/internal/attestation"
@@ -75,19 +79,31 @@ func admitsProvider(raw json.RawMessage) bool {
 var errSessionNotAccepted = apierr.Error{Status: http.StatusPreconditionFailed, Type: "invalid_request_error", Code: "session_not_accepted", Message: "The gateway would not send the message to a session it pins. Nothing was forwarded."}
 
 // refuseSealed relays the gateway's refusal to keep a request's pinned sessions as itself, since the
-// browser answers it by pinning again, and sanitizes every other refusal.
+// browser answers it by pinning again, and sanitizes every other refusal. A 403 that would stand as
+// upstream_refused and whose message opens with Phala's documented "Balance is too low" refuses our
+// account, not the request, so it fails over as the 402 of an empty account does. The match anchors at the
+// start and yields to any vendor code, so a content refusal that echoes a prompt never fails over.
 func refuseSealed(r upstream.Reply) error {
-	if r.Status == http.StatusPreconditionFailed {
-		var body struct {
-			Error struct {
-				Code string `json:"code"`
-			} `json:"error"`
-		}
-		if json.Unmarshal(r.Body, &body) == nil && body.Error.Code == errSessionNotAccepted.Code {
-			return errSessionNotAccepted
-		}
+	var body struct {
+		Error struct {
+			Code    any    `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
 	}
-	return apierr.SanitizedUpstreamError(r.Status, r.Body)
+	parsed := json.Unmarshal(r.Body, &body) == nil
+	if parsed && r.Status == http.StatusPreconditionFailed && body.Error.Code == errSessionNotAccepted.Code {
+		return errSessionNotAccepted
+	}
+	refusal := apierr.SanitizedUpstreamError(r.Status, r.Body)
+	if refusal == apierr.ErrUpstreamRefused && r.Status == http.StatusForbidden && balanceTooLow(body.Error.Message) {
+		return apierr.ErrUpstreamUnavailable
+	}
+	return refusal
+}
+
+func balanceTooLow(message string) bool {
+	m := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(message)), "your ")
+	return strings.HasPrefix(m, "balance is too low")
 }
 
 var constraint = map[string]json.RawMessage{"provider": json.RawMessage(Constraint)}
@@ -98,11 +114,15 @@ type Route struct {
 	openaicompat.Provider
 	Gateway
 	verbatim openaicompat.Relay
-	attested Attested
+	onBehalf openaicompat.Provider
+	keys     Keys
 }
 
-// Attested is whether a verified report's keyset lists key among the gateway's E2EE keys.
-type Attested func(key []byte) bool
+// Keys are the gateway's E2EE keys that verified reports list now.
+type Keys interface {
+	Holds(key []byte) bool
+	HeldX25519() (*ecdh.PublicKey, bool)
+}
 
 var (
 	_ chat.Provider  = (*Route)(nil)
@@ -123,17 +143,21 @@ type Clients struct {
 	Sealed    *http.Client
 }
 
-func New(baseURL, upstreamModel, apiKey string, clients Clients, attested Attested) *Route {
+func New(baseURL, upstreamModel, apiKey string, clients Clients, keys Keys) *Route {
 	objects := NewGateway(baseURL, apiKey, clients.Sealed)
 	sealed := objects.Endpoint
 	sealed.Refuse = refuseSealed
 	plaintext := sealed
 	plaintext.HTTP = clients.Plaintext
+	provider := func(sender openaicompat.Sender) openaicompat.Provider {
+		return openaicompat.Provider{Sender: sender, Model: upstreamModel, Force: maps.Clone(constraint), LimitField: openaicompat.MaxTokens, KeepEnvelope: true, ContinuousUsage: true}
+	}
 	return &Route{
-		Provider: openaicompat.Provider{Sender: openaicompat.HTTPSender{Endpoint: plaintext}, Model: upstreamModel, Force: maps.Clone(constraint), LimitField: openaicompat.MaxTokens, KeepEnvelope: true, ContinuousUsage: true},
+		Provider: provider(openaicompat.HTTPSender{Endpoint: plaintext}),
 		Gateway:  objects,
 		verbatim: openaicompat.Relay{Endpoint: sealed, Model: upstreamModel, Force: maps.Clone(constraint), Admits: map[string]func(json.RawMessage) bool{"provider": admitsProvider}, Receipt: openaicompat.ReceiptHeaders(chat.ReceiptHeaders...)},
-		attested: attested,
+		onBehalf: provider(openaicompat.SealedSender{Endpoint: plaintext, Sealer: sealer{model: upstreamModel, keys: keys}}),
+		keys:     keys,
 	}
 }
 
@@ -155,7 +179,7 @@ func (r *Route) SealPrompt(sealed chat.E2EE, prompt string) (string, error) {
 		return "", fmt.Errorf("phala: a request sealed under %T", sealed)
 	case p.Suite() != e2ee.X25519:
 		return "", errSuiteNotSealable
-	case r.attested == nil || !r.attested(p.ModelKey()):
+	case r.keys == nil || !r.keys.Holds(p.ModelKey()):
 		return "", fmt.Errorf("%w: no verified Phala keyset lists model key %x", apierr.ErrUnattested, p.ModelKey())
 	}
 	key, err := p.ModelX25519()
@@ -163,6 +187,47 @@ func (r *Route) SealPrompt(sealed chat.E2EE, prompt string) (string, error) {
 		return "", err
 	}
 	return e2ee.Seal(key, p.RequestAAD(r.verbatim.Model, 0), []byte(prompt))
+}
+
+func (r *Route) OnBehalf() chat.Provider { return &r.onBehalf }
+
+type sealer struct {
+	model string
+	keys  Keys
+}
+
+func (s sealer) Seal(call func(openaicompat.Sealing) error) error {
+	if s.keys == nil {
+		return fmt.Errorf("%w: no verified Phala keyset", apierr.ErrUnattested)
+	}
+	model, ok := s.keys.HeldX25519()
+	if !ok {
+		return fmt.Errorf("%w: no verified Phala keyset lists an X25519 key", apierr.ErrUnattested)
+	}
+	client, err := ecdh.X25519().GenerateKey(rand.Reader)
+	if err != nil {
+		return err
+	}
+	params, err := e2ee.NewParams(client, model, time.Now().Unix())
+	if err != nil {
+		return err
+	}
+	return call(sealing{Params: params, client: client, model: model, name: s.model})
+}
+
+type sealing struct {
+	e2ee.Params
+	client *ecdh.PrivateKey
+	model  *ecdh.PublicKey
+	name   string
+}
+
+func (s sealing) SealContent(message int, plaintext string) (string, error) {
+	return e2ee.Seal(s.model, s.RequestAAD(s.name, message), []byte(plaintext))
+}
+
+func (s sealing) Open(replyID string, f e2ee.ResponseField, sealed string) ([]byte, error) {
+	return e2ee.Open(s.client, s.ResponseAAD(s.name, replyID, f), sealed)
 }
 
 func (r *Route) Attest(ctx context.Context, nonce string) (chat.Attestation, error) {

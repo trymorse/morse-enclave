@@ -3,6 +3,9 @@ package tee
 import (
 	"bytes"
 	"context"
+	"crypto/ecdh"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"maps"
 	"net/http"
@@ -17,8 +20,11 @@ import (
 	"morse/backend/internal/attester"
 	"morse/backend/internal/audio"
 	"morse/backend/internal/chat"
+	"morse/backend/internal/e2ee"
+	"morse/backend/internal/e2ee/ehbp"
 	"morse/backend/internal/near"
 	"morse/backend/internal/phala"
+	"morse/backend/internal/tinfoil"
 )
 
 type Plain interface {
@@ -52,12 +58,13 @@ type Deps struct {
 }
 
 // A Vendor builds the gates of one attester, and states what the routes behind them do: the scheme a verbatim
-// route relays under, and whether it lists the attested sessions its receipts cite.
+// route relays under, whether its replies have receipts, and whether it lists the attested sessions they cite.
 type Vendor interface {
 	Scope(attester.Upstream) Scope
 	Share(first, next attester.Upstream) error
 	NewGate(attester.Upstream, Deps) Gate
 	Speaks() *chat.Scheme
+	Receipts() bool
 	Sessions() bool
 }
 
@@ -67,6 +74,8 @@ func Of(v *attester.Vendor) Vendor {
 		return phalaVendor{vendor{v}}
 	case attester.Near:
 		return nearVendor{vendor{v}}
+	case attester.Tinfoil:
+		return tinfoilVendor{vendor{v}}
 	}
 	panic(fmt.Sprintf("tee: attester %s has no vendor", v))
 }
@@ -127,6 +136,8 @@ func phalaVerifier(policy attestation.Policy, host string, keys *e2eeKeys) attes
 
 func (phalaVendor) Speaks() *chat.Scheme { return (*phala.Route)(nil).Speaks() }
 
+func (phalaVendor) Receipts() bool { return true }
+
 func (phalaVendor) Sessions() bool { return true }
 
 type phalaGate struct {
@@ -142,7 +153,7 @@ type e2eeKeys struct {
 
 type keyset struct {
 	notAfter time.Time
-	keys     [][]byte
+	keys     []aci.Key
 }
 
 func (k *e2eeKeys) keep(r attestation.PhalaReport) {
@@ -153,28 +164,41 @@ func (k *e2eeKeys) keep(r attestation.PhalaReport) {
 	if k.byEndpoint == nil {
 		k.byEndpoint = map[string]keyset{}
 	}
-	ks := keyset{notAfter: r.Endpoint.NotAfter}
-	for _, key := range r.Keyset.E2EEKeys {
-		ks.keys = append(ks.keys, key.Public)
-	}
-	k.byEndpoint[r.Endpoint.ID] = ks
+	k.byEndpoint[r.Endpoint.ID] = keyset{notAfter: r.Endpoint.NotAfter, keys: slices.Clone(r.Keyset.E2EEKeys)}
 }
 
-func (g phalaGate) holds(key []byte) bool {
+func (g phalaGate) Holds(key []byte) bool {
+	_, held := g.firstHeld(func(k aci.Key) bool { return bytes.Equal(k.Public, key) })
+	return held
+}
+
+func (g phalaGate) HeldX25519() (*ecdh.PublicKey, bool) {
+	held, ok := g.firstHeld(func(k aci.Key) bool { return k.Algo == e2ee.X25519.Algo() })
+	if !ok {
+		return nil, false
+	}
+	key, err := ecdh.X25519().NewPublicKey(held.Public)
+	return key, err == nil
+}
+
+func (g phalaGate) firstHeld(match func(aci.Key) bool) (aci.Key, bool) {
 	a := g.Anchor()
 	if a == nil {
-		return false
+		return aci.Key{}, false
 	}
 	g.keys.mu.Lock()
 	defer g.keys.mu.Unlock()
 	now := g.keys.now()
-	for id := range a.Endpoints {
+	for _, id := range slices.Sorted(maps.Keys(a.Endpoints)) {
 		ks := g.keys.byEndpoint[id]
-		if now.Before(ks.notAfter) && slices.ContainsFunc(ks.keys, func(k []byte) bool { return bytes.Equal(k, key) }) {
-			return true
+		if !now.Before(ks.notAfter) {
+			continue
+		}
+		if i := slices.IndexFunc(ks.keys, match); i >= 0 {
+			return ks.keys[i], true
 		}
 	}
-	return false
+	return aci.Key{}, false
 }
 
 func (g phalaGate) Route(up attester.Upstream) chat.VerbatimRoute { return g.route(up) }
@@ -182,7 +206,7 @@ func (g phalaGate) Route(up attester.Upstream) chat.VerbatimRoute { return g.rou
 func (g phalaGate) Plain(up attester.Upstream) (Plain, bool) { return g.route(up), true }
 
 func (g phalaGate) route(up attester.Upstream) *phala.Route {
-	return phala.New(up.BaseURL, up.Model, up.APIKey, phala.Clients{Plaintext: g.Client(), Sealed: g.Unbound()}, g.holds)
+	return phala.New(up.BaseURL, up.Model, up.APIKey, phala.Clients{Plaintext: g.Client(), Sealed: g.Unbound()}, g)
 }
 
 type nearVendor struct{ vendor }
@@ -207,6 +231,8 @@ func (v nearVendor) NewGate(up attester.Upstream, d Deps) Gate {
 }
 
 func (nearVendor) Speaks() *chat.Scheme { return (*near.Route)(nil).Speaks() }
+
+func (nearVendor) Receipts() bool { return true }
 
 func (nearVendor) Sessions() bool { return false }
 
@@ -249,6 +275,18 @@ func (g nearGate) gpuVerdicts(ctx context.Context, report []byte, nonce attestat
 
 func (g nearGate) Forget(k near.SigningKey) { g.TLSGate.Forget(k.String()) }
 
+func (g nearGate) Held() (near.SigningKey, bool) {
+	a := g.Anchor()
+	if a == nil || len(a.Endpoints) == 0 {
+		return near.SigningKey{}, false
+	}
+	raw, err := hex.DecodeString(slices.Min(slices.Collect(maps.Keys(a.Endpoints))))
+	if err != nil || len(raw) != len(near.SigningKey{}) {
+		return near.SigningKey{}, false
+	}
+	return near.SigningKey(raw), true
+}
+
 func (g nearGate) Holds(k near.SigningKey) bool {
 	a := g.Anchor()
 	if a == nil {
@@ -256,4 +294,59 @@ func (g nearGate) Holds(k near.SigningKey) bool {
 	}
 	_, ok := a.Endpoints[k.String()]
 	return ok
+}
+
+// tinfoilVendor's gate verifies one router host's bundle, which binds no nonce, and pins the route's client
+// to the TLS key its report binds. The router signs no receipts.
+type tinfoilVendor struct{ vendor }
+
+func (v tinfoilVendor) NewGate(up attester.Upstream, d Deps) Gate {
+	gateway := tinfoil.NewGateway(up.BaseURL, up.Host, d.Unpinned)
+	return tinfoilGate{TLSGate: attested.NewTLSGate(attested.Config[aci.SPKI]{
+		Scope:    v.Scope(up).String(),
+		Verifier: tinfoilVerifier(d.Policy, up.Host),
+		Fetch: func(ctx context.Context, _ attestation.Nonce) ([]byte, error) {
+			return gateway.Bundle(ctx)
+		},
+		Observe: d.Observe,
+	}, up.Host, d.Base)}
+}
+
+// tinfoilVerifier serves the bundle it verified, so a client checks the report whose keys the gate pinned.
+func tinfoilVerifier(policy attestation.Policy, host string) attested.Verifier[aci.SPKI] {
+	return func(ctx context.Context, bundle []byte, _ attestation.Nonce) (attestation.Verdicts[aci.SPKI], error) {
+		r, err := policy.VerifyTinfoil(ctx, bundle, host)
+		if err != nil {
+			return attestation.Verdicts[aci.SPKI]{}, err
+		}
+		v, err := attestation.TinfoilPins().Judge(r)
+		if err != nil {
+			return attestation.Verdicts[aci.SPKI]{}, err
+		}
+		v.Serve = func(func(string) bool) json.RawMessage { return bundle }
+		return v, nil
+	}
+}
+
+func (tinfoilVendor) Speaks() *chat.Scheme { return ehbp.Scheme }
+
+func (tinfoilVendor) Receipts() bool { return false }
+
+func (tinfoilVendor) Sessions() bool { return false }
+
+type tinfoilGate struct {
+	*attested.TLSGate
+}
+
+func (g tinfoilGate) Route(up attester.Upstream) chat.VerbatimRoute {
+	return tinfoil.New(up.BaseURL, up.Model, up.APIKey, g.Client(), g)
+}
+
+func (tinfoilGate) Plain(attester.Upstream) (Plain, bool) { return nil, false }
+
+func (g tinfoilGate) Report() json.RawMessage {
+	if a := g.Anchor(); a != nil {
+		return a.Report
+	}
+	return nil
 }

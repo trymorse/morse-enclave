@@ -79,6 +79,12 @@ var capabilities = map[Provider]capability{
 		zdrWhy:   "because Venice keeps no prompt or reply only for the models it serves in its Private mode",
 		needsKey: true,
 	},
+	ProviderFireworks: {
+		kinds:    servedAt{catalog.KindChat: privateOnly},
+		zdrAt:    privateOnly,
+		zdrWhy:   "because Fireworks keeps no prompt or reply of an open model on /chat/completions",
+		needsKey: true,
+	},
 	ProviderRunware: {kinds: servedAt{catalog.KindImage: anonOnly, catalog.KindVideo: anonOnly}, needsKey: true},
 	ProviderFal:     {kinds: servedAt{catalog.KindImage: anonOnly, catalog.KindVideo: anonOnly}, needsKey: true},
 	// A private Parallel route stands on our zero data retention agreement with Parallel, which covers the account

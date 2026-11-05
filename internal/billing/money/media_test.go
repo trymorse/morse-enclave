@@ -101,10 +101,19 @@ func TestAReportedCostSettlesAsReportedAndAnUnreportedOneAsTheHoldOnlyOnDelivery
 		{"a delivered item without a cost added first", money.Reported{}.Delivered().Add(money.ReportedCost(30_100)), 2, 500_000, measure.UsageHold},
 		{"delivered items with costs", money.ReportedCost(30_100).Delivered().Add(money.ReportedCost(30_100).Delivered()), 2, 60_200, measure.UsageReported},
 	} {
-		if got := list.Settle(measure.Completed, c.reported, c.delivered, 500_000); got != (money.Settlement{Outcome: measure.Completed, Cost: c.want, Source: c.source}) {
+		want := money.Settlement{Outcome: measure.Completed, Cost: c.want, Source: c.source, EndpointCost: vendorCharged(c.reported, c.source)}
+		if got := list.Settle(measure.Completed, c.reported, c.delivered, 500_000); got != want {
 			t.Errorf("%s: %+v, want %d from %s with no sides", c.name, got, c.want, c.source)
 		}
 	}
+}
+
+func vendorCharged(r money.Reported, billed measure.UsageSource) money.EndpointCost {
+	if billed != measure.UsageReported {
+		return money.EndpointCost{}
+	}
+	micros, _ := r.Micros()
+	return money.EndpointCost{Micros: micros, Source: money.CostReported}
 }
 
 func TestADeliveredOutputCostsTheMarkedUpVendorCostAndAtLeastACreditButAFailureIsNeverFloored(t *testing.T) {
@@ -126,7 +135,8 @@ func TestADeliveredOutputCostsTheMarkedUpVendorCostAndAtLeastACreditButAFailureI
 		{"an unbilled failure", money.Reported{}, 0, 0, measure.UsageNone},
 		{"an unpriced delivery", money.Reported{}.Delivered(), 1, 96_000, measure.UsageHold},
 	} {
-		if got := marked.Settle(measure.Failed, c.reported, c.delivered, 96_000); got != (money.Settlement{Outcome: measure.Failed, Cost: c.want, Source: c.source}) {
+		want := money.Settlement{Outcome: measure.Failed, Cost: c.want, Source: c.source, EndpointCost: vendorCharged(c.reported, c.source)}
+		if got := marked.Settle(measure.Failed, c.reported, c.delivered, 96_000); got != want {
 			t.Errorf("%s: %+v, want %d from %s with no sides", c.name, got, c.want, c.source)
 		}
 	}

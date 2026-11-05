@@ -2,6 +2,7 @@ package chat
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/rand"
 	"encoding/json"
@@ -116,6 +117,15 @@ func unmarshalField(fields map[string]json.RawMessage, name string, into any) er
 		return nil
 	}
 	return json.Unmarshal(raw, into)
+}
+
+// ErrSealedBody answers every read of a request whose body is sealed whole.
+var ErrSealedBody = errors.New("chat: the body is sealed whole, so the proxy can't read its messages")
+
+// SealedBodyRequest is a request whose body is sealed whole (BodySealed): the clear headers name its model and
+// output limit, and it streams, with usage the upstream counts outside the seal.
+func SealedBodyRequest(raw []byte, model string, limit int) *Request {
+	return &Request{Model: model, Stream: true, IncludeUsage: true, raw: raw, outputLimits: []int{limit}, messages: func() ([]Message, error) { return nil, ErrSealedBody }}
 }
 
 func (r *Request) Size() int { return len(r.raw) }
@@ -621,7 +631,7 @@ func deltaOf(object []byte) Delta {
 				continue
 			}
 			d.Content += text(v.Content)
-			d.Reasoning += text(v.ReasoningContent) + text(v.Reasoning)
+			d.Reasoning += cmp.Or(text(v.ReasoningContent), text(v.Reasoning))
 			d.Refused = d.Refused || !slices.Contains(noValue, string(v.Refusal))
 			d.ToolCalled = d.ToolCalled || len(v.ToolCalls) > 0
 			for _, call := range v.ToolCalls {
@@ -641,7 +651,31 @@ type Usage struct {
 	CachedPromptTokens     int
 	CacheWritePromptTokens int
 	ReasoningTokens        int
+	VendorCost             VendorCost `json:",omitzero"`
 }
+
+type VendorCost struct {
+	Read   CostRead `json:",omitzero"`
+	Micros int64    `json:",omitzero"`
+	BYOK   bool     `json:",omitzero"`
+}
+
+type CostRead uint8
+
+const (
+	CostUnreported CostRead = iota
+	CostReported
+	CostUnreadable
+	CostBYOKUpstreamMissing
+)
+
+var costReads = enum.Names[CostRead]{CostUnreported: "unreported", CostReported: "reported", CostUnreadable: "not_a_number", CostBYOKUpstreamMissing: "upstream_missing"}
+
+func (r CostRead) String() string { return costReads.String(r) }
+
+func (r CostRead) MarshalText() ([]byte, error) { return costReads.MarshalText(r) }
+
+func (r *CostRead) UnmarshalText(text []byte) error { return costReads.UnmarshalText(r, text) }
 
 func (u Usage) Normalized() Usage {
 	u.PromptTokens = max(u.PromptTokens, 0)

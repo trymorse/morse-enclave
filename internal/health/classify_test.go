@@ -27,6 +27,7 @@ var sentinelOutcomes = map[string]struct {
 	"ErrRemoteMedia":           {apierr.ErrRemoteMedia, ClientError},
 	"ErrRequestTooLarge":       {apierr.ErrRequestTooLarge, ClientError},
 	"ErrUpstreamUnavailable":   {apierr.ErrUpstreamUnavailable, UpstreamUnavailable},
+	"ErrUpstreamRefused":       {apierr.ErrUpstreamRefused, UpstreamRefused},
 	"ErrUpstreamBusy":          {apierr.ErrUpstreamBusy, UpstreamBusy},
 	"ErrUpstream":              {apierr.ErrUpstream, UpstreamError},
 	"ErrUnattested":            {apierr.ErrUnattested, Unattested},
@@ -135,6 +136,33 @@ func TestClassifyRanksWhatTheProviderDidAboveWhoHungUp(t *testing.T) {
 	} {
 		if got := Classify(c.evidence); got != c.want {
 			t.Errorf("%s is %s, want %s", name, got, c.want)
+		}
+	}
+}
+
+func TestOnlyBusyAVendorErrorUnreachableAndAVendorRefusalOfOurAccountFailOver(t *testing.T) {
+	want := map[Outcome]bool{UpstreamBusy: true, UpstreamError: true, Unreachable: true, UpstreamUnavailable: true}
+	for _, o := range Outcomes() {
+		if o.FailsOver() != want[o] {
+			t.Errorf("%s fails over: %t, want %t", o, o.FailsOver(), want[o])
+		}
+	}
+}
+
+func TestOnlyBusyAVendorErrorUnreachableAndAVendorRefusalOfOurAccountTripTheBreaker(t *testing.T) {
+	want := map[Outcome]bool{UpstreamBusy: true, UpstreamError: true, Unreachable: true, UpstreamUnavailable: true}
+	for _, o := range Outcomes() {
+		if o.TripsBreaker() != want[o] {
+			t.Errorf("%s trips the breaker: %t, want %t", o, o.TripsBreaker(), want[o])
+		}
+	}
+}
+
+func TestABareVendor403Or404IsUpstreamRefusedWhichNeitherFailsOverNorTripsTheBreaker(t *testing.T) {
+	for _, status := range []int{403, 404} {
+		o := Classify(Evidence{Err: apierr.SanitizedUpstreamError(status, nil)})
+		if o != UpstreamRefused || o.FailsOver() || o.TripsBreaker() {
+			t.Errorf("a bare %d is %s, fails over %t, trips the breaker %t; want upstream_refused, false, false", status, o, o.FailsOver(), o.TripsBreaker())
 		}
 	}
 }

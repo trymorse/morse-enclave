@@ -13,6 +13,7 @@ type Key struct {
 	Host          string
 	UpstreamModel string
 	Model         string
+	Endpoint      catalog.EndpointID
 	Kind          catalog.Kind
 }
 
@@ -60,6 +61,7 @@ const (
 	Throttled
 	Shutdown
 	ContentFilter
+	UpstreamRefused
 	outcomeCount
 )
 
@@ -67,7 +69,7 @@ var outcomeNames = enum.Names[Outcome]{
 	OK: "ok", ClientError: "client_error", UpstreamBusy: "upstream_busy", UpstreamError: "upstream_error",
 	UpstreamUnavailable: "upstream_unavailable", Unreachable: "unreachable", MidstreamBreak: "midstream_break",
 	Unattested: "unattested", Retention: "retention", Deadline: "deadline", ClientCancel: "client_cancel",
-	Throttled: "throttled", Shutdown: "shutdown", ContentFilter: "content_filter",
+	Throttled: "throttled", Shutdown: "shutdown", ContentFilter: "content_filter", UpstreamRefused: "upstream_refused",
 }
 
 func (o Outcome) String() string { return outcomeNames.String(o) }

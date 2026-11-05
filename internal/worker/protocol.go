@@ -7,6 +7,7 @@ import (
 	"morse/backend/internal/apierr"
 	"morse/backend/internal/chat"
 	"morse/backend/internal/e2ee"
+	"morse/backend/internal/e2ee/ehbp"
 	"morse/backend/internal/e2ee/near"
 )
 
@@ -16,12 +17,19 @@ type protocol struct {
 	err    error
 }
 
-var schemesNarrowestFirst = []*chat.Scheme{near.Scheme, e2ee.Scheme}
+var schemesNarrowestFirst = []*chat.Scheme{ehbp.Scheme, near.Scheme, e2ee.Scheme}
 
 func protocolOf(header func(string) string) protocol {
 	for _, s := range schemesNarrowestFirst {
 		if params, sealed, err := s.Parse(header); sealed {
 			return protocol{scheme: s, params: params, err: err}
+		}
+	}
+	for _, s := range schemesNarrowestFirst {
+		for _, name := range s.Headers {
+			if header(name) != "" {
+				return protocol{scheme: s, err: s.ErrHeaderMissing}
+			}
 		}
 	}
 	return protocol{}
@@ -52,4 +60,13 @@ func protocolRefusal(err error) apierr.Error {
 		return apierr.ErrInvalidBody
 	}
 	return apierr.Error{Status: http.StatusBadRequest, Type: e.Type, Code: e.Type, Message: e.Message}
+}
+
+func hintedHexOnly(err error) error {
+	var e apierr.Error
+	if !errors.As(err, &e) || e.Code != e2ee.ErrHeaderMissing.Type {
+		return err
+	}
+	e.Message += " A plain message made only of long hex reads as ciphertext. Add any other text to it to send it plain."
+	return e
 }

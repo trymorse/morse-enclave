@@ -1,0 +1,40 @@
+[
+  {
+    "name": "sops-v3.13.3",
+    "source": "https://github.com/getsops/sops/releases/tag/v3.13.3",
+    "blob": "real/sops-v3.13.3.checksums.txt",
+    "bundle": "real/sops-v3.13.3.checksums.sigstore.json",
+    "identity": {
+      "issuer": "https://token.actions.githubusercontent.com",
+      "build_signer_uri": "https://github.com/getsops/sops/.github/workflows/release.yml@refs/tags/v3.13.3",
+      "build_config_uri": "https://github.com/getsops/sops/.github/workflows/release.yml@refs/tags/v3.13.3",
+      "source_repository_uri": "https://github.com/getsops/sops",
+      "source_repository_id": "40684033",
+      "source_owner_id": "129185620",
+      "ref": "refs/tags/v3.13.3",
+      "triggers": ["push"]
+    },
+    "source_digest": "26e2f4784ca61353082c32dbd987c25eda086dc9",
+    "run_invocation_uri": "https://github.com/getsops/sops/actions/runs/29981033264/attempts/1",
+    "integrated_time": 1784783285
+  },
+  {
+    "name": "goreleaser-nightly",
+    "source": "https://github.com/goreleaser/goreleaser/releases/tag/v2.20.0-2e260e4a-nightly",
+    "blob": "real/goreleaser-nightly-checksums.txt",
+    "bundle": "real/goreleaser-nightly-checksums.sigstore.json",
+    "identity": {
+      "issuer": "https://token.actions.githubusercontent.com",
+      "build_signer_uri": "https://github.com/goreleaser/goreleaser/.github/workflows/nightly-oss.yml@refs/heads/main",
+      "build_config_uri": "https://github.com/goreleaser/goreleaser/.github/workflows/nightly-oss.yml@refs/heads/main",
+      "source_repository_uri": "https://github.com/goreleaser/goreleaser",
+      "source_repository_id": "77071454",
+      "source_owner_id": "24697112",
+      "ref": "refs/heads/main",
+      "triggers": ["push", "schedule"]
+    },
+    "source_digest": "2e260e4af35c00e0ad41e479c3830f9cfe858e36",
+    "run_invocation_uri": "https://github.com/goreleaser/goreleaser/actions/runs/40609597243/attempts/1",
+    "integrated_time": 1793149107
+  }
+]

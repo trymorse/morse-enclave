@@ -28,6 +28,7 @@ const (
 	vendorRefused
 	upstreamErrorChunk
 	unknownReplyField
+	vendorUsageMissing
 	researchUnwrapped
 	upstreamAttested
 	upstreamRefused
@@ -48,6 +49,7 @@ var messages = [...]struct {
 	vendorRefused:         {"vendor refused", slog.LevelWarn},
 	upstreamErrorChunk:    {"upstream error chunk", slog.LevelWarn},
 	unknownReplyField:     {"e2ee reply carried a field the gate does not know", slog.LevelWarn},
+	vendorUsageMissing:    {"sealed reply ended with no vendor usage, billed on its frames", slog.LevelWarn},
 	researchUnwrapped:     {"parallel research report unwrapped from its answer object", slog.LevelWarn},
 	upstreamAttested:      {"upstream attested", slog.LevelInfo},
 	upstreamRefused:       {"upstream refused", slog.LevelWarn},
@@ -145,6 +147,8 @@ func (l *logger) UpstreamErrorChunk(model string, code chat.ErrorCode) {
 }
 
 func (l *logger) UnknownReplyField(model, _ string) { l.log(unknownReplyField, fields{Route: model}) }
+
+func (l *logger) VendorUsageMissing(model string) { l.log(vendorUsageMissing, fields{Route: model}) }
 
 var attestations = map[attested.Kind]message{
 	attested.Anchored:           upstreamAttested,

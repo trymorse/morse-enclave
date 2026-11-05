@@ -77,7 +77,10 @@ var (
 )
 
 func (u Verbatim) admit(o *openedChat, _ chat.Cast) error {
-	asked, err := admitVerbatim(u.Route, o.route.MaxOutputTokens, o.protocol.params, o.call.Request)
+	if o.protocol.scheme.SealsBody {
+		return u.admitSealedBody(o)
+	}
+	asked, err := admitVerbatim(u.Route, o.first.MaxOutputTokens, o.protocol.params, o.call.Request)
 	if err != nil {
 		return err
 	}
@@ -103,6 +106,27 @@ func (u Verbatim) admit(o *openedChat, _ chat.Cast) error {
 	return err
 }
 
+// admitSealedBody admits a request whose body is sealed whole, from its clear headers: the worker can check
+// neither the body's fields nor put a character's prompt in front of it, and the upstream refuses a body that
+// names another model than the header the route checks.
+func (u Verbatim) admitSealedBody(o *openedChat) error {
+	switch {
+	case o.writing != nil:
+		return errExamplesSealed
+	case o.launch != nil, o.own != nil:
+		return errCharacterSealedBody
+	}
+	limit := o.call.OutputLimits()[0]
+	if limit > o.first.MaxOutputTokens {
+		return VerbatimLimitRefused(o.first.MaxOutputTokens)
+	}
+	if err := u.Route.Check(o.call.Request); err != nil {
+		return bodyRefusal(err)
+	}
+	o.asked, o.promptBytes = limit, o.call.Size()
+	return nil
+}
+
 // sealLaunch seals prompt, a launch character's or an own character's rules, in front of an e2ee chat as its system
 // message. The client sends its own additions as a user turn: a model takes one system message, first.
 func (u Verbatim) sealLaunch(o *openedChat, prompt string) error {
@@ -124,15 +148,20 @@ func (u Verbatim) sealLaunch(o *openedChat, prompt string) error {
 	return err
 }
 
-func (u Verbatim) serve(ctx context.Context, w *InProcess, o *openedChat, reply http.ResponseWriter) served {
-	s, unexpected := relay(ctx, reply, http.NewResponseController(reply), u.Route, o.call, o.protocol.params, o.promptComment)
+func (u Verbatim) serve(ctx context.Context, w *InProcess, o *openedChat, a attempt, reply http.ResponseWriter) served {
+	s, unexpected := relay(ctx, reply, http.NewResponseController(reply), u.Route, a.call, o.protocol.params, o.promptComment, !o.protocol.scheme.SealsBody, o.afterCut)
 	for _, field := range unexpected {
-		w.reports.UnknownReplyField(o.call.Model, field)
+		w.reports.UnknownReplyField(a.call.Model, field)
+	}
+	// A reply sealed whole is read to its end even once its caller left, so any that ends without the router's
+	// usage lacks it.
+	if o.protocol.scheme.SealsBody && s.callErr == nil && s.reported == (chat.Usage{}) {
+		w.reports.VendorUsageMissing(o.call.Model)
 	}
 	return s
 }
 
-func (Verbatim) count(*openedChat, measure.Evidence, served) *pendingCount { return nil }
+func (Verbatim) count(attempt, measure.Evidence, served) *pendingCount { return nil }
 
 // admitVerbatim answers the output limit the request asks for.
 func admitVerbatim(rel chat.Relayer, maxOutputTokens int, params chat.E2EE, req *chat.Request) (int, error) {
@@ -178,13 +207,19 @@ func admitVerbatim(rel chat.Relayer, maxOutputTokens int, params chat.E2EE, req 
 	return limits[0], nil
 }
 
-func relay(ctx context.Context, w http.ResponseWriter, rc *http.ResponseController, rel chat.Relayer, c chat.Call, params chat.E2EE, lead []byte) (served, []string) {
-	rw := &relayWriter{w: w, rc: rc, pad: true, lead: lead}
+// relay pads an event stream with comment lines unless the reply is sealed whole, as its frames take none. A
+// non-nil afterCut reads on after the caller left (see relayWriter.afterCut).
+func relay(ctx context.Context, w http.ResponseWriter, rc *http.ResponseController, rel chat.Relayer, c chat.Call, params chat.E2EE, lead []byte, pad bool, d *afterCut) (served, []string) {
+	rw := &relayWriter{w: w, rc: rc, pad: pad, lead: lead, afterCut: d}
 	replied, err := rel.Relay(ctx, c, params, func(head chat.Relayed) io.Writer {
 		params.WriteApplied(w.Header().Set)
 		return rw.begin(head)
 	})
-	return served{reported: replied.Usage, reply: rw.reply(replied.Events), writeErr: rw.err, callErr: err}, replied.UnknownFields
+	events := replied.Events
+	if replied.Tokens > 0 {
+		events = replied.Tokens
+	}
+	return served{reported: replied.Usage, reply: rw.reply(events), writeErr: rw.err, callErr: err}, replied.UnknownFields
 }
 
 func (rw *relayWriter) reply(events int) measure.Reply {
@@ -197,6 +232,7 @@ func (rw *relayWriter) reply(events int) measure.Reply {
 var (
 	errE2EEContentNotEncrypted = apierr.Error{Status: http.StatusBadRequest, Type: "e2ee_content_not_encrypted", Code: "e2ee_content_not_encrypted", Message: "Every message must carry only role and content, and content must be one E2EE v2 ciphertext string."}
 	errE2EEOutputLimitRequired = apierr.Error{Status: http.StatusBadRequest, Type: "e2ee_output_limit_required", Code: "e2ee_output_limit_required", Message: "On e2ee models, set max_tokens or max_completion_tokens to a positive integer, because the proxy forwards the body verbatim and cannot add a limit, so the upstream's own default would govern how much it generates."}
+	errCharacterSealedBody     = apierr.Error{Status: http.StatusBadRequest, Type: "character_unsealable", Code: "character_unsealable", Message: "This e2ee model seals the whole request on the device, so the proxy can't put a character's prompt in front of it. Chat with the character on another e2ee model."}
 	ErrE2EENotApplied          = apierr.Error{Status: http.StatusBadGateway, Type: "upstream_error", Code: "e2ee_not_applied", Message: "The upstream did not confirm end-to-end encryption, so the proxy withheld its reply."}
 )
 

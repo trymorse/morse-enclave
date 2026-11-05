@@ -96,6 +96,7 @@ var (
 	ErrRemoteMedia           = Invalid(400, "remote_media", "Media must be attached as inline data, not linked by URL.")
 	ErrRequestTooLarge       = Invalid(413, "request_too_large", "Request body is too large.")
 	ErrUpstreamUnavailable   = Error{Status: 502, Type: "upstream_error", Code: "upstream_unavailable", Message: "The model provider is unavailable."}
+	ErrUpstreamRefused       = Error{Status: 502, Type: "upstream_error", Code: "upstream_refused", Message: "The model provider refused this request."}
 	ErrUpstreamBusy          = Error{Status: 503, Type: "upstream_error", Code: "upstream_busy", Message: "The model provider is busy. Try again shortly."}
 	ErrUpstream              = Error{Status: 502, Type: "upstream_error", Code: "upstream_error", Message: "The upstream model server failed."}
 	ErrUnattested            = Error{Status: 503, Type: "upstream_error", Code: "upstream_unattested", Message: "The attested model endpoint could not be verified. Try again shortly."}
@@ -251,8 +252,10 @@ func SanitizedUpstreamError(status int, vendorBody []byte) Error {
 		return ErrRequestTooLarge
 	case status == 429 || status == 503 || status == 529:
 		return ErrUpstreamBusy
-	case status == 401 || status == 402 || status == 403 || status == 404:
+	case status == 401 || status == 402:
 		return ErrUpstreamUnavailable
+	case status == 403 || status == 404:
+		return ErrUpstreamRefused
 	case status/100 == 4:
 		return ErrInvalidRequest
 	default:

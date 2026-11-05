@@ -2,6 +2,8 @@ package near
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -15,6 +17,7 @@ import (
 	"morse/backend/internal/apierr"
 	"morse/backend/internal/attestation"
 	"morse/backend/internal/chat"
+	"morse/backend/internal/e2ee"
 	wire "morse/backend/internal/e2ee/near"
 	"morse/backend/internal/openaicompat"
 	"morse/backend/internal/upstream"
@@ -41,6 +44,8 @@ func (k SigningKey) String() string { return hex.EncodeToString(k[:]) }
 type Gate interface {
 	Ready() bool
 	Holds(SigningKey) bool
+	// Held is a key a verified report lists now, the least in byte order.
+	Held() (SigningKey, bool)
 	Forget(SigningKey)
 }
 
@@ -54,10 +59,11 @@ type Gateway struct{ upstream.Endpoint }
 
 type Route struct {
 	Gateway
-	model string
-	gate  Gate
-	gpu   GPUVerdicts
-	relay openaicompat.Relay
+	model    string
+	gate     Gate
+	gpu      GPUVerdicts
+	relay    openaicompat.Relay
+	onBehalf openaicompat.Provider
 }
 
 var (
@@ -75,11 +81,12 @@ func New(baseURL, upstreamModel, apiKey string, client *http.Client, gate Gate, 
 	sealed := gateway.Endpoint
 	sealed.Refuse = refuseSealed
 	return &Route{
-		Gateway: gateway,
-		model:   upstreamModel,
-		gate:    gate,
-		gpu:     gpu,
-		relay:   openaicompat.Relay{Endpoint: sealed, Model: upstreamModel, Receipt: openaicompat.ReceiptFromReplyID},
+		Gateway:  gateway,
+		model:    upstreamModel,
+		gate:     gate,
+		gpu:      gpu,
+		relay:    openaicompat.Relay{Endpoint: sealed, Model: upstreamModel, Receipt: openaicompat.ReceiptFromReplyID},
+		onBehalf: openaicompat.Provider{Sender: openaicompat.SealedSender{Endpoint: sealed, Sealer: sealer{gate}}, Model: upstreamModel, LimitField: openaicompat.MaxTokens, KeepEnvelope: true},
 	}
 }
 
@@ -117,6 +124,39 @@ func (r *Route) SealPrompt(sealed chat.E2EE, prompt string) (string, error) {
 		return "", err
 	}
 	return wire.Seal(key[:], []byte(prompt))
+}
+
+func (r *Route) OnBehalf() chat.Provider { return &r.onBehalf }
+
+type sealer struct{ gate Gate }
+
+func (s sealer) Seal(call func(openaicompat.Sealing) error) error {
+	key, ok := s.gate.Held()
+	if !ok {
+		return fmt.Errorf("%w: no verified NEAR report lists a model key", apierr.ErrUnattested)
+	}
+	client, private, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		return err
+	}
+	err = call(sealing{Params: wire.Params{Client: client, Model: key[:]}, client: private})
+	if errors.Is(err, errKeyRotated) {
+		s.gate.Forget(key)
+	}
+	return err
+}
+
+type sealing struct {
+	wire.Params
+	client ed25519.PrivateKey
+}
+
+func (s sealing) SealContent(_ int, plaintext string) (string, error) {
+	return wire.Seal(s.Model, []byte(plaintext))
+}
+
+func (s sealing) Open(_ string, _ e2ee.ResponseField, sealed string) ([]byte, error) {
+	return wire.Open(s.client, sealed)
 }
 
 func (r *Route) Attest(ctx context.Context, nonce string) (chat.Attestation, error) {

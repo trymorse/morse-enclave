@@ -2,6 +2,7 @@ package routes
 
 import (
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -15,6 +16,7 @@ const (
 	phalaTEEEP   = `{"id":"phala-tee","tier":"tee","attester":"phala","base_url":"https://inference.phala.com","upstream_model":"z/m",` + windowPriced + `}`
 	nearEP       = `{"id":"near","tier":"e2ee","attester":"near","base_url":"https://cloud-api.near.ai","api_key_env":"NEAR_API_KEY","upstream_model":"z/m",` + windowPriced + `}`
 	phalaEP      = `{"id":"phala","tier":"e2ee","attester":"phala","base_url":"https://inference.phala.com","api_key_env":"PHALA_API_KEY","upstream_model":"z/m",` + windowPriced + `}`
+	tinfoilEP    = `{"id":"tinfoil","tier":"e2ee","attester":"tinfoil","base_url":"https://inference.tinfoil.sh","api_key_env":"TINFOIL_API_KEY","upstream_model":"z/m",` + windowPriced + `}`
 	twoAliases   = `{"name":"m","model":"z/m","endpoint":"together"},{"name":"m-tee","model":"z/m","endpoint":"phala-tee"}`
 )
 
@@ -112,11 +114,123 @@ func TestAModelsObjectThatBreaksARuleIsRefusedNamingTheRule(t *testing.T) {
 		"two aliases of one endpoint":       {modelsFileOf(one, `{"name":"m","model":"z/m","endpoint":"together"},{"name":"n","model":"z/m","endpoint":"together"}`), `aliases "m" and "n" both name endpoint "together"`},
 		"an alias of a fallback":            {modelsFileOf(modelOf(nearEP, phalaEP), `{"name":"m","model":"z/m","endpoint":"phala"}`), `alias "m" names endpoint "phala", which serves as a fallback of e2ee endpoint "near"`},
 		"a fallback on other terms":         {modelsFileOf(modelOf(nearEP, strings.Replace(phalaEP, `"upstream_model":"z/m"`, `"upstream_model":"z/other"`, 1)), ``), `endpoint "phala" differs from e2ee endpoint "near" in upstream_model`},
+		"a fallback that seals otherwise":   {modelsFileOf(modelOf(tinfoilEP, phalaEP), ``), `endpoint "phala" is a fallback of e2ee endpoint "tinfoil", but phala and tinfoil seal requests differently`},
 		"a sealed endpoint under an alias":  {modelsFileOf(modelOf(nearEP), `{"name":"m","model":"z/m","endpoint":"near"}`), `endpoint "near" is e2ee and serves as "m", so a sealed body names "m" there; set its sealed_model to "m"`},
 		"sealed_model below e2ee":           {modelsFileOf(modelOf(strings.Replace(phalaTEEEP, `"tier"`, `"sealed_model":"z/m","tier"`, 1)), ``), `endpoint "phala-tee" sets sealed_model but is not e2ee`},
 		"an empty sealed_model":             {modelsFileOf(modelOf(strings.Replace(nearEP, `"tier"`, `"sealed_model":"","tier"`, 1)), ``), `endpoint "near" has sealed_model "", which must be a non-empty string`},
 	} {
 		if _, err := parse([]byte(c.file)); err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: err %v, want %q", name, err, c.want)
+		}
+	}
+}
+
+var testIncludedWindows = []int{100_000, 200_000}
+
+func parseForRelay(data []byte) ([]Route, error) {
+	rts, err := parse(data)
+	if err != nil {
+		return nil, err
+	}
+	return rts, FailoverOnOneTerm(rts, testIncludedWindows)
+}
+
+func TestAModelRefusesEndpointsAChatFailsOverBetweenOnDifferentTerms(t *testing.T) {
+	cheaper := strings.Replace(phalaTEEEP, `"prompt_micros_per_mtok":150000`, `"prompt_micros_per_mtok":100000`, 1)
+	included := strings.Replace(phalaTEEEP, `"context_tokens":131072`, `"context_tokens":131072,"included":{"from":"free"}`, 1)
+	paid := strings.Replace(phalaTEEEP, `"context_tokens":131072`, `"context_tokens":131072,"requires_plan":"pro"`, 1)
+	for name, c := range map[string]struct {
+		tee, refusal string
+	}{
+		"a cheaper sibling":           {cheaper, "differ in price"},
+		"an included sibling":         {included, "differ in included"},
+		"a sibling that needs a plan": {paid, "differ in requires_plan"},
+	} {
+		_, err := parseForRelay([]byte(modelsFileOf(modelOf(togetherEP, c.tee), twoAliases)))
+		if err == nil || !strings.Contains(err.Error(), c.refusal) || !strings.Contains(err.Error(), "give them the same terms") {
+			t.Errorf("%s: %v, want a refusal that names %q and the fix", name, err, c.refusal)
+		}
+	}
+	xai := strings.Replace(togetherEP, `"base_url":"https://u"`, `"provider":"xai","base_url":"https://api.x.ai","api_key_env":"XAI_API_KEY","retention":"zdr"`, 1)
+	_, err := parseForRelay([]byte(modelsFileOf(modelOf(xai, phalaTEEEP), twoAliases)))
+	if err == nil || !strings.Contains(err.Error(), "reasons past the output limit") {
+		t.Errorf("a sibling on a provider that reasons past the output limit: %v, want a refusal", err)
+	}
+	cheaperSealed := strings.Replace(nearEP, `"prompt_micros_per_mtok":150000`, `"prompt_micros_per_mtok":100000`, 1)
+	if _, err := parseForRelay([]byte(modelsFileOf(modelOf(togetherEP, phalaTEEEP, cheaperSealed), twoAliases))); err != nil {
+		t.Errorf("a cheaper e2ee endpoint, which no plaintext chat fails over to: %v", err)
+	}
+}
+
+func TestIncludedEndpointsMayDifferInAWindowNoPlanReaches(t *testing.T) {
+	in := func(ep, window string) string {
+		return strings.Replace(ep, `"context_tokens":131072`, `"context_tokens":`+window+`,"included":{"from":"free"}`, 1)
+	}
+	if _, err := parseForRelay([]byte(modelsFileOf(modelOf(in(togetherEP, "1048575"), in(phalaTEEEP, "1048576")), twoAliases))); err != nil {
+		t.Errorf("windows past every plan's included window: %v", err)
+	}
+	_, err := parseForRelay([]byte(modelsFileOf(modelOf(in(togetherEP, "32768"), in(phalaTEEEP, "1048576")), twoAliases)))
+	if err == nil || !strings.Contains(err.Error(), "context_tokens") {
+		t.Errorf("a window smaller than a plan's included window: %v, want a refusal naming context_tokens", err)
+	}
+}
+
+const fireworksEP = `{"id":"fireworks","unnamed":true,"tier":"private","provider":"fireworks","retention":"zdr","base_url":"https://api.fireworks.ai/inference","api_key_env":"FIREWORKS_API_KEY","upstream_model":"accounts/fireworks/models/m",` + windowPriced + `}`
+
+func TestAnUnnamedEndpointServesBesideItsTiersNamedEndpointAndIsNoRouteOfItsOwn(t *testing.T) {
+	together := strings.Replace(togetherEP, `"base_url"`, `"retention":"zdr","base_url"`, 1)
+	rts, err := parseForRelay([]byte(modelsFileOf(modelOf(fireworksEP, together, phalaTEEEP), twoAliases)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, rt := range rts {
+		names = append(names, rt.Model)
+	}
+	if !reflect.DeepEqual(names, []string{"m", "m-tee"}) {
+		t.Fatalf("the routes are %v, want m and m-tee alone", names)
+	}
+	m := rts[0]
+	if len(m.Unnamed) != 1 {
+		t.Fatalf("m has unnamed endpoints %+v, want fireworks", m.Unnamed)
+	}
+	fw := m.Unnamed[0]
+	if fw.Model != "m" || fw.ID != "z/m" || fw.Endpoint != "fireworks" || fw.Tier != catalog.Private || fw.UpstreamModel != "accounts/fireworks/models/m" {
+		t.Errorf("the unnamed endpoint loads as %+v, want fireworks of z/m serving under m", fw)
+	}
+	if fw.Order >= m.Order || m.Order >= rts[1].Order {
+		t.Errorf("orders fireworks %d, together %d, phala-tee %d, want the file's order", fw.Order, m.Order, rts[1].Order)
+	}
+	if got := KeyEnvs(rts); !slices.Contains(got, "FIREWORKS_API_KEY") {
+		t.Errorf("the keys %v leave out the unnamed endpoint's", got)
+	}
+}
+
+const genericEP = `{"id":"other","unnamed":true,"tier":"private","base_url":"https://v","upstream_model":"up/m",` + windowPriced + `}`
+
+func withEffort(ep, effort string) string {
+	return strings.Replace(ep, `"context_tokens"`, `"default_reasoning_effort":"`+effort+`","context_tokens"`, 1)
+}
+
+func reasoningModelOf(endpoints ...string) string {
+	return strings.Replace(modelOf(endpoints...), `"reasoning_efforts":[]`, `"reasoning_efforts":["low","high"]`, 1)
+}
+
+func TestAnUnnamedEndpointThatBreaksARuleIsRefusedNamingTheRule(t *testing.T) {
+	together := strings.Replace(togetherEP, `"base_url"`, `"retention":"zdr","base_url"`, 1)
+	alias := `{"name":"m","model":"z/m","endpoint":"together"}`
+	for name, c := range map[string]struct{ file, want string }{
+		"alone at its tier":                          {modelsFileOf(modelOf(fireworksEP, phalaTEEEP), `{"name":"m-tee","model":"z/m","endpoint":"phala-tee"}`), `endpoint "fireworks" is unnamed, but no named endpoint of the model serves tier private`},
+		"named by an alias":                          {modelsFileOf(modelOf(together, fireworksEP), alias+`,{"name":"fw","model":"z/m","endpoint":"fireworks"}`), `alias "fw" names endpoint "fireworks", which is unnamed`},
+		"e2ee":                                       {modelsFileOf(modelOf(nearEP, strings.Replace(phalaEP, `"tier"`, `"unnamed":true,"tier"`, 1)), ``), `endpoint "phala" is unnamed and e2ee`},
+		"unnamed false":                              {modelsFileOf(modelOf(together, strings.Replace(fireworksEP, `"unnamed":true`, `"unnamed":false`, 1)), alias), `endpoint "fireworks" has unnamed false; set it to true or leave it out`},
+		"a cheaper unnamed":                          {modelsFileOf(modelOf(together, strings.Replace(fireworksEP, `"prompt_micros_per_mtok":150000`, `"prompt_micros_per_mtok":100000`, 1)), alias), `endpoints "together" and "fireworks" serve model "z/m" outside e2ee and differ in price`},
+		"an unnamed on a plan":                       {modelsFileOf(modelOf(together, strings.Replace(fireworksEP, `"tier"`, `"requires_plan":"pro","tier"`, 1)), alias), `differ in requires_plan`},
+		"a second unaliased name":                    {modelsFileOf(modelOf(together, strings.Replace(fireworksEP, `"unnamed":true,`, ``, 1)), ``), `a further endpoint at a tier the model already serves can be unnamed`},
+		"an unnamed that keeps prompts":              {modelsFileOf(modelOf(together, genericEP), alias), `endpoints "together" and "other" serve model "z/m" at tier private and differ in retention`},
+		"an unnamed that reasons at another default": {modelsFileOf(reasoningModelOf(withEffort(together, "high"), withEffort(fireworksEP, "low")), alias), `differ in default_reasoning_effort`},
+	} {
+		if _, err := parseForRelay([]byte(c.file)); err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Errorf("%s: err %v, want %q", name, err, c.want)
 		}
 	}

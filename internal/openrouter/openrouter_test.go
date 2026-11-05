@@ -139,13 +139,14 @@ func TestAServerToolOpenRouterWouldRunItselfIsRefusedBeforeItIsSent(t *testing.T
 	}
 }
 
-func TestTheClientIsNotShownWhatOpenRouterChargedUs(t *testing.T) {
+func TestTheClientIsNotShownWhatOpenRouterChargedUsAndTheRelayIs(t *testing.T) {
 	r := record(t)
 	chunk, usage, err := r.chat().Complete(context.Background(), call(t, `{"model":"m","messages":[{"role":"user","content":"hi"}]}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := (chat.Usage{PromptTokens: 3, CompletionTokens: 2, CachedPromptTokens: 1, ReasoningTokens: 1}); usage != want {
+	charged := chat.VendorCost{Read: chat.CostReported, Micros: 400}
+	if want := (chat.Usage{PromptTokens: 3, CompletionTokens: 2, CachedPromptTokens: 1, ReasoningTokens: 1, VendorCost: charged}); usage != want {
 		t.Errorf("usage %+v, want %+v", usage, want)
 	}
 	var out strings.Builder
@@ -160,8 +161,8 @@ func TestTheClientIsNotShownWhatOpenRouterChargedUs(t *testing.T) {
 		c.WriteTo(&streamed)
 		return nil
 	})
-	if err != nil || usage.PromptTokens != 3 || usage.CompletionTokens != 2 {
-		t.Fatalf("stream usage %+v err %v", usage, err)
+	if err != nil || usage.PromptTokens != 3 || usage.CompletionTokens != 2 || usage.VendorCost != charged {
+		t.Fatalf("stream usage %+v err %v, want %+v charged", usage, err, charged)
 	}
 	for _, leak := range []string{"cost", "is_byok", "DeepInfra"} {
 		if strings.Contains(streamed.String(), leak) {
@@ -359,8 +360,11 @@ func TestOtherRefusalsAreNotSentAgain(t *testing.T) {
 		refusal refusal
 		want    apierr.Error
 	}{
-		"server error": {refusal{http.StatusInternalServerError, `{"error":{"code":500,"message":"x","metadata":{"provider_name":"Novita"}}}`}, apierr.ErrUpstream},
-		"bad request":  {refusal{http.StatusBadRequest, `{"error":{"code":400,"message":"x","metadata":{"provider_name":"Novita"}}}`}, apierr.ErrInvalidRequest},
+		"server error":           {refusal{http.StatusInternalServerError, `{"error":{"code":500,"message":"x","metadata":{"provider_name":"Novita"}}}`}, apierr.ErrUpstream},
+		"bad request":            {refusal{http.StatusBadRequest, `{"error":{"code":400,"message":"x","metadata":{"provider_name":"Novita"}}}`}, apierr.ErrInvalidRequest},
+		"moderation flag":        {refusal{http.StatusForbidden, `{"error":{"code":403,"message":"openai/gpt-x requires moderation on OpenAI. Your input was flagged for \"harassment\". No credits were charged.","metadata":{"reasons":["harassment"],"flagged_input":"x","provider_name":"OpenAI","model_slug":"openai/gpt-x"}}}`}, apierr.ErrContentFilter},
+		"forbidden with no flag": {refusal{http.StatusForbidden, `{"error":{"code":403,"message":"x","metadata":{"provider_name":"Novita"}}}`}, apierr.ErrUpstreamRefused},
+		"no credits":             {refusal{http.StatusPaymentRequired, `{"error":{"code":402,"message":"x"}}`}, apierr.ErrUpstreamUnavailable},
 	} {
 		r := record(t, c.refusal)
 		_, _, attempts, err := r.retried().Complete(context.Background(), call(t, `{"model":"m","messages":[{"role":"user","content":"hi"}]}`))
@@ -388,4 +392,35 @@ func providers(sent []map[string]json.RawMessage) string {
 		out = append(out, string(s["provider"]))
 	}
 	return strings.Join(out, " ")
+}
+
+func TestTheVendorCostIsCostOrOnOurOwnProviderKeyCostPlusTheProvidersCharge(t *testing.T) {
+	reported := func(micros int64, byok bool) chat.VendorCost {
+		return chat.VendorCost{Read: chat.CostReported, Micros: micros, BYOK: byok}
+	}
+	for usage, want := range map[string]chat.VendorCost{
+		`{"prompt_tokens":3}`:           {},
+		`{"cost":null}`:                 {},
+		`{"cost":0.0004}`:               reported(400, false),
+		`{"cost":0}`:                    reported(0, false),
+		`{"cost":0.0000001}`:            reported(1, false),
+		`{"cost":4e-4,"is_byok":false}`: reported(400, false),
+		`{"cost":-0.0004}`:              reported(-400, false),
+		`{"cost":1e300}`:                {Read: chat.CostUnreadable},
+		`{"cost":"0.0004"}`:             reported(400, false),
+		`{"cost":"free"}`:               {Read: chat.CostUnreadable},
+		`{"cost":true}`:                 {Read: chat.CostUnreadable},
+		`{"cost":0.00002,"is_byok":true,"cost_details":{"upstream_inference_cost":0.0004}}`: reported(420, true),
+		`{"cost":0.00002,"is_byok":true}`:                                                   {Read: chat.CostBYOKUpstreamMissing, BYOK: true},
+		`{"cost":0.00002,"is_byok":true,"cost_details":{"upstream_inference_cost":null}}`:   {Read: chat.CostBYOKUpstreamMissing, BYOK: true},
+		`{"cost":0.00002,"is_byok":true,"cost_details":{"upstream_inference_cost":1e300}}`:  {Read: chat.CostUnreadable, BYOK: true},
+		`{"cost":0.0004,"cost_details":{"upstream_inference_cost":0.0005}}`:                 reported(500, false),
+		`{"cost":0.0004,"cost_details":{"upstream_inference_cost":0.0003}}`:                 reported(400, false),
+		`{"cost":0.0004,"is_byok":false,"cost_details":{"upstream_inference_cost":0.0005}}`: reported(500, false),
+		`{"cost":0.0004,"cost_details":{"upstream_inference_cost":0}}`:                      reported(400, false),
+	} {
+		if got := vendorCost(json.RawMessage(usage)); got != want {
+			t.Errorf("usage %s read as %+v, want %+v", usage, got, want)
+		}
+	}
 }

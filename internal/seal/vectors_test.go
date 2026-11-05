@@ -87,7 +87,7 @@ func fixed(label string) []byte {
 
 func buildVectors(t *testing.T) vectors {
 	t.Helper()
-	v := vectors{Suite: map[string]string{"kem": "DHKEM(X25519, HKDF-SHA256)", "kdf": "HKDF-SHA256", "aead": "AES-256-GCM", "cek_info": infoCEK, "reply_key_info": infoReplyKey, "reply_nonce_info": infoReplyNonce}, Patterns: storedPatterns(t)}
+	v := vectors{Suite: map[string]string{"kem": "DHKEM(X25519, HKDF-SHA256)", "kdf": "HKDF-SHA256", "aead": "AES-256-GCM", "cek_info": infoCEK, "reply_key_info": infoReplyKey, "reply_nonce_info": infoReplyNonce}, Patterns: SealedPatterns()}
 	var identities []*Identity
 	for _, label := range []string{"recipient a", "recipient b"} {
 		id, err := IdentityFromKey(fixed(label))
@@ -161,21 +161,6 @@ func buildVectors(t *testing.T) vectors {
 		v.Replies = append(v.Replies, reply)
 	}
 	return v
-}
-
-func storedPatterns(t *testing.T) []string {
-	t.Helper()
-	raw, err := os.ReadFile(vectorsFile)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var stored struct {
-		Patterns []string `json:"sealable_patterns"`
-	}
-	if err := json.Unmarshal(raw, &stored); err != nil {
-		t.Fatal(err)
-	}
-	return stored.Patterns
 }
 
 func boolByte(b bool) byte {

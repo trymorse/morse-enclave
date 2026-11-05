@@ -109,21 +109,22 @@ func decodeWire(w http.ResponseWriter, r *http.Request, into any) bool {
 	return true
 }
 
-func (s *Server) opening(header http.Header) (chat.Cast, Framing, error) {
+func (s *Server) opening(header http.Header) (Opening, error) {
 	o, err := openingOf(header)
 	if err != nil {
-		return chat.Cast{}, Framing{}, err
+		return Opening{}, err
 	}
-	return s.casts.of(o.Prompts, o.Rules), Framing{Launch: o.Launch, Own: o.Own, Writing: o.Writing}, nil
+	return Opening{Cast: s.casts.of(o.Prompts, o.Rules), Framing: Framing{Launch: o.Launch, Own: o.Own, Writing: o.Writing}, KeyCaller: o.KeyCaller}, nil
 }
 
 func (s *Server) open(w http.ResponseWriter, r *http.Request) {
-	cast, framing, err := s.opening(r.Header)
+	o, err := s.opening(r.Header)
 	if err != nil {
 		apierr.WriteError(w, apierr.ErrInvalidBody)
 		return
 	}
-	admitted, err := s.inner.Open(r.Context(), Opening{Method: r.Header.Get(headerMethod), Path: r.Header.Get(headerPath), Query: r.Header.Get(headerQuery), Header: ContentHeaders(r.Header), Body: r.Body, Cast: cast, Framing: framing})
+	o.Method, o.Path, o.Query, o.Header, o.Body = r.Header.Get(headerMethod), r.Header.Get(headerPath), r.Header.Get(headerQuery), ContentHeaders(r.Header), r.Body
+	admitted, err := s.inner.Open(r.Context(), o)
 	if err != nil {
 		apierr.WriteError(w, refusalWire(err))
 		return
@@ -132,7 +133,7 @@ func (s *Server) open(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) openSealed(w http.ResponseWriter, r *http.Request) {
-	cast, framing, err := s.opening(r.Header)
+	o, err := s.opening(r.Header)
 	if err != nil {
 		apierr.WriteError(w, apierr.ErrInvalidBody)
 		return
@@ -142,7 +143,7 @@ func (s *Server) openSealed(w http.ResponseWriter, r *http.Request) {
 		apierr.WriteError(w, apierr.ErrRequestTooLarge)
 		return
 	}
-	opened, err := s.inner.OpenSealed(r.Context(), SealedOpening{Body: body, Cast: cast, Framing: framing})
+	opened, err := s.inner.OpenSealed(r.Context(), SealedOpening{Body: body, Cast: o.Cast, Framing: o.Framing, KeyCaller: o.KeyCaller})
 	if refused, ok := errors.AsType[SealedRefusal](err); ok {
 		w.Header().Set("Content-Type", SealedContentType)
 		w.Write(refused.Reply)

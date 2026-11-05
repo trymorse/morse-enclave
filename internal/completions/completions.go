@@ -108,7 +108,8 @@ type completionChoice struct {
 }
 
 type promptDetails struct {
-	CachedTokens int `json:"cached_tokens"`
+	CachedTokens     int `json:"cached_tokens"`
+	CacheWriteTokens int `json:"cache_write_tokens,omitempty"`
 }
 
 type completionDetails struct {
@@ -126,7 +127,7 @@ type Usage struct {
 func (u Usage) Domain() chat.Usage {
 	out := chat.Usage{PromptTokens: u.PromptTokens, CompletionTokens: u.CompletionTokens}
 	if d := u.PromptTokensDetails; d != nil {
-		out.CachedPromptTokens = d.CachedTokens
+		out.CachedPromptTokens, out.CacheWritePromptTokens = d.CachedTokens, d.CacheWriteTokens
 	}
 	if d := u.CompletionTokensDetails; d != nil {
 		out.ReasoningTokens = max(d.ReasoningTokens, 0)
@@ -137,7 +138,7 @@ func (u Usage) Domain() chat.Usage {
 func wireUsage(u chat.Usage, detailed bool) *Usage {
 	out := &Usage{PromptTokens: u.PromptTokens, CompletionTokens: u.CompletionTokens, TotalTokens: u.PromptTokens + u.CompletionTokens}
 	if detailed {
-		out.PromptTokensDetails = &promptDetails{u.CachedPromptTokens}
+		out.PromptTokensDetails = &promptDetails{CachedTokens: u.CachedPromptTokens}
 		out.CompletionTokensDetails = &completionDetails{u.ReasoningTokens}
 	}
 	return out

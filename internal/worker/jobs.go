@@ -12,6 +12,7 @@ import (
 
 	"morse/backend/internal/apierr"
 	"morse/backend/internal/billing/measure"
+	"morse/backend/internal/catalog"
 	"morse/backend/internal/jobs"
 	"morse/backend/internal/media"
 	"morse/backend/internal/research"
@@ -19,6 +20,7 @@ import (
 
 type openedVideo struct {
 	cuts
+	endpoint  catalog.EndpointID
 	generator media.VideoGenerator
 	req       *media.VideoRequest
 }
@@ -39,7 +41,7 @@ func (w *InProcess) openVideo(o Opening) (Admission, error) {
 	if err != nil {
 		return nil, apierr.InvalidParameter(err.Error())
 	}
-	ov := &openedVideo{cuts: newCuts(), generator: generator, req: &resolved}
+	ov := &openedVideo{cuts: newCuts(), endpoint: w.endpoints[req.Model], generator: generator, req: &resolved}
 	return MediaAdmission{admitted: admitted{w.keep(o, ov)}, Route: req.Model, Units: resolved.Seconds}, nil
 }
 
@@ -47,7 +49,7 @@ func (o *openedVideo) cut(reason measure.Cut) { o.cuts.cut(reason, false) }
 
 func (o *openedVideo) submit(w *InProcess, g JobGrant, reply http.ResponseWriter, accepted func(media.Submitted)) Measured {
 	queued := VideoView{ID: g.ID, Object: "video", Model: o.req.Model, Status: media.Statuses.String(jobs.Queued), CreatedAt: g.CreatedAt.Unix()}
-	return submit(o.cuts, reply, queued, accepted, func(ctx context.Context) (media.Submitted, error) {
+	return submit(o.cuts, o.endpoint, reply, queued, accepted, func(ctx context.Context) (media.Submitted, error) {
 		ctx, cancel := context.WithTimeout(ctx, w.videoSubmit)
 		defer cancel()
 		return o.generator.SubmitVideo(ctx, o.req, media.Submission{Deadline: g.Deadline, UploadURL: g.UploadURL})
@@ -56,8 +58,9 @@ func (o *openedVideo) submit(w *InProcess, g JobGrant, reply http.ResponseWriter
 
 type openedResearch struct {
 	cuts
-	vendor research.Researcher
-	req    *research.Request
+	endpoint catalog.EndpointID
+	vendor   research.Researcher
+	req      *research.Request
 }
 
 func (w *InProcess) openResearch(o Opening) (Admission, error) {
@@ -72,7 +75,7 @@ func (w *InProcess) openResearch(o Opening) (Admission, error) {
 	if err := refuseProtocol(nil, protocolOf(o.Header.Get)); err != nil {
 		return nil, err
 	}
-	or := &openedResearch{cuts: newCuts(), vendor: vendor, req: req}
+	or := &openedResearch{cuts: newCuts(), endpoint: w.endpoints[req.Model], vendor: vendor, req: req}
 	return CallAdmission{admitted: admitted{w.keep(o, or)}, Route: req.Model}, nil
 }
 
@@ -80,7 +83,7 @@ func (o *openedResearch) cut(reason measure.Cut) { o.cuts.cut(reason, false) }
 
 func (o *openedResearch) submit(_ *InProcess, g JobGrant, reply http.ResponseWriter, accepted func(media.Submitted)) Measured {
 	queued := ResearchView{ID: g.ID, Object: "research", Model: o.req.Model, Status: research.Statuses.String(jobs.Queued), CreatedAt: g.CreatedAt.Unix()}
-	return submit(o.cuts, reply, queued, accepted, func(ctx context.Context) (media.Submitted, error) {
+	return submit(o.cuts, o.endpoint, reply, queued, accepted, func(ctx context.Context) (media.Submitted, error) {
 		ctx, cancel := context.WithTimeout(ctx, researchCallTimeout)
 		defer cancel()
 		runID, err := o.vendor.Start(ctx, o.req)
@@ -222,7 +225,7 @@ func (s *eventStream) researchEvent(e research.Event) error {
 	return s.event(bytes.NewReader(data))
 }
 
-func submit(c cuts, reply http.ResponseWriter, queued any, accepted func(media.Submitted), start func(ctx context.Context) (media.Submitted, error)) Measured {
+func submit(c cuts, endpoint catalog.EndpointID, reply http.ResponseWriter, queued any, accepted func(media.Submitted), start func(ctx context.Context) (media.Submitted, error)) Measured {
 	ctx := c.run
 	rw := newReplyWriter(reply)
 	opened := time.Now()
@@ -234,7 +237,7 @@ func submit(c cuts, reply http.ResponseWriter, queued any, accepted func(media.S
 		writeErr = writeJSONBody(rw, func(w io.Writer) error { return json.NewEncoder(w).Encode(queued) })
 	}
 	end := endingOf(c.client, writeErr, err)
-	m := Measured{Measurement: measure.Measurement{Outcome: end.outcome()}, Cut: end.cut(), Served: err == nil, Refusal: end.refusal(err)}
+	m := Measured{Measurement: measure.Measurement{Outcome: end.outcome()}, Cut: end.cut(), Served: err == nil, Refusal: end.refusal(err), Endpoint: endpoint}
 	m.Health = rw.observed(ctx, err, false, opened, returned)
 	if err != nil && rw.status == 0 {
 		refuse(ctx, rw, err)

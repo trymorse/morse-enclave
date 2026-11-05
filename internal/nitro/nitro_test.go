@@ -3,7 +3,10 @@ package nitro
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/x509"
 	"errors"
 	"os"
 	"strings"
@@ -39,10 +42,22 @@ func somePublicKey() []byte {
 	return key
 }
 
-func TestTheDocumentRequestCarriesOnlyThePrefixedEnvironmentAndKeyAndNoCallerBytes(t *testing.T) {
-	key := somePublicKey()
+func someSPKI() []byte {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		panic(err)
+	}
+	spki, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
+	if err != nil {
+		panic(err)
+	}
+	return spki
+}
+
+func TestTheDocumentRequestCarriesTheEnvironmentTheHPKEKeyAndTheEnclavesOwnTLSSPKIAndNoCallerBytes(t *testing.T) {
+	key, spki := somePublicKey(), someSPKI()
 	sess := &recordingSession{reply: response.Response{Attestation: &response.Attestation{Document: []byte("cose")}}}
-	doc, err := NSM{open: func() (session, error) { return sess, nil }}.Attest(context.Background(), "prod", key)
+	doc, err := NSM{open: func() (session, error) { return sess, nil }}.Attest(context.Background(), "prod", key, spki, nil)
 	if err != nil || string(doc) != "cose" {
 		t.Fatalf("document %q, %v", doc, err)
 	}
@@ -57,8 +72,11 @@ func TestTheDocumentRequestCarriesOnlyThePrefixedEnvironmentAndKeyAndNoCallerByt
 	if !bytes.Equal(req.UserData, want) {
 		t.Errorf("user_data %q, want %q", req.UserData, want)
 	}
-	if req.Nonce != nil || req.PublicKey != nil {
-		t.Errorf("the request carries nonce %x and public_key %x; the document must hold nothing a caller chose", req.Nonce, req.PublicKey)
+	if !bytes.Equal(req.PublicKey, spki) {
+		t.Errorf("public_key %x, want the enclave's TLS SPKI %x", req.PublicKey, spki)
+	}
+	if req.Nonce != nil {
+		t.Errorf("the request carries nonce %x; the document must hold nothing a caller chose", req.Nonce)
 	}
 }
 
@@ -69,20 +87,20 @@ func TestAModuleErrorOrAnEmptyReplyIsAnError(t *testing.T) {
 		"no field":     {reply: response.Response{}},
 		"send failed":  {err: errors.New("ioctl")},
 	} {
-		_, err := NSM{open: func() (session, error) { return sess, nil }}.Attest(context.Background(), "dev", somePublicKey())
+		_, err := NSM{open: func() (session, error) { return sess, nil }}.Attest(context.Background(), "dev", somePublicKey(), someSPKI(), nil)
 		if err == nil || !strings.HasPrefix(err.Error(), "nitro: ") {
 			t.Errorf("%s: %v", name, err)
 		}
 	}
-	_, err := NSM{open: func() (session, error) { return nil, errors.New("no device") }}.Attest(context.Background(), "dev", somePublicKey())
+	_, err := NSM{open: func() (session, error) { return nil, errors.New("no device") }}.Attest(context.Background(), "dev", somePublicKey(), someSPKI(), nil)
 	if err == nil {
 		t.Error("an unopenable module attested")
 	}
 }
 
-func TestTheStandInNamesItselfAndCarriesTheKeyForADevClient(t *testing.T) {
-	key := somePublicKey()
-	doc, err := Dev{}.Attest(context.Background(), "dev", key)
+func TestTheStandInNamesItselfAndCarriesBothKeysForADevClient(t *testing.T) {
+	key, spki := somePublicKey(), someSPKI()
+	doc, err := Dev{}.Attest(context.Background(), "dev", key, spki, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +108,7 @@ func TestTheStandInNamesItselfAndCarriesTheKeyForADevClient(t *testing.T) {
 		t.Errorf("stand-in %s does not announce itself first", doc)
 	}
 	standIn, err := verify.ParseStandIn(doc)
-	if err != nil || standIn.Environment != "dev" || !bytes.Equal(standIn.PublicKey, key) || time.Since(standIn.IssuedAt) > time.Minute {
+	if err != nil || standIn.Environment != "dev" || !bytes.Equal(standIn.PublicKey, key) || !bytes.Equal(standIn.TLS, spki) || time.Since(standIn.IssuedAt) > time.Minute {
 		t.Errorf("parsed %+v %v", standIn, err)
 	}
 }

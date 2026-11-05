@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"slices"
 	"time"
@@ -15,6 +16,7 @@ import (
 	"morse/backend/internal/chat"
 	"morse/backend/internal/compaction"
 	"morse/backend/internal/health"
+	"morse/backend/internal/openaicompat"
 	"morse/backend/internal/plans/limits"
 	"morse/backend/internal/tokenizer"
 	"morse/backend/internal/upstream"
@@ -31,14 +33,12 @@ type chatRoute struct {
 	attester          string
 	speaks            *chat.Scheme
 	tier              catalog.Tier
+	order             int
+	onBehalf          bool
 }
 
 func (c Chat) route(model catalog.ModelID, vendor Model) chatRoute {
-	return chatRoute{ChatTerms: c.ChatTerms, Upstream: c.Upstream, Reasoning: c.Reasoning, ReasoningUncapped: c.ReasoningUncapped, Counter: c.Counter, model: model, endpoint: vendor.Endpoint, attester: vendor.Attester, speaks: c.Upstream.Speaks(), tier: vendor.Tier}
-}
-
-func (r chatRoute) runsOnly(proposed []catalog.EndpointID) bool {
-	return len(proposed) > 0 && !slices.ContainsFunc(proposed, func(id catalog.EndpointID) bool { return id != r.endpoint })
+	return chatRoute{ChatTerms: c.ChatTerms, Upstream: c.Upstream, Reasoning: c.Reasoning, ReasoningUncapped: c.ReasoningUncapped, Counter: c.Counter, model: model, endpoint: vendor.Endpoint, attester: vendor.Attester, speaks: c.Upstream.Speaks(), tier: vendor.Tier, order: vendor.Order}
 }
 
 func vendorFor(vendors []chatRoute, p protocol) chatRoute {
@@ -55,13 +55,6 @@ func (r chatRoute) misserved(p protocol, compaction bool) error {
 		return errCompactionSealed
 	}
 	return refuseProtocol(r.speaks, p)
-}
-
-func (r chatRoute) promptBound(size int) int {
-	if r.ContextTokens > 0 {
-		return min(size, r.ContextTokens)
-	}
-	return size
 }
 
 func (r chatRoute) clamp(granted, asked int) int {
@@ -81,7 +74,8 @@ func askedOutput(req *chat.Request) int {
 
 type openedChat struct {
 	cuts
-	route         chatRoute
+	routes        []chatRoute
+	first         chatRoute
 	protocol      protocol
 	call          chat.Call
 	asked         int
@@ -91,6 +85,8 @@ type openedChat struct {
 	promptComment []byte
 	character     chat.Character
 	promptBytes   int
+	// afterCut is set while a reply sealed whole runs (see outlivesCut).
+	afterCut *afterCut
 }
 
 // played is the character the chat plays: the launch the proxy checked, the user's own character whose rules it
@@ -107,25 +103,30 @@ func (o *openedChat) played(cast chat.Cast) chat.Character {
 }
 
 func (w *InProcess) openChat(o Opening, compaction bool) (Admission, error) {
-	req, err := chat.ParseRequest(o.Body)
+	p := protocolOf(o.Header.Get)
+	req, err := requestOf(o.Body, p)
 	if err != nil {
-		return nil, contentRefusal(err)
+		return nil, err
 	}
-	vendors, known := w.chats[req.Model]
+	name, known := w.chats[req.Model]
 	if !known {
 		return nil, apierr.ErrModelNotFound
 	}
-	p := protocolOf(o.Header.Get)
-	route := vendorFor(vendors, p)
-	if err := route.misserved(p, compaction); err != nil {
+	provider, _ := req.Field("provider")
+	ask := askOf(p, o.KeyCaller, req)
+	routes, err := name.reach(p, ask, compaction, namesFloor(provider))
+	if err != nil && ask == askLooksSealed {
+		return nil, hintedHexOnly(err)
+	}
+	if err != nil {
 		return nil, err
 	}
-	if !route.tier.Sealed() {
+	if p.scheme == nil {
 		floor, err := floorOf(req)
 		if err != nil {
 			return nil, err
 		}
-		if err := route.refuseBelow(floor); err != nil {
+		if routes, err = name.atFloor(routes, floor); err != nil {
 			return nil, err
 		}
 	}
@@ -142,57 +143,112 @@ func (w *InProcess) openChat(o Opening, compaction bool) (Admission, error) {
 			}
 		}
 	}
-	oc := &openedChat{cuts: newCuts(), route: route, protocol: p, call: chat.Call{Request: req, RouteEffort: route.DefaultReasoningEffort, Efforts: route.ReasoningEfforts}, launch: o.Launch, own: o.Own, writing: o.Writing}
+	route := routes[0]
+	oc := &openedChat{cuts: newCuts(), routes: routes, first: route, protocol: p, call: chat.Call{Request: req, RouteEffort: route.DefaultReasoningEffort, Efforts: route.ReasoningEfforts}, launch: o.Launch, own: o.Own, writing: o.Writing}
 	if compaction {
 		err = oc.compact(o.Cast)
 	} else {
 		err = route.Upstream.admit(oc, o.Cast)
 	}
+	if err == nil && route.onBehalf {
+		err = unsealableRefusal(openaicompat.Unsealable(oc.call.Request))
+	}
 	if err != nil {
 		return nil, err
 	}
 	return ChatAdmission{
-		admitted: admitted{w.keep(o, oc)}, Model: route.model, Candidates: []catalog.EndpointID{route.endpoint},
-		PromptBound: route.promptBound(oc.call.Size()), PromptBytes: limits.KibibytesCovering(oc.promptBytes), OutputAsked: oc.asked,
+		admitted: admitted{w.keep(o, oc)}, Model: name.model, Candidates: endpointsOf(routes), Sealable: name.sealable(), OnBehalf: route.onBehalf,
+		PromptSize: oc.call.Size(), PromptBytes: limits.KibibytesCovering(oc.promptBytes), OutputAsked: oc.asked,
 		Stream: req.Stream, Compaction: compaction, Character: oc.character,
 	}, nil
 }
 
-var vendorFaults = map[health.Outcome]bool{health.UpstreamBusy: true, health.UpstreamUnavailable: true, health.UpstreamError: true}
+// requestOf reads a request from its body, or, when its scheme seals the body whole, from its clear headers:
+// the body is then ciphertext the worker relays unread.
+func requestOf(body io.Reader, p protocol) (*chat.Request, error) {
+	if p.scheme == nil || !p.scheme.SealsBody {
+		req, err := chat.ParseRequest(body)
+		if err != nil {
+			return nil, contentRefusal(err)
+		}
+		return req, nil
+	}
+	if p.err != nil {
+		return nil, protocolRefusal(p.err)
+	}
+	raw, err := io.ReadAll(body)
+	if err != nil {
+		return nil, contentRefusal(err)
+	}
+	sealed := p.params.(chat.BodySealed)
+	return chat.SealedBodyRequest(raw, sealed.SealedModel(), sealed.OutputLimit()), nil
+}
 
-func (o *openedChat) cut(reason measure.Cut) { o.cuts.cut(reason, true) }
+var vendorFaults = map[health.Outcome]bool{health.UpstreamBusy: true, health.UpstreamUnavailable: true, health.UpstreamRefused: true, health.UpstreamError: true}
+
+// cut ends the run with its caller, but for a reply sealed whole, whose usage comes only after its last frame:
+// that one reads on for cutGrace first.
+func (o *openedChat) cut(reason measure.Cut) { o.cuts.cut(reason, !o.outlivesCut()) }
+
+func (o *openedChat) outlivesCut() bool {
+	return o.protocol.scheme != nil && o.protocol.scheme.SealsBody
+}
+
+type attempt struct {
+	route       chatRoute
+	call        chat.Call
+	waits       []time.Duration
+	promptBound int
+}
+
+func (o *openedChat) attempt(r chatRoute, g ChatGrant, last bool) attempt {
+	c := o.call
+	c.RouteEffort, c.Efforts, c.OutputLimit = r.DefaultReasoningEffort, r.ReasoningEfforts, r.clamp(g.OutputLimit, o.asked)
+	a := attempt{route: r, call: c, promptBound: g.PromptBound}
+	if last {
+		a.waits = r.Upstream.busyWaits()
+	}
+	return a
+}
 
 func (o *openedChat) run(_ context.Context, w *InProcess, h Handle, g Grant, reply http.ResponseWriter) Measured {
 	cg, ok := g.(ChatGrant)
-	if !ok || !o.route.runsOnly(cg.Endpoints) {
+	if !ok {
 		return unrunnable(reply)
 	}
-	o.call.OutputLimit = o.route.clamp(cg.OutputLimit, o.asked)
+	granted, ok := o.granted(cg.Endpoints)
+	if !ok || cg.PromptBound <= 0 {
+		return unrunnable(reply)
+	}
 	ctx := o.cuts.run
+	if o.outlivesCut() {
+		o.afterCut = newAfterCut(ctx, o.cuts.client)
+		defer o.afterCut.stop()
+		ctx = o.afterCut.ctx
+	}
 	rw := newReplyWriter(reply)
-	opened := time.Now()
-	got := o.route.Upstream.serve(ctx, w, o, rw)
-	returned := time.Now()
-	end := endingOf(ctx, got.writeErr, got.callErr)
-	if got.attempts.Refused {
-		// The retry loop held a busy refusal, which Anthropic sends inside a 200 stream with no status, so no
-		// upstream.Refused names it.
-		end = verdictOf(got.callErr)
+	var a attempt
+	var got served
+	var e measure.Evidence
+	var m Measured
+	var failedOver []Try
+	retries, hedges := 0, 0
+	for i, r := range granted {
+		last := i == len(granted)-1
+		a = o.attempt(r, cg, last)
+		got, e, m = o.try(ctx, w, a, cg, rw)
+		retries, hedges = retries+m.Health.Retries, hedges+m.Health.Hedges
+		if last || rw.status != 0 || !m.Health.Outcome.FailsOver() {
+			break
+		}
+		failedOver = append(failedOver, Try{Endpoint: r.endpoint, Health: m.Health})
+		retries++
 	}
-	e := got.evidence(end, o.call, o.route, cg)
-	m := Measured{Measurement: e.Measure(), Cut: end.cut(), Served: got.callErr == nil, Refusal: end.refusal(got.callErr), Endpoint: o.route.endpoint}
-	m.Health = rw.observed(ctx, got.callErr, false, opened, returned)
-	m.Health.Retries, m.Health.Hedges = got.attempts.Retries, got.attempts.Hedges
-	if refused, ok := errors.AsType[upstream.Refused](got.callErr); ok && vendorFaults[m.Health.Outcome] {
-		w.reports.VendorRefused(o.call.Model, refused.Status)
-	}
-	if chunk, ok := errors.AsType[chat.ErrorChunk](got.callErr); ok {
-		w.reports.UpstreamErrorChunk(o.call.Model, chunk.Code)
-	}
+	m.FailedOver, m.Health.Retries, m.Health.Hedges = failedOver, retries, hedges
 	if got.callErr != nil && rw.status == 0 {
 		refuse(ctx, rw, got.callErr)
 	}
-	p := o.route.Upstream.count(o, e, got)
+	p := a.route.Upstream.count(a, e, got)
 	switch {
 	case p != nil && p.count != nil && e.NeedsCount():
 		m.Follow, m.Counted = FollowCount, w.startCount(h, p, cg.Figures)
@@ -200,6 +256,29 @@ func (o *openedChat) run(_ context.Context, w *InProcess, h Handle, g Grant, rep
 		m.Follow, m.Counted = FollowSample, w.startSample(h, p)
 	}
 	return m
+}
+
+func (o *openedChat) try(ctx context.Context, w *InProcess, a attempt, g ChatGrant, rw *replyWriter) (served, measure.Evidence, Measured) {
+	opened := time.Now()
+	got := a.route.Upstream.serve(ctx, w, o, a, rw)
+	returned := time.Now()
+	end := endingOf(ctx, got.writeErr, got.callErr)
+	if got.attempts.Refused {
+		// The retry loop held a busy refusal, which Anthropic sends inside a 200 stream with no status, so no
+		// upstream.Refused names it.
+		end = verdictOf(got.callErr)
+	}
+	e := got.evidence(end, a, g)
+	m := Measured{Measurement: e.Measure(), Cut: end.cut(), Served: got.callErr == nil, Refusal: end.refusal(got.callErr), Endpoint: a.route.endpoint, VendorCost: got.reported.VendorCost}
+	m.Health = rw.observed(ctx, got.callErr, false, opened, returned)
+	m.Health.Retries, m.Health.Hedges = got.attempts.Retries, got.attempts.Hedges
+	if refused, ok := errors.AsType[upstream.Refused](got.callErr); ok && vendorFaults[m.Health.Outcome] {
+		w.reports.VendorRefused(a.call.Model, refused.Status)
+	}
+	if chunk, ok := errors.AsType[chat.ErrorChunk](got.callErr); ok {
+		w.reports.UpstreamErrorChunk(a.call.Model, chunk.Code)
+	}
+	return got, e, m
 }
 
 var (
@@ -213,6 +292,14 @@ var (
 	errLaunchSystemSealed      = apierr.Invalid(http.StatusBadRequest, "character_prompt_sent", "With X-Character-Content the proxy writes the sealed system message of an e2ee chat, so send the chat's own additions as a user message.")
 	errCharacterMessageTooLong = apierr.Invalid(http.StatusBadRequest, "message_too_long", fmt.Sprintf("A character chat's latest user message may be at most %d tokens, counted at %d bytes of text a token: %d bytes. Send a shorter message.", limits.CharacterMessageTokens, limits.IncludedWindowBytesPerToken, limits.CharacterMessageBytes))
 )
+
+func unsealableRefusal(err error) error {
+	unsealable, ok := errors.AsType[*openaicompat.UnsealableField](err)
+	if !ok {
+		return err
+	}
+	return apierr.Invalid(http.StatusBadRequest, "unsealable_request", "Field "+unsealable.Name+" is refused in a plaintext request to an e2ee model, whose vendor's encryption would carry it in the clear. Send only system, user, and assistant messages with string content, or seal the request yourself.")
+}
 
 func (Plain) admit(o *openedChat, cast chat.Cast) error {
 	if err := o.underLaunch(cast); err != nil {
@@ -295,30 +382,30 @@ func (o *openedChat) compact(cast chat.Cast) error {
 	return nil
 }
 
-func (u Plain) serve(ctx context.Context, w *InProcess, o *openedChat, reply http.ResponseWriter) served {
+func (u Plain) serve(ctx context.Context, w *InProcess, o *openedChat, a attempt, reply http.ResponseWriter) served {
 	var transcript *chat.Transcript
-	if o.route.Counter != nil {
-		transcript = chat.NewTranscript(transcriptLimit(o.call))
+	if a.route.Counter != nil {
+		transcript = chat.NewTranscript(transcriptLimit(a.call))
 	}
 	var clock *thinkingClock
-	if o.route.HidesReasoning {
+	if a.route.HidesReasoning {
 		clock = &thinkingClock{now: w.now}
 	}
 	var got served
-	retry := chat.BusyRetry{Provider: u.Provider, Waits: u.BusyWaits, HedgeAfter: u.Hedge.Wait(o.promptBytes / limits.IncludedWindowBytesPerToken)}
-	if o.call.Stream {
-		got = stream(ctx, reply, http.NewResponseController(reply), retry, o.call, transcript, clock, w.keepaliveEvery)
+	retry := chat.BusyRetry{Provider: u.Provider, Waits: a.waits, HedgeAfter: u.Hedge.Wait(o.promptBytes / limits.IncludedWindowBytesPerToken)}
+	if a.call.Stream {
+		got = stream(ctx, reply, http.NewResponseController(reply), retry, a.call, transcript, clock, w.keepaliveEvery)
 	} else {
-		got = complete(ctx, reply, retry, o.call, transcript, clock)
+		got = complete(ctx, reply, retry, a.call, transcript, clock)
 	}
 	got.transcript = transcript
 	return got
 }
 
-func (Plain) count(o *openedChat, e measure.Evidence, got served) *pendingCount {
-	count := &pendingCount{route: o.call.Model, evidence: e, call: o.call}
+func (Plain) count(a attempt, e measure.Evidence, got served) *pendingCount {
+	count := &pendingCount{route: a.call.Model, evidence: e, call: a.call}
 	if got.transcript.Complete() {
-		count.count, count.transcript = o.route.Counter.Count, got.transcript
+		count.count, count.transcript = a.route.Counter.Count, got.transcript
 	}
 	return count
 }
@@ -335,7 +422,8 @@ type served struct {
 	transcript        *chat.Transcript
 }
 
-func (s served) evidence(end ending, c chat.Call, r chatRoute, g ChatGrant) measure.Evidence {
+func (s served) evidence(end ending, a attempt, g ChatGrant) measure.Evidence {
+	c, r := a.call, a.route
 	attachments, attachmentBytes, err := c.Attachments()
 	if err != nil {
 		attachments, attachmentBytes = 0, 0
@@ -346,7 +434,7 @@ func (s served) evidence(end ending, c chat.Call, r chatRoute, g ChatGrant) meas
 		Upstream:           s.reported,
 		PromptBytes:        c.Size() - attachmentBytes,
 		Attachments:        attachments,
-		PromptBound:        r.promptBound(c.Size()),
+		PromptBound:        a.promptBound,
 		Budgeted:           g.Budgeted,
 		Reply:              s.reply,
 		Finish:             s.finish,

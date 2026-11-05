@@ -12,6 +12,7 @@ import (
 	"morse/backend/internal/chat"
 	"morse/backend/internal/completions"
 	"morse/backend/internal/fal"
+	"morse/backend/internal/fireworks"
 	"morse/backend/internal/gemini"
 	"morse/backend/internal/media"
 	"morse/backend/internal/openaicompat"
@@ -63,6 +64,7 @@ var chatProviders = map[routes.Provider]newChatProvider{
 	routes.ProviderXAI:             xaiProvider,
 	routes.ProviderOpenRouter:      openRouterProvider,
 	routes.ProviderVenice:          veniceProvider,
+	routes.ProviderFireworks:       fireworksProvider,
 }
 
 var builders = withChat(map[routes.Provider]map[catalog.Kind]build{
@@ -155,13 +157,20 @@ func model(rt routes.Route, keys Keys, d Deps) (worker.Model, error) {
 	if err != nil {
 		return worker.Model{}, err
 	}
-	m := worker.Model{ID: rt.ID, Endpoint: rt.Endpoint, Tier: rt.Tier, Attester: Attester(rt), Serves: serves}
+	m := worker.Model{ID: rt.ID, Endpoint: rt.Endpoint, Tier: rt.Tier, Attester: Attester(rt), Order: rt.Order, Serves: serves}
 	for _, fb := range rt.Fallbacks {
 		f, err := model(fb, keys, d)
 		if err != nil {
 			return worker.Model{}, err
 		}
 		m.Fallbacks = append(m.Fallbacks, f)
+	}
+	for _, u := range rt.Unnamed {
+		f, err := model(u, keys, d)
+		if err != nil {
+			return worker.Model{}, err
+		}
+		m.Unnamed = append(m.Unnamed, f)
 	}
 	return m, nil
 }
@@ -223,6 +232,10 @@ func openRouterProvider(rt routes.Route, c routes.Chat, key string, d Deps) chat
 
 func veniceProvider(rt routes.Route, _ routes.Chat, key string, d Deps) chat.Provider {
 	return venice.NewChat(rt.BaseURL, key, rt.UpstreamModel, d.Client)
+}
+
+func fireworksProvider(rt routes.Route, _ routes.Chat, key string, d Deps) chat.Provider {
+	return fireworks.NewChat(rt.BaseURL, key, rt.UpstreamModel, d.Client)
 }
 
 func attestedChat(rt routes.Route, attested routes.Attested, key string, d Deps) (worker.Serving, error) {

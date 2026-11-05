@@ -17,6 +17,7 @@ import (
 
 	"morse/backend/internal/apierr"
 	"morse/backend/internal/billing/measure"
+	"morse/backend/internal/catalog"
 	"morse/backend/internal/chat"
 	"morse/backend/internal/health"
 	"morse/backend/internal/jobs"
@@ -116,7 +117,7 @@ func (c *Client) Open(ctx context.Context, o Opening) (Admission, error) {
 	req.Header.Set(headerMethod, o.Method)
 	req.Header.Set(headerPath, o.Path)
 	req.Header.Set(headerQuery, o.Query)
-	setOpening(req.Header, o.Cast, o.Framing)
+	setOpening(req.Header, o.Cast, o.Framing, o.KeyCaller)
 	data, _, err := c.call(req)
 	if sent.err != nil {
 		return nil, sent.err
@@ -134,7 +135,7 @@ func (c *Client) OpenSealed(ctx context.Context, o SealedOpening) (SealedAdmissi
 		return SealedAdmission{}, err
 	}
 	req.Header.Set("Content-Type", SealedContentType)
-	setOpening(req.Header, o.Cast, o.Framing)
+	setOpening(req.Header, o.Cast, o.Framing, o.KeyCaller)
 	data, header, err := c.call(req)
 	switch {
 	case err != nil:
@@ -213,20 +214,36 @@ func (c *Client) relay(ctx context.Context, path string, body any, h Handle, rep
 func measuredUnsamplingUnknownHealth(trailer string) (Measured, error) {
 	var t struct {
 		Measured
-		Health struct {
-			health.Observation
-			Outcome string
+		Health     wireObservation
+		FailedOver []struct {
+			Endpoint catalog.EndpointID
+			Health   wireObservation
 		}
 	}
 	if err := json.Unmarshal([]byte(trailer), &t); err != nil {
 		return Measured{}, err
 	}
 	m := t.Measured
-	m.Health = t.Health.Observation
-	if m.Health.Outcome.UnmarshalText([]byte(t.Health.Outcome)) != nil {
+	var known bool
+	if m.Health, known = t.Health.known(); !known {
 		m.Health, m.Unsampled = health.Observation{}, true
 	}
+	for _, try := range t.FailedOver {
+		if o, known := try.Health.known(); known {
+			m.FailedOver = append(m.FailedOver, Try{Endpoint: try.Endpoint, Health: o})
+		}
+	}
 	return m, nil
+}
+
+type wireObservation struct {
+	health.Observation
+	Outcome string
+}
+
+func (w wireObservation) known() (health.Observation, bool) {
+	o := w.Observation
+	return o, o.Outcome.UnmarshalText([]byte(w.Outcome)) == nil
 }
 
 func copyFlushing(w http.ResponseWriter, from io.Reader) {

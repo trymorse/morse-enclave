@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"morse/backend/internal/catalog"
 	"morse/backend/internal/chat"
 	"morse/backend/internal/jobs"
 	"morse/backend/internal/lookup"
@@ -16,13 +17,14 @@ import (
 )
 
 type InProcess struct {
-	chats          map[string][]chatRoute
+	chats          map[string]chatName
 	images         map[string]media.ImageGenerator
 	videos         map[string]media.VideoGenerator
 	searches       map[string]web.Searcher
 	fetches        map[string]web.Fetcher
 	researchers    map[string]research.Researcher
 	transcribers   map[string]transcriber
+	endpoints      map[string]catalog.EndpointID
 	lookup         *lookup.Relay
 	reports        Reporter
 	now            func() time.Time
@@ -43,6 +45,9 @@ type Reporter interface {
 	LookupBusy(service string)
 	VendorRefused(model string, status int)
 	UpstreamErrorChunk(model string, code chat.ErrorCode)
+	// VendorUsageMissing is a reply sealed whole that ended with no usage the vendor counted, so it was billed
+	// on the frames relayed.
+	VendorUsageMissing(model string)
 }
 
 type NopReporter struct{}
@@ -52,6 +57,7 @@ func (NopReporter) Failed(string, error)                      {}
 func (NopReporter) LookupBusy(string)                         {}
 func (NopReporter) VendorRefused(string, int)                 {}
 func (NopReporter) UpstreamErrorChunk(string, chat.ErrorCode) {}
+func (NopReporter) VendorUsageMissing(string)                 {}
 
 type Config struct {
 	Models        map[string]Model
@@ -71,9 +77,10 @@ func NewInProcess(cfg Config) (*InProcess, error) {
 		}
 	}
 	w := &InProcess{
-		chats: map[string][]chatRoute{}, images: map[string]media.ImageGenerator{}, videos: map[string]media.VideoGenerator{},
+		chats: indexChats(cfg.Models), images: map[string]media.ImageGenerator{}, videos: map[string]media.VideoGenerator{},
 		searches: map[string]web.Searcher{}, fetches: map[string]web.Fetcher{}, researchers: map[string]research.Researcher{}, transcribers: map[string]transcriber{},
-		lookup: cfg.Lookup, reports: cfg.Reports,
+		endpoints: map[string]catalog.EndpointID{},
+		lookup:    cfg.Lookup, reports: cfg.Reports,
 		now: cfg.Now, keepaliveEvery: cmp.Or(cfg.Keepalive, keepalive), videoSubmit: cmp.Or(cfg.VideoSubmit, videoSubmitTimeout), opened: map[Handle]*entry{},
 	}
 	if w.now == nil {
@@ -85,9 +92,11 @@ func NewInProcess(cfg Config) (*InProcess, error) {
 	}
 	for name, m := range cfg.Models {
 		for _, vendor := range append([]Model{m}, m.Fallbacks...) {
+			if _, chats := vendor.Serves.(Chat); chats {
+				continue
+			}
+			w.endpoints[name] = vendor.Endpoint
 			switch s := vendor.Serves.(type) {
-			case Chat:
-				w.chats[name] = append(w.chats[name], s.route(m.ID, vendor))
 			case Images:
 				w.images[name] = s.ImageGenerator
 			case Videos:

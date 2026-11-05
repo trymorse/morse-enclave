@@ -1,0 +1,28 @@
+{
+  "hosts": [
+    "inference.tinfoil.sh"
+  ],
+  "releases": [
+    {
+      "name": "confidential-model-router v0.0.168",
+      "digest": "adc71cdb94b8762993777156f3290463f3a8ee2ea42665289a83d502cdf69d76",
+      "measurement": "e716274321b31eaf1301d3eddfbe477da1a69c6a8afeea9f8cd36b6546d94728ffb88b4eb11f0a4cc76e40e3b294b8a7"
+    },
+    {
+      "name": "confidential-model-router v0.0.169",
+      "digest": "40c89037d938344664c3adf8a6c6a1615d6c033d104a040e82090f442c2f8f4d",
+      "measurement": "64480179f73a29338a1fb1ea6bb7579524e757e50f91af9cce52acfc570469eb5356b136c230fdb49a54b0f37b42c2bb"
+    }
+  ],
+  "policy": "0x30000",
+  "vmpl": 0,
+  "min_tcb": {
+    "bootloader": 10,
+    "tee": 0,
+    "snp": 23,
+    "microcode": 84
+  },
+  "chips": [
+    "1af1aa6c1f56037a05849a59b8815cf909583f9ba9ef2f053218c437f33ba183e4e415b039b37f8205250ad15f8b88a0a3add9f4c081c0779a48ed2214378e44"
+  ]
+}

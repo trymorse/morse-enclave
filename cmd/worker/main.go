@@ -9,12 +9,14 @@ import (
 	"os"
 	"os/signal"
 	"slices"
+	"strconv"
 	"syscall"
 	"time"
 
 	"morse/backend/cmd/internal/vendors"
 	"morse/backend/internal/attestation"
 	"morse/backend/internal/billing/money"
+	"morse/backend/internal/door"
 	"morse/backend/internal/lookup"
 	"morse/backend/internal/nitro"
 	"morse/backend/internal/routes"
@@ -60,6 +62,18 @@ func build(getenv func(string) string, log *logger) (built, error) {
 	if err != nil {
 		return built{}, err
 	}
+	trust, err := door.Production()
+	if err != nil {
+		return built{}, err
+	}
+	floor, err := doorFloor(getenv("PROXY_DOOR_FLOOR"), environment)
+	if err != nil {
+		return built{}, err
+	}
+	gate, err := door.New(environment, nitro.Self{Attester: attester, Identity: identity, Environment: environment}, trust, floor)
+	if err != nil {
+		return built{}, err
+	}
 	transport, client := vendors.NewClient()
 	gates := vendors.NewGates(transport, client, attestation.NVIDIAPolicy(), log.attestation)
 	unwrapped := func(string) { log.log(researchUnwrapped, fields{}) }
@@ -76,7 +90,7 @@ func build(getenv func(string) string, log *logger) (built, error) {
 		Models:  models,
 		Lookup:  lookup.New(services, client, time.Now),
 		Reports: log,
-		Sealing: worker.Sealing{Identity: identity, Attester: attester, Environment: environment},
+		Sealing: worker.Sealing{Identity: identity, Attest: gate.Attest},
 	})
 	if err != nil {
 		return built{}, err
@@ -85,8 +99,22 @@ func build(getenv func(string) string, log *logger) (built, error) {
 	for _, scope := range gates.Scopes() {
 		log.names = append(log.names, scope.String())
 	}
-	srv := &http.Server{Addr: addr, Handler: worker.NewServer(inner, digest), ReadHeaderTimeout: readHeaderTimeout, ErrorLog: discarded()}
+	mux := http.NewServeMux()
+	mux.Handle("/", worker.NewServer(inner, digest))
+	gate.Register(mux)
+	srv := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: readHeaderTimeout, ErrorLog: discarded()}
 	return built{server: srv, inner: inner, gates: gates, routes: len(models)}, nil
+}
+
+func doorFloor(value, environment string) (uint64, error) {
+	if value == "" && environment == "dev" {
+		return 0, nil
+	}
+	floor, err := strconv.ParseUint(value, 10, 64)
+	if err != nil {
+		return 0, errors.New("PROXY_DOOR_FLOOR must be the pins statement sequence the image was built at, the lowest a handoff admits")
+	}
+	return floor, nil
 }
 
 func routeNames(rts []routes.Route) []string {

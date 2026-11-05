@@ -21,6 +21,7 @@ type reply struct {
 	dropped map[string]bool
 	choices int
 	usage   *completions.Usage
+	cost    chat.VendorCost
 	host    chat.Host
 }
 
@@ -43,6 +44,9 @@ func (p *Provider) decodeReply(object []byte) (reply, error) {
 	if !ok {
 		return r, nil
 	}
+	if p.VendorCost != nil && string(raw) != "null" {
+		r.cost = p.VendorCost(raw)
+	}
 	if len(p.ChargeFields) > 0 && string(raw) != "null" {
 		kept, err := without(raw, p.ChargeFields)
 		if err != nil {
@@ -63,6 +67,12 @@ func (p *Provider) decodeReply(object []byte) (reply, error) {
 		return reply{}, err
 	}
 	return r, nil
+}
+
+func (r reply) domainUsage() chat.Usage {
+	u := r.usage.Domain()
+	u.VendorCost = r.cost
+	return u
 }
 
 func hostOf(r reply) chat.Host {

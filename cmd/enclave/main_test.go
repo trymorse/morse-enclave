@@ -19,7 +19,7 @@ import (
 	"morse/backend/internal/routes"
 )
 
-var imageSettings = []string{"PROXY_WORKER_ADDR", "PROXY_ROUTES_FILE", "PROXY_ENVIRONMENT"}
+var imageSettings = []string{"PROXY_WORKER_ADDR", "PROXY_ROUTES_FILE", "PROXY_ENVIRONMENT", "PROXY_DOOR_FLOOR"}
 
 var neverInAnImage = []string{"PROXY_HPKE_DEV_KEY"}
 

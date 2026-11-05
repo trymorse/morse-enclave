@@ -28,6 +28,7 @@ type Evidence struct {
 var byCode = map[string]Outcome{
 	apierr.ErrUpstreamBusy.Code:          UpstreamBusy,
 	apierr.ErrUpstreamUnavailable.Code:   UpstreamUnavailable,
+	apierr.ErrUpstreamRefused.Code:       UpstreamRefused,
 	apierr.ErrUpstream.Code:              UpstreamError,
 	apierr.ErrUpstreamRetention.Code:     Retention,
 	apierr.ErrUnattested.Code:            Unattested,
@@ -41,7 +42,15 @@ var byCode = map[string]Outcome{
 	apierr.ErrUnavailable.Code:           Shutdown,
 }
 
-var breaksMidstream = map[Outcome]bool{UpstreamBusy: true, UpstreamError: true, UpstreamUnavailable: true}
+var breaksMidstream = map[Outcome]bool{UpstreamBusy: true, UpstreamError: true, UpstreamUnavailable: true, UpstreamRefused: true}
+
+var failsOver = map[Outcome]bool{UpstreamBusy: true, UpstreamError: true, Unreachable: true, UpstreamUnavailable: true}
+
+var tripsBreaker = map[Outcome]bool{UpstreamBusy: true, UpstreamError: true, Unreachable: true, UpstreamUnavailable: true}
+
+func (o Outcome) FailsOver() bool { return failsOver[o] }
+
+func (o Outcome) TripsBreaker() bool { return tripsBreaker[o] }
 
 func Classify(e Evidence) Outcome {
 	var refusal apierr.Error

@@ -1,6 +1,7 @@
 package openaicompat
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -54,8 +55,8 @@ var (
 )
 
 type Sender interface {
-	Stream(ctx context.Context, body []byte, each func(data []byte) (done bool, err error)) error
-	Complete(ctx context.Context, body []byte) ([]byte, error)
+	Stream(ctx context.Context, body []byte, header http.Header, each func(data []byte) (done bool, err error)) error
+	Complete(ctx context.Context, body []byte, header http.Header) ([]byte, error)
 }
 
 type Provider struct {
@@ -74,8 +75,11 @@ type Provider struct {
 	NamesHost          bool
 	// Admit refuses a call before it is sent, or is nil to send every call.
 	Admit func(chat.Call) error
+	// Headers adds headers to the request that carries a call, or is nil to add none.
+	Headers func(chat.Call) http.Header
 	// ChargeFields are the usage fields that carry what the vendor charged the proxy, which the client is not shown.
 	ChargeFields []string
+	VendorCost   func(usage json.RawMessage) chat.VendorCost
 	Bill         func(usage json.RawMessage) (json.RawMessage, error)
 }
 
@@ -93,7 +97,7 @@ func (p *Provider) Stream(ctx context.Context, c chat.Call, emit func(chat.Chunk
 	var usage chat.Usage
 	var answered bool
 	var thought strings.Builder
-	err = p.Sender.Stream(ctx, body, func(data []byte) (bool, error) {
+	err = p.Sender.Stream(ctx, body, p.headers(c), func(data []byte) (bool, error) {
 		if isDone(data) {
 			return true, nil
 		}
@@ -102,7 +106,7 @@ func (p *Provider) Stream(ctx context.Context, c chat.Call, emit func(chat.Chunk
 			return false, err
 		}
 		if r.usage != nil {
-			usage = r.usage.Domain()
+			usage = r.domainUsage()
 		}
 		if errEvent, ok := r.value("error"); ok && string(errEvent) != "null" {
 			return false, chat.ErrorChunkOf(errEvent)
@@ -162,7 +166,7 @@ func (p *Provider) Complete(ctx context.Context, c chat.Call) (chat.Chunk, chat.
 	if err != nil {
 		return chat.Chunk{}, chat.Usage{}, err
 	}
-	body, err := p.Sender.Complete(ctx, reqBody)
+	body, err := p.Sender.Complete(ctx, reqBody, p.headers(c))
 	if err != nil {
 		return chat.Chunk{}, chat.Usage{}, err
 	}
@@ -177,7 +181,7 @@ func (p *Provider) Complete(ctx context.Context, c chat.Call) (chat.Chunk, chat.
 	}
 	var usage chat.Usage
 	if r.usage != nil {
-		usage = r.usage.Domain()
+		usage = r.domainUsage()
 	}
 	body, err = p.disguise(r, chat.NewReplyID(), c.Model)
 	if err != nil {
@@ -210,10 +214,105 @@ func (p *Provider) disguise(r reply, id, model string) ([]byte, error) {
 	if !ok {
 		return nil, errNotAnObject
 	}
+	choices, err := uniformChoices(choices)
+	if err != nil {
+		return nil, err
+	}
 	object, _ := r.value("object")
 	created, _ := r.value("created")
 	usage, _ := r.value("usage")
 	return jsonx.Encode(envelope{ID: id, Object: object, Created: created, Model: model, Choices: choices, Usage: usage}), nil
+}
+
+// answerFields are what a client sees of a delta or a message, in order. Hosts add fields of their own (Fireworks's
+// tools, Together's annotations, OpenRouter's reasoning_details) and send different nulls, which would tell a client
+// which of a tier's hosts served.
+var answerFields = []string{"role", "content", "reasoning", "reasoning_content", "refusal", "tool_calls", "function_call", "audio"}
+
+// uniformChoices gives every choice one shape whichever host sent it: index, its delta or message, finish_reason, and
+// logprobs when there are any, which no request asks for. A choice's other fields (raw_output, matched_stop,
+// stop_reason, token_ids, native_finish_reason, a per-choice usage) are the host's own.
+func uniformChoices(raw json.RawMessage) (json.RawMessage, error) {
+	if string(raw) == "null" {
+		return raw, nil
+	}
+	var choices []map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &choices); err != nil {
+		return nil, err
+	}
+	var out bytes.Buffer
+	out.WriteByte('[')
+	for i, c := range choices {
+		if i > 0 {
+			out.WriteByte(',')
+		}
+		w := objectWriter{out: &out}
+		for _, name := range [...]string{"index", "delta", "message", "finish_reason", "logprobs"} {
+			v, ok := c[name]
+			switch {
+			case !ok || name == "logprobs" && isNull(v):
+				continue
+			case name == "delta" || name == "message":
+				answer, err := uniformAnswer(v, name == "message")
+				if err != nil {
+					return nil, err
+				}
+				v = answer
+			}
+			w.field(name, v)
+		}
+		w.close()
+	}
+	out.WriteByte(']')
+	return out.Bytes(), nil
+}
+
+func uniformAnswer(raw json.RawMessage, message bool) (json.RawMessage, error) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return nil, err
+	}
+	if fields == nil {
+		return raw, nil
+	}
+	var out bytes.Buffer
+	w := objectWriter{out: &out}
+	for _, name := range answerFields {
+		switch v := fields[name]; {
+		case !isNull(v):
+			w.field(name, v)
+		case message && name == "content":
+			w.field(name, json.RawMessage("null"))
+		}
+	}
+	w.close()
+	return out.Bytes(), nil
+}
+
+func isNull(v json.RawMessage) bool { return v == nil || string(v) == "null" }
+
+type objectWriter struct {
+	out  *bytes.Buffer
+	more bool
+}
+
+func (w *objectWriter) field(name string, value json.RawMessage) {
+	if w.more {
+		w.out.WriteByte(',')
+	} else {
+		w.out.WriteByte('{')
+	}
+	w.more = true
+	w.out.WriteString(strconv.Quote(name))
+	w.out.WriteByte(':')
+	w.out.Write(value)
+}
+
+func (w *objectWriter) close() {
+	if !w.more {
+		w.out.WriteByte('{')
+	}
+	w.out.WriteByte('}')
 }
 
 func pinned(model string, force map[string]json.RawMessage) map[string]json.RawMessage {
@@ -253,12 +352,19 @@ func (p *Provider) encode(c chat.Call, stream bool) ([]byte, error) {
 	return c.EncodeOnly(anonymousFields, set), nil
 }
 
+func (p *Provider) headers(c chat.Call) http.Header {
+	if p.Headers == nil {
+		return nil
+	}
+	return p.Headers(c)
+}
+
 type HTTPSender struct{ upstream.Endpoint }
 
 var _ Sender = HTTPSender{}
 
-func (s HTTPSender) Stream(ctx context.Context, body []byte, each func(data []byte) (bool, error)) error {
-	resp, err := s.Open(ctx, upstream.Request{Method: http.MethodPost, Path: chatCompletionsPath, Header: http.Header{"Accept": {"text/event-stream"}}, Body: body})
+func (s HTTPSender) Stream(ctx context.Context, body []byte, header http.Header, each func(data []byte) (bool, error)) error {
+	resp, err := s.Open(ctx, upstream.Request{Method: http.MethodPost, Path: chatCompletionsPath, Header: accepting(header, "text/event-stream"), Body: body})
 	if err != nil {
 		return err
 	}
@@ -266,13 +372,22 @@ func (s HTTPSender) Stream(ctx context.Context, body []byte, each func(data []by
 	return sse.Each(resp.Body, maxEvent, sse.Refuse, each)
 }
 
-func (s HTTPSender) Complete(ctx context.Context, body []byte) ([]byte, error) {
-	resp, err := s.Open(ctx, upstream.Request{Method: http.MethodPost, Path: chatCompletionsPath, Header: http.Header{"Accept": {"application/json"}}, Body: body})
+func (s HTTPSender) Complete(ctx context.Context, body []byte, header http.Header) ([]byte, error) {
+	resp, err := s.Open(ctx, upstream.Request{Method: http.MethodPost, Path: chatCompletionsPath, Header: accepting(header, "application/json"), Body: body})
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
 	return capped.ReadAll(resp.Body, MaxCompletionBody)
+}
+
+func accepting(header http.Header, accept string) http.Header {
+	h := header.Clone()
+	if h == nil {
+		h = http.Header{}
+	}
+	h.Set("Accept", accept)
+	return h
 }
 
 func isDone(data []byte) bool { return string(data) == "[DONE]" }

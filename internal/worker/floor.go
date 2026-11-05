@@ -55,13 +55,6 @@ func floorOf(req *chat.Request) (catalog.Tier, error) {
 	return floor, nil
 }
 
-func (r chatRoute) refuseBelow(floor catalog.Tier) error {
-	if r.tier >= floor {
-		return nil
-	}
-	return catalog.FloorError{Tier: r.tier, Floor: floor}
-}
-
 func namesFloor(provider json.RawMessage) bool {
 	var fields map[string]json.RawMessage
 	if json.Unmarshal(provider, &fields) != nil {

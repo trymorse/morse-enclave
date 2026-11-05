@@ -3,7 +3,9 @@ package routes
 import (
 	"cmp"
 	"fmt"
+	"net"
 	"slices"
+	"strings"
 
 	"morse/backend/internal/attester"
 	"morse/backend/internal/billing/measure"
@@ -26,6 +28,7 @@ const (
 	ProviderGemini
 	ProviderOpenRouter
 	ProviderVenice
+	ProviderFireworks
 )
 
 var providerNames = enum.Names[Provider]{
@@ -39,6 +42,7 @@ var providerNames = enum.Names[Provider]{
 	ProviderGemini:          "gemini",
 	ProviderOpenRouter:      "openrouter",
 	ProviderVenice:          "venice",
+	ProviderFireworks:       "fireworks",
 }
 
 func (p Provider) String() string { return providerNames.String(p) }
@@ -73,15 +77,23 @@ type Route struct {
 	Included      *Included
 	RequiresPlan  plankind.Kind
 	Fallbacks     []Route
+	// Unnamed are the endpoints of the model at this route's tier that have no name of their own. A chat on the route
+	// may be served by any of them, on the route's terms: no list, price row, or request name shows them.
+	Unnamed []Route
+	// Order is the endpoint's place in the routes file, the order a tier's endpoints are tried in.
+	Order int
 	// AppOnly keeps the route from API keys: only a login or a guest may list or call it.
 	AppOnly bool
 }
 
-func (rt Route) Upstreams() []Route { return append([]Route{rt}, rt.Fallbacks...) }
+// Upstreams is the route, its fallbacks, and its unnamed endpoints: every endpoint that serves under its name.
+func (rt Route) Upstreams() []Route {
+	return slices.Concat([]Route{rt}, rt.Fallbacks, rt.Unnamed)
+}
 
 func (rt *Route) identify(f Flat) {
-	rt.ID = cmp.Or(f.Model, catalog.ModelID(rt.Model))
-	for i, vendor := range rt.Upstreams() {
+	rt.ID, rt.Order = cmp.Or(f.Model, catalog.ModelID(rt.Model)), f.Order
+	for i, vendor := range append([]Route{*rt}, rt.Fallbacks...) {
 		id := catalog.EndpointID(rt.Tier.String())
 		if a, attested := vendor.Upstream.(Attested); attested {
 			id = catalog.EndpointID(a.Attester.Name)
@@ -92,7 +104,7 @@ func (rt *Route) identify(f Flat) {
 		if i == 0 {
 			rt.Endpoint = id
 		} else {
-			rt.Fallbacks[i-1].ID, rt.Fallbacks[i-1].Endpoint = rt.ID, id
+			rt.Fallbacks[i-1].ID, rt.Fallbacks[i-1].Endpoint, rt.Fallbacks[i-1].Order = rt.ID, id, rt.Order
 		}
 	}
 }
@@ -177,3 +189,22 @@ func (Chat) Kind() catalog.Kind      { return catalog.KindChat }
 func (Image) Kind() catalog.Kind     { return catalog.KindImage }
 func (Video) Kind() catalog.Kind     { return catalog.KindVideo }
 func (c PerCall) Kind() catalog.Kind { return c.Call }
+
+func (r Route) ProviderName() string {
+	switch up := r.Upstream.(type) {
+	case Attested:
+		return up.Attester.Name
+	case Vendor:
+		if up.Provider != ProviderOpenAI && up.Provider != ProviderOpenAIResponses {
+			return up.Provider.String()
+		}
+	}
+	if net.ParseIP(r.Host) != nil {
+		return ""
+	}
+	labels := strings.Split(r.Host, ".")
+	if len(labels) < 2 {
+		return ""
+	}
+	return labels[len(labels)-2]
+}

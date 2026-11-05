@@ -168,7 +168,7 @@ type pollRequest struct {
 	Deadline time.Time `json:"deadline"`
 }
 
-const WireVersion = 2
+const WireVersion = 3
 
 type Served struct {
 	Digest string `json:"digest"`
@@ -193,15 +193,16 @@ type sessionsWire struct {
 }
 
 type openingWire struct {
-	Prompts []chat.PromptHash `json:"prompts,omitempty"`
-	Rules   string            `json:"rules,omitempty"`
-	Launch  *chat.Launch      `json:"launch,omitempty"`
-	Own     *chat.OwnFrame    `json:"own,omitempty"`
-	Writing *chat.Writing     `json:"writing,omitempty"`
+	Prompts   []chat.PromptHash `json:"prompts,omitempty"`
+	Rules     string            `json:"rules,omitempty"`
+	Launch    *chat.Launch      `json:"launch,omitempty"`
+	Own       *chat.OwnFrame    `json:"own,omitempty"`
+	Writing   *chat.Writing     `json:"writing,omitempty"`
+	KeyCaller bool              `json:"key_caller,omitempty"`
 }
 
-func setOpening(header http.Header, c chat.Cast, f Framing) {
-	raw, _ := json.Marshal(openingWire{Prompts: c.Prompts(), Rules: c.Rules(), Launch: f.Launch, Own: f.Own, Writing: f.Writing})
+func setOpening(header http.Header, c chat.Cast, f Framing, keyCaller bool) {
+	raw, _ := json.Marshal(openingWire{Prompts: c.Prompts(), Rules: c.Rules(), Launch: f.Launch, Own: f.Own, Writing: f.Writing, KeyCaller: keyCaller})
 	header.Set(headerOpening, base64.StdEncoding.EncodeToString(raw))
 }
 

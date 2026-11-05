@@ -60,7 +60,8 @@ type Opening struct {
 	Body   io.Reader
 	Cast   chat.Cast
 	Framing
-	cek *[32]byte
+	KeyCaller bool
+	cek       *[32]byte
 }
 
 func ContentHeaders(from http.Header) http.Header {
@@ -94,7 +95,9 @@ type ChatAdmission struct {
 	admitted
 	Model       catalog.ModelID
 	Candidates  []catalog.EndpointID
-	PromptBound int
+	Sealable    bool
+	OnBehalf    bool
+	PromptSize  int
 	PromptBytes limits.Kibibytes
 	OutputAsked int
 	Stream      bool
@@ -139,6 +142,7 @@ type Grant interface{ kind() grantKind }
 
 type ChatGrant struct {
 	Endpoints    []catalog.EndpointID
+	PromptBound  int
 	OutputLimit  int
 	ReasoningCap int
 	Budgeted     bool
@@ -192,6 +196,10 @@ type LookupGrant struct{}
 
 func (LookupGrant) kind() grantKind { return grantsLookup }
 
+// Measured is one run's outcome. Endpoint is the endpoint that served or was tried last, and Health is that try's,
+// with Retries counting every extra call of the whole walk, each try's own plus one per move, and Hedges summed.
+// FailedOver lists each endpoint the walk left before it, in order: every one failed before the client saw a byte
+// with an outcome that FailsOver.
 type Measured struct {
 	measure.Measurement
 	Cut               measure.Cut
@@ -205,7 +213,14 @@ type Measured struct {
 	Unsampled         bool                `json:"-"`
 	Refusal           measure.RefusalCode `json:",omitempty"`
 	Endpoint          catalog.EndpointID  `json:",omitempty"`
+	VendorCost        chat.VendorCost     `json:",omitzero"`
+	FailedOver        []Try               `json:",omitempty"`
 	Counted           <-chan Count        `json:"-"`
+}
+
+type Try struct {
+	Endpoint catalog.EndpointID
+	Health   health.Observation
 }
 
 type Follow uint8

@@ -22,8 +22,11 @@ type Model struct {
 	Endpoint  catalog.EndpointID
 	Tier      catalog.Tier
 	Attester  string
+	Order     int
 	Serves    Serving
 	Fallbacks []Model
+	// Unnamed are the model's endpoints at this tier that have no name: they join the tier's candidates, never a name's.
+	Unnamed []Model
 }
 
 type Serving interface{ validate(catalog.Tier) error }
@@ -41,8 +44,9 @@ type ChatUpstream interface {
 	Speaks() *chat.Scheme
 	attester() chat.Attester
 	admit(o *openedChat, cast chat.Cast) error
-	serve(ctx context.Context, w *InProcess, o *openedChat, reply http.ResponseWriter) served
-	count(o *openedChat, e measure.Evidence, got served) *pendingCount
+	serve(ctx context.Context, w *InProcess, o *openedChat, a attempt, reply http.ResponseWriter) served
+	count(a attempt, e measure.Evidence, got served) *pendingCount
+	busyWaits() []time.Duration
 }
 
 // Plain streams a chat in the clear. Hedge races a stalled stream with a second call; the zero Hedge never does, as
@@ -70,6 +74,8 @@ func (Plain) Speaks() *chat.Scheme { return nil }
 
 func (u Plain) attester() chat.Attester { return u.Attester }
 
+func (u Plain) busyWaits() []time.Duration { return u.BusyWaits }
+
 func (u Verbatim) Validate(tier catalog.Tier) error {
 	if u.Route == nil {
 		return errors.New("relays verbatim through no route")
@@ -80,6 +86,8 @@ func (u Verbatim) Validate(tier catalog.Tier) error {
 func (u Verbatim) Speaks() *chat.Scheme { return u.Route.Speaks() }
 
 func (u Verbatim) attester() chat.Attester { return u.Route }
+
+func (Verbatim) busyWaits() []time.Duration { return nil }
 
 type Images struct{ media.ImageGenerator }
 
@@ -165,6 +173,21 @@ func (m Model) Validate() error {
 			return fmt.Errorf("has two vendors at endpoint %q", fb.Endpoint)
 		}
 		served[fb.Endpoint] = true
+	}
+	for _, u := range m.Unnamed {
+		_, chats := u.Serves.(Chat)
+		switch {
+		case !chats || u.Tier != m.Tier || u.Tier.Sealed():
+			return fmt.Errorf("has unnamed endpoint %q, which must serve chat at tier %s, outside e2ee", u.Endpoint, m.Tier)
+		case served[u.Endpoint]:
+			return fmt.Errorf("has two vendors at endpoint %q", u.Endpoint)
+		case len(u.Unnamed) > 0 || len(u.Fallbacks) > 0:
+			return fmt.Errorf("has unnamed endpoint %q with endpoints of its own; list them beside it", u.Endpoint)
+		}
+		if err := u.Validate(); err != nil {
+			return fmt.Errorf("has unnamed endpoint %q that %w", u.Endpoint, err)
+		}
+		served[u.Endpoint] = true
 	}
 	return nil
 }

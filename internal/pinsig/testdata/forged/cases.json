@@ -1,0 +1,802 @@
+[
+  {
+    "name": "valid",
+    "blob": "statements/prod.json",
+    "bundle": "forged/valid.sigstore.json",
+    "identity": {
+      "issuer": "https://token.actions.githubusercontent.com",
+      "build_signer_uri": "https://github.com/Watermark-Labs/pins/.github/workflows/sign.yml@refs/heads/main",
+      "build_config_uri": "https://github.com/Watermark-Labs/pins/.github/workflows/sign.yml@refs/heads/main",
+      "source_repository_uri": "https://github.com/Watermark-Labs/pins",
+      "source_repository_id": "1405118053",
+      "source_owner_id": "334112171",
+      "ref": "refs/heads/main",
+      "triggers": [
+        "push",
+        "schedule"
+      ]
+    },
+    "error": "",
+    "bundle_accepts": true
+  },
+  {
+    "name": "issuer",
+    "blob": "statements/prod.json",
+    "bundle": "forged/issuer.sigstore.json",
+    "identity": {
+      "issuer": "https://token.actions.githubusercontent.com",
+      "build_signer_uri": "https://github.com/Watermark-Labs/pins/.github/workflows/sign.yml@refs/heads/main",
+      "build_config_uri": "https://github.com/Watermark-Labs/pins/.github/workflows/sign.yml@refs/heads/main",
+      "source_repository_uri": "https://github.com/Watermark-Labs/pins",
+      "source_repository_id": "1405118053",
+      "source_owner_id": "334112171",
+      "ref": "refs/heads/main",
+      "triggers": [
+        "push",
+        "schedule"
+      ]
+    },
+    "error": "identity",
+    "bundle_accepts": false
+  },
+  {
+    "name": "build-signer",
+    "blob": "statements/prod.json",
+    "bundle": "forged/build-signer.sigstore.json",
+    "identity": {
+      "issuer": "https://token.actions.githubusercontent.com",
+      "build_signer_uri": "https://github.com/Watermark-Labs/pins/.github/workflows/sign.yml@refs/heads/main",
+      "build_config_uri": "https://github.com/Watermark-Labs/pins/.github/workflows/sign.yml@refs/heads/main",
+      "source_repository_uri": "https://github.com/Watermark-Labs/pins",
+      "source_repository_id": "1405118053",
+      "source_owner_id": "334112171",
+      "ref": "refs/heads/main",
+      "triggers": [
+        "push",
+        "schedule"
+      ]
+    },
+    "error": "identity",
+    "bundle_accepts": false
+  },
+  {
+    "name": "san-only",
+    "blob": "statements/prod.json",
+    "bundle": "forged/san-only.sigstore.json",
+    "identity": {
+      "issuer": "https://token.actions.githubusercontent.com",
+      "build_signer_uri": "https://github.com/Watermark-Labs/pins/.github/workflows/sign.yml@refs/heads/main",
+      "build_config_uri": "https://github.com/Watermark-Labs/pins/.github/workflows/sign.yml@refs/heads/main",
+      "source_repository_uri": "https://github.com/Watermark-Labs/pins",
+      "source_repository_id": "1405118053",
+      "source_owner_id": "334112171",
+      "ref": "refs/heads/main",
+      "triggers": [
+        "push",
+        "schedule"
+      ]
+    },
+    "error": "identity",
+    "bundle_accepts": false
+  },
+  {
+    "name": "source-repository-uri",
+    "blob": "statements/prod.json",
+    "bundle": "forged/source-repository-uri.sigstore.json",
+    "identity": {
+      "issuer": "https://token.actions.githubusercontent.com",
+      "build_signer_uri": "https://github.com/Watermark-Labs/pins/.github/workflows/sign.yml@refs/heads/main",
+      "build_config_uri": "https://github.com/Watermark-Labs/pins/.github/workflows/sign.yml@refs/heads/main",
+      "source_repository_uri": "https://github.com/Watermark-Labs/pins",
+      "source_repository_id": "1405118053",
+      "source_owner_id": "334112171",
+      "ref": "refs/heads/main",
+      "triggers": [
+        "push",
+        "schedule"
+      ]
+    },
+    "error": "identity",
+    "bundle_accepts": false
+  },
+  {
+    "name": "repository-id",
+    "blob": "statements/prod.json",
+    "bundle": "forged/repository-id.sigstore.json",
+    "identity": {
+      "issuer": "https://token.actions.githubusercontent.com",
+      "build_signer_uri": "https://github.com/Watermark-Labs/pins/.github/workflows/sign.yml@refs/heads/main",
+      "build_config_uri": "https://github.com/Watermark-Labs/pins/.github/workflows/sign.yml@refs/heads/main",
+      "source_repository_uri": "https://github.com/Watermark-Labs/pins",
+      "source_repository_id": "1405118053",
+      "source_owner_id": "334112171",
+      "ref": "refs/heads/main",
+      "triggers": [
+        "push",
+        "schedule"
+      ]
+    },
+    "error": "identity",
+    "bundle_accepts": false
+  },
+  {
+    "name": "owner-id",
+    "blob": "statements/prod.json",
+    "bundle": "forged/owner-id.sigstore.json",
+    "identity": {
+      "issuer": "https://token.actions.githubusercontent.com",
+      "build_signer_uri": "https://github.com/Watermark-Labs/pins/.github/workflows/sign.yml@refs/heads/main",
+      "build_config_uri": "https://github.com/Watermark-Labs/pins/.github/workflows/sign.yml@refs/heads/main",
+      "source_repository_uri": "https://github.com/Watermark-Labs/pins",
+      "source_repository_id": "1405118053",
+      "source_owner_id": "334112171",
+      "ref": "refs/heads/main",
+      "triggers": [
+        "push",
+        "schedule"
+      ]
+    },
+    "error": "identity",
+    "bundle_accepts": false
+  },
+  {
+    "name": "ref",
+    "blob": "statements/prod.json",
+    "bundle": "forged/ref.sigstore.json",
+    "identity": {
+      "issuer": "https://token.actions.githubusercontent.com",
+      "build_signer_uri": "https://github.com/Watermark-Labs/pins/.github/workflows/sign.yml@refs/heads/main",
+      "build_config_uri": "https://github.com/Watermark-Labs/pins/.github/workflows/sign.yml@refs/heads/main",
+      "source_repository_uri": "https://github.com/Watermark-Labs/pins",
+      "source_repository_id": "1405118053",
+      "source_owner_id": "334112171",
+      "ref": "refs/heads/main",
+      "triggers": [
+        "push",
+        "schedule"
+      ]
+    },
+    "error": "identity",
+    "bundle_accepts": false
+  },
+  {
+    "name": "trigger",
+    "blob": "statements/prod.json",
+    "bundle": "forged/trigger.sigstore.json",
+    "identity": {
+      "issuer": "https://token.actions.githubusercontent.com",
+      "build_signer_uri": "https://github.com/Watermark-Labs/pins/.github/workflows/sign.yml@refs/heads/main",
+      "build_config_uri": "https://github.com/Watermark-Labs/pins/.github/workflows/sign.yml@refs/heads/main",
+      "source_repository_uri": "https://github.com/Watermark-Labs/pins",
+      "source_repository_id": "1405118053",
+      "source_owner_id": "334112171",
+      "ref": "refs/heads/main",
+      "triggers": [
+        "push",
+        "schedule"
+      ]
+    },
+    "error": "identity",
+    "bundle_accepts": false
+  },
+  {
+    "name": "runner",
+    "blob": "statements/prod.json",
+    "bundle": "forged/runner.sigstore.json",
+    "identity": {
+      "issuer": "https://token.actions.githubusercontent.com",
+      "build_signer_uri": "https://github.com/Watermark-Labs/pins/.github/workflows/sign.yml@refs/heads/main",
+      "build_config_uri": "https://github.com/Watermark-Labs/pins/.github/workflows/sign.yml@refs/heads/main",
+      "source_repository_uri": "https://github.com/Watermark-Labs/pins",
+      "source_repository_id": "1405118053",
+      "source_owner_id": "334112171",
+      "ref": "refs/heads/main",
+      "triggers": [
+        "push",
+        "schedule"
+      ]
+    },
+    "error": "identity",
+    "bundle_accepts": false
+  },
+  {
+    "name": "no-trigger-extension",
+    "blob": "statements/prod.json",
+    "bundle": "forged/no-trigger-extension.sigstore.json",
+    "identity": {
+      "issuer": "https://token.actions.githubusercontent.com",
+      "build_signer_uri": "https://github.com/Watermark-Labs/pins/.github/workflows/sign.yml@refs/heads/main",
+      "build_config_uri": "https://github.com/Watermark-Labs/pins/.github/workflows/sign.yml@refs/heads/main",
+      "source_repository_uri": "https://github.com/Watermark-Labs/pins",
+      "source_repository_id": "1405118053",
+      "source_owner_id": "334112171",
+      "ref": "refs/heads/main",
+      "triggers": [
+        "push",
+        "schedule"
+      ]
+    },
+    "error": "identity",
+    "bundle_accepts": false
+  },
+  {
+    "name": "build-config-uri",
+    "blob": "statements/prod.json",
+    "bundle": "forged/build-config-uri.sigstore.json",
+    "identity": {
+      "issuer": "https://token.actions.githubusercontent.com",
+      "build_signer_uri": "https://github.com/Watermark-Labs/pins/.github/workflows/sign.yml@refs/heads/main",
+      "build_config_uri": "https://github.com/Watermark-Labs/pins/.github/workflows/sign.yml@refs/heads/main",
+      "source_repository_uri": "https://github.com/Watermark-Labs/pins",
+      "source_repository_id": "1405118053",
+      "source_owner_id": "334112171",
+      "ref": "refs/heads/main",
+      "triggers": [
+        "push",
+        "schedule"
+      ]
+    },
+    "error": "identity",
+    "bundle_accepts": false
+  },
+  {
+    "name": "build-config-digest",
+    "blob": "statements/prod.json",
+    "bundle": "forged/build-config-digest.sigstore.json",
+    "identity": {
+      "issuer": "https://token.actions.githubusercontent.com",
+      "build_signer_uri": "https://github.com/Watermark-Labs/pins/.github/workflows/sign.yml@refs/heads/main",
+      "build_config_uri": "https://github.com/Watermark-Labs/pins/.github/workflows/sign.yml@refs/heads/main",
+      "source_repository_uri": "https://github.com/Watermark-Labs/pins",
+      "source_repository_id": "1405118053",
+      "source_owner_id": "334112171",
+      "ref": "refs/heads/main",
+      "triggers": [
+        "push",
+        "schedule"
+      ]
+    },
+    "error": "identity",
+    "bundle_accepts": false
+  },
+  {
+    "name": "run-attempt-2",
+    "blob": "statements/prod.json",
+    "bundle": "forged/run-attempt-2.sigstore.json",
+    "identity": {
+      "issuer": "https://token.actions.githubusercontent.com",
+      "build_signer_uri": "https://github.com/Watermark-Labs/pins/.github/workflows/sign.yml@refs/heads/main",
+      "build_config_uri": "https://github.com/Watermark-Labs/pins/.github/workflows/sign.yml@refs/heads/main",
+      "source_repository_uri": "https://github.com/Watermark-Labs/pins",
+      "source_repository_id": "1405118053",
+      "source_owner_id": "334112171",
+      "ref": "refs/heads/main",
+      "triggers": [
+        "push",
+        "schedule"
+      ]
+    },
+    "error": "identity",
+    "bundle_accepts": false
+  },
+  {
+    "name": "run-other-repository",
+    "blob": "statements/prod.json",
+    "bundle": "forged/run-other-repository.sigstore.json",
+    "identity": {
+      "issuer": "https://token.actions.githubusercontent.com",
+      "build_signer_uri": "https://github.com/Watermark-Labs/pins/.github/workflows/sign.yml@refs/heads/main",
+      "build_config_uri": "https://github.com/Watermark-Labs/pins/.github/workflows/sign.yml@refs/heads/main",
+      "source_repository_uri": "https://github.com/Watermark-Labs/pins",
+      "source_repository_id": "1405118053",
+      "source_owner_id": "334112171",
+      "ref": "refs/heads/main",
+      "triggers": [
+        "push",
+        "schedule"
+      ]
+    },
+    "error": "identity",
+    "bundle_accepts": false
+  },
+  {
+    "name": "expired",
+    "blob": "statements/prod.json",
+    "bundle": "forged/expired.sigstore.json",
+    "identity": {
+      "issuer": "https://token.actions.githubusercontent.com",
+      "build_signer_uri": "https://github.com/Watermark-Labs/pins/.github/workflows/sign.yml@refs/heads/main",
+      "build_config_uri": "https://github.com/Watermark-Labs/pins/.github/workflows/sign.yml@refs/heads/main",
+      "source_repository_uri": "https://github.com/Watermark-Labs/pins",
+      "source_repository_id": "1405118053",
+      "source_owner_id": "334112171",
+      "ref": "refs/heads/main",
+      "triggers": [
+        "push",
+        "schedule"
+      ]
+    },
+    "error": "certificate",
+    "bundle_accepts": false
+  },
+  {
+    "name": "critical-extension",
+    "blob": "statements/prod.json",
+    "bundle": "forged/critical-extension.sigstore.json",
+    "identity": {
+      "issuer": "https://token.actions.githubusercontent.com",
+      "build_signer_uri": "https://github.com/Watermark-Labs/pins/.github/workflows/sign.yml@refs/heads/main",
+      "build_config_uri": "https://github.com/Watermark-Labs/pins/.github/workflows/sign.yml@refs/heads/main",
+      "source_repository_uri": "https://github.com/Watermark-Labs/pins",
+      "source_repository_id": "1405118053",
+      "source_owner_id": "334112171",
+      "ref": "refs/heads/main",
+      "triggers": [
+        "push",
+        "schedule"
+      ]
+    },
+    "error": "certificate",
+    "bundle_accepts": false
+  },
+  {
+    "name": "no-eku",
+    "blob": "statements/prod.json",
+    "bundle": "forged/no-eku.sigstore.json",
+    "identity": {
+      "issuer": "https://token.actions.githubusercontent.com",
+      "build_signer_uri": "https://github.com/Watermark-Labs/pins/.github/workflows/sign.yml@refs/heads/main",
+      "build_config_uri": "https://github.com/Watermark-Labs/pins/.github/workflows/sign.yml@refs/heads/main",
+      "source_repository_uri": "https://github.com/Watermark-Labs/pins",
+      "source_repository_id": "1405118053",
+      "source_owner_id": "334112171",
+      "ref": "refs/heads/main",
+      "triggers": [
+        "push",
+        "schedule"
+      ]
+    },
+    "error": "certificate",
+    "bundle_accepts": false
+  },
+  {
+    "name": "signature",
+    "blob": "statements/prod.json",
+    "bundle": "forged/signature.sigstore.json",
+    "identity": {
+      "issuer": "https://token.actions.githubusercontent.com",
+      "build_signer_uri": "https://github.com/Watermark-Labs/pins/.github/workflows/sign.yml@refs/heads/main",
+      "build_config_uri": "https://github.com/Watermark-Labs/pins/.github/workflows/sign.yml@refs/heads/main",
+      "source_repository_uri": "https://github.com/Watermark-Labs/pins",
+      "source_repository_id": "1405118053",
+      "source_owner_id": "334112171",
+      "ref": "refs/heads/main",
+      "triggers": [
+        "push",
+        "schedule"
+      ]
+    },
+    "error": "signature",
+    "bundle_accepts": false
+  },
+  {
+    "name": "body-digest",
+    "blob": "statements/prod.json",
+    "bundle": "forged/body-digest.sigstore.json",
+    "identity": {
+      "issuer": "https://token.actions.githubusercontent.com",
+      "build_signer_uri": "https://github.com/Watermark-Labs/pins/.github/workflows/sign.yml@refs/heads/main",
+      "build_config_uri": "https://github.com/Watermark-Labs/pins/.github/workflows/sign.yml@refs/heads/main",
+      "source_repository_uri": "https://github.com/Watermark-Labs/pins",
+      "source_repository_id": "1405118053",
+      "source_owner_id": "334112171",
+      "ref": "refs/heads/main",
+      "triggers": [
+        "push",
+        "schedule"
+      ]
+    },
+    "error": "log entry body",
+    "bundle_accepts": false
+  },
+  {
+    "name": "body-signature",
+    "blob": "statements/prod.json",
+    "bundle": "forged/body-signature.sigstore.json",
+    "identity": {
+      "issuer": "https://token.actions.githubusercontent.com",
+      "build_signer_uri": "https://github.com/Watermark-Labs/pins/.github/workflows/sign.yml@refs/heads/main",
+      "build_config_uri": "https://github.com/Watermark-Labs/pins/.github/workflows/sign.yml@refs/heads/main",
+      "source_repository_uri": "https://github.com/Watermark-Labs/pins",
+      "source_repository_id": "1405118053",
+      "source_owner_id": "334112171",
+      "ref": "refs/heads/main",
+      "triggers": [
+        "push",
+        "schedule"
+      ]
+    },
+    "error": "log entry body",
+    "bundle_accepts": false
+  },
+  {
+    "name": "body-certificate",
+    "blob": "statements/prod.json",
+    "bundle": "forged/body-certificate.sigstore.json",
+    "identity": {
+      "issuer": "https://token.actions.githubusercontent.com",
+      "build_signer_uri": "https://github.com/Watermark-Labs/pins/.github/workflows/sign.yml@refs/heads/main",
+      "build_config_uri": "https://github.com/Watermark-Labs/pins/.github/workflows/sign.yml@refs/heads/main",
+      "source_repository_uri": "https://github.com/Watermark-Labs/pins",
+      "source_repository_id": "1405118053",
+      "source_owner_id": "334112171",
+      "ref": "refs/heads/main",
+      "triggers": [
+        "push",
+        "schedule"
+      ]
+    },
+    "error": "log entry body",
+    "bundle_accepts": false
+  },
+  {
+    "name": "set",
+    "blob": "statements/prod.json",
+    "bundle": "forged/set.sigstore.json",
+    "identity": {
+      "issuer": "https://token.actions.githubusercontent.com",
+      "build_signer_uri": "https://github.com/Watermark-Labs/pins/.github/workflows/sign.yml@refs/heads/main",
+      "build_config_uri": "https://github.com/Watermark-Labs/pins/.github/workflows/sign.yml@refs/heads/main",
+      "source_repository_uri": "https://github.com/Watermark-Labs/pins",
+      "source_repository_id": "1405118053",
+      "source_owner_id": "334112171",
+      "ref": "refs/heads/main",
+      "triggers": [
+        "push",
+        "schedule"
+      ]
+    },
+    "error": "log",
+    "bundle_accepts": false
+  },
+  {
+    "name": "inclusion",
+    "blob": "statements/prod.json",
+    "bundle": "forged/inclusion.sigstore.json",
+    "identity": {
+      "issuer": "https://token.actions.githubusercontent.com",
+      "build_signer_uri": "https://github.com/Watermark-Labs/pins/.github/workflows/sign.yml@refs/heads/main",
+      "build_config_uri": "https://github.com/Watermark-Labs/pins/.github/workflows/sign.yml@refs/heads/main",
+      "source_repository_uri": "https://github.com/Watermark-Labs/pins",
+      "source_repository_id": "1405118053",
+      "source_owner_id": "334112171",
+      "ref": "refs/heads/main",
+      "triggers": [
+        "push",
+        "schedule"
+      ]
+    },
+    "error": "log",
+    "bundle_accepts": false
+  },
+  {
+    "name": "checkpoint-other-tree",
+    "blob": "statements/prod.json",
+    "bundle": "forged/checkpoint-other-tree.sigstore.json",
+    "identity": {
+      "issuer": "https://token.actions.githubusercontent.com",
+      "build_signer_uri": "https://github.com/Watermark-Labs/pins/.github/workflows/sign.yml@refs/heads/main",
+      "build_config_uri": "https://github.com/Watermark-Labs/pins/.github/workflows/sign.yml@refs/heads/main",
+      "source_repository_uri": "https://github.com/Watermark-Labs/pins",
+      "source_repository_id": "1405118053",
+      "source_owner_id": "334112171",
+      "ref": "refs/heads/main",
+      "triggers": [
+        "push",
+        "schedule"
+      ]
+    },
+    "error": "log",
+    "bundle_accepts": false
+  },
+  {
+    "name": "unknown-log",
+    "blob": "statements/prod.json",
+    "bundle": "forged/unknown-log.sigstore.json",
+    "identity": {
+      "issuer": "https://token.actions.githubusercontent.com",
+      "build_signer_uri": "https://github.com/Watermark-Labs/pins/.github/workflows/sign.yml@refs/heads/main",
+      "build_config_uri": "https://github.com/Watermark-Labs/pins/.github/workflows/sign.yml@refs/heads/main",
+      "source_repository_uri": "https://github.com/Watermark-Labs/pins",
+      "source_repository_id": "1405118053",
+      "source_owner_id": "334112171",
+      "ref": "refs/heads/main",
+      "triggers": [
+        "push",
+        "schedule"
+      ]
+    },
+    "error": "log",
+    "bundle_accepts": false
+  },
+  {
+    "name": "two-entries",
+    "blob": "statements/prod.json",
+    "bundle": "forged/two-entries.sigstore.json",
+    "identity": {
+      "issuer": "https://token.actions.githubusercontent.com",
+      "build_signer_uri": "https://github.com/Watermark-Labs/pins/.github/workflows/sign.yml@refs/heads/main",
+      "build_config_uri": "https://github.com/Watermark-Labs/pins/.github/workflows/sign.yml@refs/heads/main",
+      "source_repository_uri": "https://github.com/Watermark-Labs/pins",
+      "source_repository_id": "1405118053",
+      "source_owner_id": "334112171",
+      "ref": "refs/heads/main",
+      "triggers": [
+        "push",
+        "schedule"
+      ]
+    },
+    "error": "bundle",
+    "bundle_accepts": false
+  },
+  {
+    "name": "dsse",
+    "blob": "statements/prod.json",
+    "bundle": "forged/dsse.sigstore.json",
+    "identity": {
+      "issuer": "https://token.actions.githubusercontent.com",
+      "build_signer_uri": "https://github.com/Watermark-Labs/pins/.github/workflows/sign.yml@refs/heads/main",
+      "build_config_uri": "https://github.com/Watermark-Labs/pins/.github/workflows/sign.yml@refs/heads/main",
+      "source_repository_uri": "https://github.com/Watermark-Labs/pins",
+      "source_repository_id": "1405118053",
+      "source_owner_id": "334112171",
+      "ref": "refs/heads/main",
+      "triggers": [
+        "push",
+        "schedule"
+      ]
+    },
+    "error": "bundle",
+    "bundle_accepts": false
+  },
+  {
+    "name": "short-log-id",
+    "blob": "statements/prod.json",
+    "bundle": "forged/short-log-id.sigstore.json",
+    "identity": {
+      "issuer": "https://token.actions.githubusercontent.com",
+      "build_signer_uri": "https://github.com/Watermark-Labs/pins/.github/workflows/sign.yml@refs/heads/main",
+      "build_config_uri": "https://github.com/Watermark-Labs/pins/.github/workflows/sign.yml@refs/heads/main",
+      "source_repository_uri": "https://github.com/Watermark-Labs/pins",
+      "source_repository_id": "1405118053",
+      "source_owner_id": "334112171",
+      "ref": "refs/heads/main",
+      "triggers": [
+        "push",
+        "schedule"
+      ]
+    },
+    "error": "bundle",
+    "bundle_accepts": false
+  },
+  {
+    "name": "checkpoint-short-hash",
+    "blob": "statements/prod.json",
+    "bundle": "forged/checkpoint-short-hash.sigstore.json",
+    "identity": {
+      "issuer": "https://token.actions.githubusercontent.com",
+      "build_signer_uri": "https://github.com/Watermark-Labs/pins/.github/workflows/sign.yml@refs/heads/main",
+      "build_config_uri": "https://github.com/Watermark-Labs/pins/.github/workflows/sign.yml@refs/heads/main",
+      "source_repository_uri": "https://github.com/Watermark-Labs/pins",
+      "source_repository_id": "1405118053",
+      "source_owner_id": "334112171",
+      "ref": "refs/heads/main",
+      "triggers": [
+        "push",
+        "schedule"
+      ]
+    },
+    "error": "log",
+    "bundle_accepts": false
+  },
+  {
+    "name": "checkpoint-two-signatures",
+    "blob": "statements/prod.json",
+    "bundle": "forged/checkpoint-two-signatures.sigstore.json",
+    "identity": {
+      "issuer": "https://token.actions.githubusercontent.com",
+      "build_signer_uri": "https://github.com/Watermark-Labs/pins/.github/workflows/sign.yml@refs/heads/main",
+      "build_config_uri": "https://github.com/Watermark-Labs/pins/.github/workflows/sign.yml@refs/heads/main",
+      "source_repository_uri": "https://github.com/Watermark-Labs/pins",
+      "source_repository_id": "1405118053",
+      "source_owner_id": "334112171",
+      "ref": "refs/heads/main",
+      "triggers": [
+        "push",
+        "schedule"
+      ]
+    },
+    "error": "log",
+    "bundle_accepts": false
+  },
+  {
+    "name": "deprecated-issuer",
+    "blob": "statements/prod.json",
+    "bundle": "forged/deprecated-issuer.sigstore.json",
+    "identity": {
+      "issuer": "https://token.actions.githubusercontent.com",
+      "build_signer_uri": "https://github.com/Watermark-Labs/pins/.github/workflows/sign.yml@refs/heads/main",
+      "build_config_uri": "https://github.com/Watermark-Labs/pins/.github/workflows/sign.yml@refs/heads/main",
+      "source_repository_uri": "https://github.com/Watermark-Labs/pins",
+      "source_repository_id": "1405118053",
+      "source_owner_id": "334112171",
+      "ref": "refs/heads/main",
+      "triggers": [
+        "push",
+        "schedule"
+      ]
+    },
+    "error": "identity",
+    "bundle_accepts": false
+  },
+  {
+    "name": "no-promise",
+    "blob": "statements/prod.json",
+    "bundle": "forged/no-promise.sigstore.json",
+    "identity": {
+      "issuer": "https://token.actions.githubusercontent.com",
+      "build_signer_uri": "https://github.com/Watermark-Labs/pins/.github/workflows/sign.yml@refs/heads/main",
+      "build_config_uri": "https://github.com/Watermark-Labs/pins/.github/workflows/sign.yml@refs/heads/main",
+      "source_repository_uri": "https://github.com/Watermark-Labs/pins",
+      "source_repository_id": "1405118053",
+      "source_owner_id": "334112171",
+      "ref": "refs/heads/main",
+      "triggers": [
+        "push",
+        "schedule"
+      ]
+    },
+    "error": "bundle",
+    "bundle_accepts": false
+  },
+  {
+    "name": "no-proof",
+    "blob": "statements/prod.json",
+    "bundle": "forged/no-proof.sigstore.json",
+    "identity": {
+      "issuer": "https://token.actions.githubusercontent.com",
+      "build_signer_uri": "https://github.com/Watermark-Labs/pins/.github/workflows/sign.yml@refs/heads/main",
+      "build_config_uri": "https://github.com/Watermark-Labs/pins/.github/workflows/sign.yml@refs/heads/main",
+      "source_repository_uri": "https://github.com/Watermark-Labs/pins",
+      "source_repository_id": "1405118053",
+      "source_owner_id": "334112171",
+      "ref": "refs/heads/main",
+      "triggers": [
+        "push",
+        "schedule"
+      ]
+    },
+    "error": "bundle",
+    "bundle_accepts": false
+  },
+  {
+    "name": "statement-non-canonical",
+    "blob": "forged/statement-non-canonical.statement.json",
+    "bundle": "forged/statement-non-canonical.sigstore.json",
+    "identity": {
+      "issuer": "https://token.actions.githubusercontent.com",
+      "build_signer_uri": "https://github.com/Watermark-Labs/pins/.github/workflows/sign.yml@refs/heads/main",
+      "build_config_uri": "https://github.com/Watermark-Labs/pins/.github/workflows/sign.yml@refs/heads/main",
+      "source_repository_uri": "https://github.com/Watermark-Labs/pins",
+      "source_repository_id": "1405118053",
+      "source_owner_id": "334112171",
+      "ref": "refs/heads/main",
+      "triggers": [
+        "push",
+        "schedule"
+      ]
+    },
+    "error": "statement",
+    "bundle_accepts": true
+  },
+  {
+    "name": "statement-type",
+    "blob": "forged/statement-type.statement.json",
+    "bundle": "forged/statement-type.sigstore.json",
+    "identity": {
+      "issuer": "https://token.actions.githubusercontent.com",
+      "build_signer_uri": "https://github.com/Watermark-Labs/pins/.github/workflows/sign.yml@refs/heads/main",
+      "build_config_uri": "https://github.com/Watermark-Labs/pins/.github/workflows/sign.yml@refs/heads/main",
+      "source_repository_uri": "https://github.com/Watermark-Labs/pins",
+      "source_repository_id": "1405118053",
+      "source_owner_id": "334112171",
+      "ref": "refs/heads/main",
+      "triggers": [
+        "push",
+        "schedule"
+      ]
+    },
+    "error": "statement",
+    "bundle_accepts": true
+  },
+  {
+    "name": "statement-commit",
+    "blob": "forged/statement-commit.statement.json",
+    "bundle": "forged/statement-commit.sigstore.json",
+    "identity": {
+      "issuer": "https://token.actions.githubusercontent.com",
+      "build_signer_uri": "https://github.com/Watermark-Labs/pins/.github/workflows/sign.yml@refs/heads/main",
+      "build_config_uri": "https://github.com/Watermark-Labs/pins/.github/workflows/sign.yml@refs/heads/main",
+      "source_repository_uri": "https://github.com/Watermark-Labs/pins",
+      "source_repository_id": "1405118053",
+      "source_owner_id": "334112171",
+      "ref": "refs/heads/main",
+      "triggers": [
+        "push",
+        "schedule"
+      ]
+    },
+    "error": "statement",
+    "bundle_accepts": true
+  },
+  {
+    "name": "statement-folded-key",
+    "blob": "forged/statement-folded-key.statement.json",
+    "bundle": "forged/statement-folded-key.sigstore.json",
+    "identity": {
+      "issuer": "https://token.actions.githubusercontent.com",
+      "build_signer_uri": "https://github.com/Watermark-Labs/pins/.github/workflows/sign.yml@refs/heads/main",
+      "build_config_uri": "https://github.com/Watermark-Labs/pins/.github/workflows/sign.yml@refs/heads/main",
+      "source_repository_uri": "https://github.com/Watermark-Labs/pins",
+      "source_repository_id": "1405118053",
+      "source_owner_id": "334112171",
+      "ref": "refs/heads/main",
+      "triggers": [
+        "push",
+        "schedule"
+      ]
+    },
+    "error": "statement",
+    "bundle_accepts": true
+  },
+  {
+    "name": "statement-null-revoked",
+    "blob": "forged/statement-null-revoked.statement.json",
+    "bundle": "forged/statement-null-revoked.sigstore.json",
+    "identity": {
+      "issuer": "https://token.actions.githubusercontent.com",
+      "build_signer_uri": "https://github.com/Watermark-Labs/pins/.github/workflows/sign.yml@refs/heads/main",
+      "build_config_uri": "https://github.com/Watermark-Labs/pins/.github/workflows/sign.yml@refs/heads/main",
+      "source_repository_uri": "https://github.com/Watermark-Labs/pins",
+      "source_repository_id": "1405118053",
+      "source_owner_id": "334112171",
+      "ref": "refs/heads/main",
+      "triggers": [
+        "push",
+        "schedule"
+      ]
+    },
+    "error": "statement",
+    "bundle_accepts": true
+  },
+  {
+    "name": "statement-no-images",
+    "blob": "forged/statement-no-images.statement.json",
+    "bundle": "forged/statement-no-images.sigstore.json",
+    "identity": {
+      "issuer": "https://token.actions.githubusercontent.com",
+      "build_signer_uri": "https://github.com/Watermark-Labs/pins/.github/workflows/sign.yml@refs/heads/main",
+      "build_config_uri": "https://github.com/Watermark-Labs/pins/.github/workflows/sign.yml@refs/heads/main",
+      "source_repository_uri": "https://github.com/Watermark-Labs/pins",
+      "source_repository_id": "1405118053",
+      "source_owner_id": "334112171",
+      "ref": "refs/heads/main",
+      "triggers": [
+        "push",
+        "schedule"
+      ]
+    },
+    "error": "statement",
+    "bundle_accepts": true
+  }
+]

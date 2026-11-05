@@ -71,7 +71,7 @@ def check_chain(leaf, bundle, at):
             raise Refused(f"{cert.subject.rfc4514_string()} was not valid when the document was issued")
 
 
-def check(document):
+def verify(document):
     sign1 = cbor2.loads(document)
     if isinstance(sign1, cbor2.CBORTag) and sign1.tag == 18:
         sign1 = sign1.value
@@ -97,8 +97,12 @@ def check(document):
         key.verify(encode_dss_signature(r, s), signed, ec.ECDSA(hashes.SHA384()))
     except Exception as e:
         raise Refused("the document's signature does not verify") from e
+    return payload
 
-    age = time.time() - issued_at.timestamp()
+
+def check(document):
+    payload = verify(document)
+    age = time.time() - payload["timestamp"] / 1000
     if age > MAX_AGE_SECONDS:
         raise Refused(f"the document was issued {age / 60:.0f} minutes ago")
     return [payload["pcrs"][i].hex() for i in range(3)], age

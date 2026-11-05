@@ -25,7 +25,7 @@ func (w *InProcess) openTranscription(o Opening) (Admission, error) {
 	if err := refuseProtocol(nil, protocolOf(o.Header.Get)); err != nil {
 		return nil, err
 	}
-	oc := &openedCall{cuts: newCuts(), call: func(ctx context.Context) (func(io.Writer) error, error) {
+	oc := &openedCall{cuts: newCuts(), endpoint: w.endpoints[req.Model], call: func(ctx context.Context) (func(io.Writer) error, error) {
 		transcript, err := vendor.Transcribe(ctx, req)
 		return func(w io.Writer) error { return audio.WriteTranscript(w, transcript) }, err
 	}}

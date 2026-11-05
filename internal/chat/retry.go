@@ -18,11 +18,11 @@ type Reroutable interface {
 }
 
 // BusyRetry calls again on a busy refusal that arrives before the first chunk: at once on the provider a Reroutable
-// refusal names, otherwise on its own provider after the next of Waits. Reroutes and waits each get len(Waits), so a
-// call reaches the vendor at most 1+2*len(Waits) times, twice that when each is hedged. A refusal after a chunk went
-// out stands. A Stream call that has emitted nothing by HedgeAfter is raced by a second identical call: the first to
-// emit serves the client and the other is cut, and when both fail before emitting the first call's error stands. Zero
-// never races.
+// refusal names, otherwise on its own provider after the next of Waits. Waits get len(Waits) tries and reroutes get
+// max(len(Waits), 1), so a call reaches the vendor at most 1+len(Waits)+max(len(Waits), 1) times, twice that when
+// each is hedged. A refusal after a chunk went out stands. A Stream call that has emitted nothing by HedgeAfter is
+// raced by a second identical call: the first to emit serves the client and the other is cut, and when both fail
+// before emitting the first call's error stands. Zero never races.
 type BusyRetry struct {
 	Provider
 	Waits      []time.Duration
@@ -94,7 +94,7 @@ func (t *tries) next(ctx context.Context, err error) Provider {
 	if !busy(err) {
 		return nil
 	}
-	if re, ok := errors.AsType[Reroutable](err); ok && t.rerouted < len(t.Waits) {
+	if re, ok := errors.AsType[Reroutable](err); ok && t.rerouted < max(len(t.Waits), 1) {
 		t.rerouted++
 		t.retries++
 		return re.Reroute()

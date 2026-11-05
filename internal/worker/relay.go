@@ -18,6 +18,10 @@ type relayWriter struct {
 	atLineStart bool
 	written     int
 	err         error
+	// afterCut, on a reply sealed whole, takes a caller that left, by its context or a write that failed, as
+	// no reason to stop the relay: each write after is dropped and answered as written, so the relay reads on
+	// to the router's usage. err keeps why the caller left, which ends the request as its cut.
+	afterCut *afterCut
 }
 
 func (rw *relayWriter) begin(head chat.Relayed) io.Writer {
@@ -41,6 +45,14 @@ func (rw *relayWriter) begin(head chat.Relayed) io.Writer {
 }
 
 func (rw *relayWriter) Write(p []byte) (int, error) {
+	if rw.afterCut != nil {
+		if left := rw.afterCut.gone(); left != nil {
+			if rw.err == nil {
+				rw.err = left
+			}
+			return len(p), nil
+		}
+	}
 	if rw.err != nil {
 		return 0, rw.err
 	}
@@ -60,6 +72,9 @@ func (rw *relayWriter) Write(p []byte) (int, error) {
 	}
 	if rw.err == nil {
 		rw.written += n
+	} else if rw.afterCut != nil {
+		rw.afterCut.leave(rw.err)
+		return len(p), nil
 	}
 	return n, rw.err
 }

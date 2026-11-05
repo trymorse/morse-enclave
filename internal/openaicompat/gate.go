@@ -8,6 +8,7 @@ import (
 
 	"morse/backend/internal/chat"
 	"morse/backend/internal/sse"
+	"morse/backend/internal/strictjson"
 )
 
 var textFields = map[string]bool{"content": true, "reasoning": true, "reasoning_content": true, "refusal": true, "tool_calls": true, "function_call": true, "audio": true}
@@ -24,7 +25,7 @@ var loggableFieldName = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
 
 func unknownFieldsOf(data []byte, isCiphertext func([]byte) bool) (unknown []string, sealed bool) {
 	var reply map[string]json.RawMessage
-	if json.Unmarshal(data, &reply) != nil {
+	if strictjson.UniqueKeys(data) != nil || json.Unmarshal(data, &reply) != nil {
 		return nil, false
 	}
 	var choices []map[string]json.RawMessage
@@ -48,7 +49,7 @@ func unknownFieldsOf(data []byte, isCiphertext func([]byte) bool) (unknown []str
 			}
 			for key, value := range fields {
 				switch {
-				case key == "role" && string(value) == `"assistant"`, isEmpty(value), key != "role" && isCiphertext(value):
+				case key == "role" && string(value) == `"assistant"`, isEmpty(value), textFields[key] && isCiphertext(value):
 				case key == "role" || textFields[key] || !loggableFieldName.MatchString(key) || value[0] == '"':
 					return nil, false
 				default:

@@ -171,6 +171,8 @@ type Expectation struct {
 
 type Key struct {
 	PublicKey []byte
+	TLS       []byte
+	Nonce     []byte
 	IssuedAt  time.Time
 	Pin       Pin
 }
@@ -244,7 +246,19 @@ func Document(document []byte, expect Expectation) (Key, error) {
 	if err != nil {
 		return Key{}, err
 	}
-	return Key{PublicKey: publicKey, IssuedAt: issuedAt, Pin: pin}, nil
+	return Key{PublicKey: publicKey, TLS: body.PublicKey, Nonce: body.Nonce, IssuedAt: issuedAt, Pin: pin}, nil
+}
+
+func TimestampUnverified(document []byte) (time.Time, error) {
+	var cose sign1
+	if err := cbor.Unmarshal(document, &cose); err != nil || cose.Payload == nil {
+		return time.Time{}, errors.New("the document is not a COSE_Sign1")
+	}
+	var body payload
+	if err := cbor.Unmarshal(cose.Payload, &body); err != nil || body.Timestamp == 0 {
+		return time.Time{}, errors.New("the document's payload carries no timestamp")
+	}
+	return time.UnixMilli(body.Timestamp).UTC(), nil
 }
 
 func checkChain(leaf *x509.Certificate, bundle [][]byte, root *x509.Certificate, at time.Time) error {

@@ -41,7 +41,7 @@ func (p MediaPrice) Settle(o measure.Outcome, r Reported, delivered int, hold Mi
 	case r.known == costUnpriced:
 		return AtHold(o, hold)
 	case r.known == costKnown:
-		return Settlement{Outcome: o, Cost: max(p.Markup.Of(r.micros), minimumFor(delivered)), Source: measure.UsageReported}
+		return Settlement{Outcome: o, Cost: max(p.Markup.Of(r.micros), minimumFor(delivered)), Source: measure.UsageReported, EndpointCost: EndpointCost{Micros: r.micros, Source: CostReported}}
 	case delivered > 0:
 		return AtHold(o, hold)
 	}

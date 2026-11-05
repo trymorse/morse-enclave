@@ -47,11 +47,25 @@ type Scheme struct {
 	Headers          []string
 	Parse            func(get func(name string) string) (params E2EE, sealed bool, err error)
 	ErrHeaderMissing error
+	// SealsBody is a scheme that seals the whole request body, so its params are BodySealed: the clear
+	// headers name what the proxy can't read inside the body.
+	SealsBody bool
+}
+
+// BodySealed is the params of a scheme that seals the whole body: the model the request names, which the
+// upstream refuses unless the body names it too, and the output limit the client asks for.
+type BodySealed interface {
+	E2EE
+	SealedModel() string
+	OutputLimit() int
 }
 
 type Replied struct {
-	Usage         Usage
-	Events        int
+	Usage  Usage
+	Events int
+	// Tokens, when set, bounds the completion tokens the relayed events carry more closely than one an event,
+	// for a relay that can't read them (a reply sealed whole). The bill falls back on it without a usage.
+	Tokens        int
 	UnknownFields []string
 }
 
@@ -68,6 +82,8 @@ type VerbatimRoute interface {
 	// SealPrompt seals prompt as the content of the system message a request opens with, to the model key the
 	// request is sealed to, once a verified report lists that key.
 	SealPrompt(sealed E2EE, prompt string) (string, error)
+	// OnBehalf serves a plaintext chat sealed to a key a verified report lists, and opens the reply.
+	OnBehalf() Provider
 }
 
 const (

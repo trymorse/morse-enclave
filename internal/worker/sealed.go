@@ -35,19 +35,15 @@ var (
 )
 
 type Sealing struct {
-	Identity    *seal.Identity
-	Attester    Attester
-	Environment string
-}
-
-type Attester interface {
-	Attest(ctx context.Context, environment string, publicKey []byte) ([]byte, error)
+	Identity *seal.Identity
+	Attest   func(ctx context.Context) ([]byte, error)
 }
 
 type SealedOpening struct {
 	Body []byte
 	Cast chat.Cast
 	Framing
+	KeyCaller bool
 }
 
 type SealedAdmission struct {
@@ -82,7 +78,7 @@ func (w *InProcess) Attestation(ctx context.Context) (Attested, error) {
 	if w.sealing.Identity == nil {
 		return Attested{}, errSealedUnavailable
 	}
-	document, err := w.sealing.Attester.Attest(ctx, w.sealing.Environment, w.sealing.Identity.PublicKey())
+	document, err := w.sealing.Attest(ctx)
 	if err != nil {
 		return Attested{}, err
 	}
@@ -122,7 +118,7 @@ func (w *InProcess) OpenSealed(ctx context.Context, o SealedOpening) (SealedAdmi
 		header.Set(name, value)
 	}
 	cek := req.CEK
-	admitted, err := w.Open(ctx, Opening{Method: req.Method, Path: target.Path, Query: target.RawQuery, Header: ContentHeaders(header), Body: bytes.NewReader(req.Body), Cast: o.Cast, Framing: o.Framing, cek: &cek})
+	admitted, err := w.Open(ctx, Opening{Method: req.Method, Path: target.Path, Query: target.RawQuery, Header: ContentHeaders(header), Body: bytes.NewReader(req.Body), Cast: o.Cast, Framing: o.Framing, KeyCaller: o.KeyCaller, cek: &cek})
 	if err != nil {
 		refusal := refusalWire(contentRefusal(err))
 		return refuse(refusal.Envelope(), refusal.Status)

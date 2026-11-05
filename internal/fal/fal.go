@@ -155,6 +155,9 @@ func failure(status int, body []byte) apierr.Error {
 	if reply.ErrorType == contentPolicy || slices.Contains(details, vendorDetail{Type: contentPolicy}) {
 		return apierr.ErrContentFilter
 	}
+	if status == http.StatusForbidden || status == http.StatusNotFound {
+		return apierr.ErrUpstreamUnavailable
+	}
 	return apierr.SanitizedUpstreamError(status, nil)
 }
 

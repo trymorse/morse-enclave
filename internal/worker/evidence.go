@@ -24,7 +24,7 @@ var (
 var errNoSuchVendor = errors.New("worker: no such vendor")
 
 func (w *InProcess) vendor(v Vendor) (chatRoute, error) {
-	for _, r := range w.chats[v.Route] {
+	for _, r := range w.chats[v.Route].named {
 		if r.attester == v.Attester {
 			return r, nil
 		}

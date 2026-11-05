@@ -10,6 +10,12 @@ func KibibytesCovering(bytes int) Kibibytes { return Kibibytes((bytes + KiB - 1)
 
 func (k Kibibytes) Bytes() int { return int(k) * KiB }
 
+func (k Kibibytes) Tokens() int { return k.Bytes() / IncludedWindowBytesPerToken }
+
+// LeastOutputTokens is the shortest reply worth serving, under a balance short of the hold or in the room a window
+// leaves after the prompt. A lower limit would take the whole balance for a reply cut off before it says anything.
+const LeastOutputTokens = 1024
+
 const (
 	CharacterMessageTokens = 2_000
 	CharacterMessageBytes  = CharacterMessageTokens * IncludedWindowBytesPerToken

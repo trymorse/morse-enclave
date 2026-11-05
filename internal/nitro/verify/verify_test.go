@@ -90,6 +90,7 @@ func parse(der []byte) *x509.Certificate {
 type documentOptions struct {
 	timestamp   time.Time
 	publicKey   []byte
+	tls         []byte
 	environment string
 	userData    []byte
 	pcrs        *struct{ pcr0, pcr1, pcr2 string }
@@ -162,7 +163,7 @@ func (f *forge) document(o documentOptions) []byte {
 		"pcrs":        map[uint][]byte{0: unhex(pcrs.pcr0), 1: unhex(pcrs.pcr1), 2: unhex(pcrs.pcr2), 3: make([]byte, 48)},
 		"certificate": o.leaf,
 		"cabundle":    o.bundle,
-		"public_key":  nil,
+		"public_key":  o.tls,
 		"user_data":   o.userData,
 		"nonce":       nil,
 	})
@@ -220,14 +221,14 @@ func TestPinsTheAWSNitroRootByTheFingerprintAWSPublishes(t *testing.T) {
 }
 
 func TestAStandInAnnouncesItselfCarriesItsKeyAndRefusesEveryOtherDocument(t *testing.T) {
-	publicKey := bytes.Repeat([]byte{7}, 32)
+	publicKey, spki := bytes.Repeat([]byte{7}, 32), someSPKI(elliptic.P256())
 	issuedAt := time.UnixMilli(time.Now().UnixMilli())
-	document := verify.StandIn{Environment: "dev", PublicKey: publicKey, IssuedAt: issuedAt}.Document()
+	document := verify.StandIn{Environment: "dev", PublicKey: publicKey, TLS: spki, IssuedAt: issuedAt}.Document()
 	if !bytes.HasPrefix(document, []byte(`{"object":"proxy_attestation_stand_in","warning":"not an AWS Nitro attestation`)) {
 		t.Errorf("stand-in %s does not announce itself first", document)
 	}
 	standIn, err := verify.ParseStandIn(document)
-	if err != nil || standIn.Environment != "dev" || !bytes.Equal(standIn.PublicKey, publicKey) || !standIn.IssuedAt.Equal(issuedAt) {
+	if err != nil || standIn.Environment != "dev" || !bytes.Equal(standIn.PublicKey, publicKey) || !bytes.Equal(standIn.TLS, spki) || !standIn.IssuedAt.Equal(issuedAt) {
 		t.Errorf("parsed %+v %v", standIn, err)
 	}
 	for name, bad := range map[string][]byte{

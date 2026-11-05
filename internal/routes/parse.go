@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"reflect"
 	"regexp"
 	"strings"
 
@@ -61,6 +62,13 @@ func Parse(data []byte, defaultMarkup money.Markup) ([]Route, error) {
 		for j := range parsed {
 			parsed[j].identify(f)
 		}
+		for _, u := range f.Unnamed {
+			rt, err := unnamedRoute(u, defaultMarkup)
+			if err != nil {
+				return nil, fmt.Errorf("route %d endpoint %s: %w", i, u.Endpoints[0], err)
+			}
+			parsed[0].Unnamed = append(parsed[0].Unnamed, rt)
+		}
 		for _, rt := range parsed {
 			if seen[rt.Model] {
 				return nil, fmt.Errorf("route %d repeats model %q", i, rt.Model)
@@ -73,6 +81,19 @@ func Parse(data []byte, defaultMarkup money.Markup) ([]Route, error) {
 		return nil, err
 	}
 	return routes, nil
+}
+
+func unnamedRoute(f Flat, defaultMarkup money.Markup) (Route, error) {
+	parsed, err := parseRoute(f.Route, defaultMarkup)
+	if err != nil {
+		return Route{}, err
+	}
+	rt := parsed[0]
+	if _, chats := ChatOf(rt.Serves); !chats {
+		return Route{}, fmt.Errorf("is unnamed and serves %s; only a chat fails over to an unnamed endpoint", rt.Serves.Kind())
+	}
+	rt.identify(f)
+	return rt, nil
 }
 
 func parseRoute(object json.RawMessage, defaultMarkup money.Markup) ([]Route, error) {
@@ -242,4 +263,87 @@ func paidPlanNames() []string {
 		}
 	}
 	return names
+}
+
+// FailoverOnOneTerm refuses a model whose chat endpoints outside e2ee differ in a term the relay bills or gates by:
+// a chat fails over between them, and the relay holds, bills, and applies the plan at the endpoint it bound.
+// includedWindows are the plans' included context windows. The relay runs it rather than Parse, because those come
+// from the plan table, which the worker must not link.
+func FailoverOnOneTerm(routes []Route, includedWindows []int) error {
+	first := map[catalog.ModelID]Route{}
+	var served []Route
+	for _, rt := range routes {
+		served = append(append(served, rt), rt.Unnamed...)
+	}
+	for _, rt := range served {
+		c, chats := ChatOf(rt.Serves)
+		if !chats || rt.Tier.Sealed() {
+			continue
+		}
+		f, seen := first[rt.ID]
+		if !seen {
+			first[rt.ID] = rt
+			continue
+		}
+		fc, _ := ChatOf(f.Serves)
+		var differs string
+		switch {
+		case !reflect.DeepEqual(c.Billed(), fc.Billed()):
+			differs = "price or markup"
+		case !reflect.DeepEqual(rt.Included, f.Included):
+			differs = "included"
+		case rt.Included != nil && !sameIncludedWindow(c.ContextTokens, fc.ContextTokens, includedWindows):
+			differs = "context_tokens, which bounds an included request"
+		case rt.RequiresPlan != f.RequiresPlan:
+			differs = "requires_plan"
+		case rt.ReasoningUncapped() != f.ReasoningUncapped():
+			differs = "whether the provider reasons past the output limit, which sizes the hold"
+		default:
+			continue
+		}
+		return fmt.Errorf("endpoints %q and %q serve model %q outside e2ee and differ in %s; a chat fails over between them and pays the terms of the endpoint it bound, so give them the same terms or serve one as another model", f.Endpoint, rt.Endpoint, rt.ID, differs)
+	}
+	return samePromiseAtATier(served)
+}
+
+// samePromiseAtATier refuses a model whose chat endpoints at one tier outside e2ee differ in a term the tier promises a
+// client: a chat fails over between them, so whichever endpoint serves must keep it.
+func samePromiseAtATier(served []Route) error {
+	type at struct {
+		id   catalog.ModelID
+		tier catalog.Tier
+	}
+	first := map[at]Route{}
+	for _, rt := range served {
+		c, chats := ChatOf(rt.Serves)
+		if !chats || rt.Tier.Sealed() {
+			continue
+		}
+		f, seen := first[at{rt.ID, rt.Tier}]
+		if !seen {
+			first[at{rt.ID, rt.Tier}] = rt
+			continue
+		}
+		fc, _ := ChatOf(f.Serves)
+		var differs string
+		switch {
+		case rt.Retention != f.Retention:
+			differs = "retention, which GET /v1/models shows"
+		case c.DefaultReasoningEffort != fc.DefaultReasoningEffort:
+			differs = "default_reasoning_effort, the effort a request that names none reasons at"
+		default:
+			continue
+		}
+		return fmt.Errorf("endpoints %q and %q serve model %q at tier %s and differ in %s; a chat fails over between them, so give them the same value", f.Endpoint, rt.Endpoint, rt.ID, rt.Tier, differs)
+	}
+	return nil
+}
+
+func sameIncludedWindow(a, b int, windows []int) bool {
+	for _, w := range windows {
+		if min(w, a) != min(w, b) {
+			return false
+		}
+	}
+	return true
 }

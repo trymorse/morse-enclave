@@ -45,6 +45,8 @@ func recordingVendor(t *testing.T) (*httptest.Server, func() []sent) {
 	}
 }
 
+var identityFields = []string{"user", "metadata", "safety_identifier", "session_id", "prompt_cache_key"}
+
 func TestNoChatProviderSendsAVendorStoreTrueOrReachesAResponsesEndpointButOpenAIResponses(t *testing.T) {
 	type vendor struct {
 		name     string
@@ -62,7 +64,7 @@ func TestNoChatProviderSendsAVendorStoreTrueOrReachesAResponsesEndpointButOpenAI
 			if err != nil {
 				t.Fatalf("%s: %v", v.name, err)
 			}
-			req, err := chat.ParseRequest(strings.NewReader(`{"model":"m","stream":` + strconv.FormatBool(stream) + `,"max_tokens":64,"store":true,"messages":[{"role":"user","content":"hi"}]}`))
+			req, err := chat.ParseRequest(strings.NewReader(`{"model":"m","stream":` + strconv.FormatBool(stream) + `,"max_tokens":64,"store":true,"user":"u-1","metadata":{"a":"b"},"safety_identifier":"s","session_id":"c","prompt_cache_key":"k","messages":[{"role":"user","content":"hi"}]}`))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -79,6 +81,11 @@ func TestNoChatProviderSendsAVendorStoreTrueOrReachesAResponsesEndpointButOpenAI
 			for _, s := range got {
 				responses := strings.HasSuffix(s.path, "/responses")
 				store, carried := s.body["store"]
+				for _, name := range identityFields {
+					if _, has := s.body[name]; has {
+						t.Errorf("%s stream=%t: posted %s to %s", v.name, stream, name, s.path)
+					}
+				}
 				switch {
 				case responses && v.upstream != routes.Vendor{Provider: routes.ProviderOpenAIResponses}:
 					t.Errorf("%s stream=%t: posted to %s, a Responses endpoint that stores by default", v.name, stream, s.path)

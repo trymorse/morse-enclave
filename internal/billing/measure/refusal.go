@@ -20,6 +20,7 @@ const (
 	RefusedUpstreamBusy
 	RefusedUpstreamError
 	RefusedUpstreamUnavailable
+	RefusedUpstreamRefused
 	RefusedUnattested
 	RefusedRetention
 	RefusedOther
@@ -35,6 +36,7 @@ var refusalCodeNames = enum.Names[RefusalCode]{
 	RefusedUpstreamBusy:        "upstream_busy",
 	RefusedUpstreamError:       "upstream_error",
 	RefusedUpstreamUnavailable: "upstream_unavailable",
+	RefusedUpstreamRefused:     "upstream_refused",
 	RefusedUnattested:          "upstream_unattested",
 	RefusedRetention:           "upstream_retention",
 	RefusedOther:               "other",
