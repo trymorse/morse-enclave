@@ -32,12 +32,21 @@ func (w *InProcess) vendor(v Vendor) (chatRoute, error) {
 	return chatRoute{}, errNoSuchVendor
 }
 
-func (w *InProcess) Attest(ctx context.Context, v Vendor, nonce string) (chat.Attestation, error) {
+// v3Attester is a route that also serves Tinfoil's v3 document, which binds the nonce.
+type v3Attester interface {
+	AttestV3(ctx context.Context, nonce string) (chat.Attestation, error)
+}
+
+func (w *InProcess) Attest(ctx context.Context, v Vendor, nonce string, v3 bool) (chat.Attestation, error) {
 	by, err := w.attesterOf(v)
 	if err != nil {
 		return chat.Attestation{}, err
 	}
-	att, err := by.Attest(ctx, nonce)
+	attest := by.Attest
+	if bound, ok := by.(v3Attester); ok && v3 {
+		attest = bound.AttestV3
+	}
+	att, err := attest(ctx, nonce)
 	return att, evidenceRefusal(err)
 }
 

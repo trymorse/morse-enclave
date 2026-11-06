@@ -1,1 +1,0 @@
-derive.json and response-decryption.json are Tinfoil's EHBP test vectors (github.com/tinfoilsh/encrypted-http-body-protocol, test-vectors/, MIT License, Copyright (c) 2025 Tinfoil, Inc.). live-exchange.json is a reply recorded from inference.tinfoil.sh.

@@ -12,7 +12,7 @@ import (
 
 // RouterPins name what may serve Tinfoil's routes: the router hosts, each router release by the
 // measurement its Sigstore provenance publishes (checked with gh attestation verify before it is
-// pinned, as the add-model skill says), and the platform a release must boot on.
+// pinned), and the platform a release must boot on.
 type RouterPins struct {
 	Hosts    []string        `json:"hosts"`
 	Releases []RouterRelease `json:"releases"`

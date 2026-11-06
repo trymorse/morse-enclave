@@ -10,6 +10,7 @@ import (
 	"slices"
 	"time"
 
+	"morse/backend/internal/affinity"
 	"morse/backend/internal/apierr"
 	"morse/backend/internal/billing/measure"
 	"morse/backend/internal/catalog"
@@ -20,25 +21,38 @@ import (
 	"morse/backend/internal/plans/limits"
 	"morse/backend/internal/tokenizer"
 	"morse/backend/internal/upstream"
+
+	"golang.org/x/text/unicode/norm"
 )
+
+// HeaderTier names the tier of the endpoint that serves a chat reply. Failover moves a request only before its first
+// byte, so the tier of the attempt that begins the reply is final.
+const HeaderTier = "X-Tier"
 
 type chatRoute struct {
 	catalog.ChatTerms
-	Upstream          ChatUpstream
-	Reasoning         chat.Reasoning
-	ReasoningUncapped bool
-	Counter           *tokenizer.Tokenizer
-	model             catalog.ModelID
-	endpoint          catalog.EndpointID
-	attester          string
-	speaks            *chat.Scheme
-	tier              catalog.Tier
-	order             int
-	onBehalf          bool
+	Upstream             ChatUpstream
+	Reasoning            chat.Reasoning
+	ReasoningUncapped    bool
+	SilentWhileReasoning bool
+	Counter              *tokenizer.Tokenizer
+	model                catalog.ModelID
+	endpoint             catalog.EndpointID
+	attester             string
+	speaks               *chat.Scheme
+	tier                 catalog.Tier
+	retention            catalog.Retention
+	order                int
+	aliased              bool
+	// onBehalf marks a route derived from a sealed one for a key's plaintext chat, which the relay re-derives. seals marks
+	// a declared on-behalf endpoint, a route of its own whose plaintext chat the worker seals to its sealed endpoint's
+	// vendor.
+	onBehalf bool
+	seals    bool
 }
 
 func (c Chat) route(model catalog.ModelID, vendor Model) chatRoute {
-	return chatRoute{ChatTerms: c.ChatTerms, Upstream: c.Upstream, Reasoning: c.Reasoning, ReasoningUncapped: c.ReasoningUncapped, Counter: c.Counter, model: model, endpoint: vendor.Endpoint, attester: vendor.Attester, speaks: c.Upstream.Speaks(), tier: vendor.Tier, order: vendor.Order}
+	return chatRoute{ChatTerms: c.ChatTerms, Upstream: c.Upstream, Reasoning: c.Reasoning, ReasoningUncapped: c.ReasoningUncapped, SilentWhileReasoning: c.SilentWhileReasoning, Counter: c.Counter, model: model, endpoint: vendor.Endpoint, attester: vendor.Attester, speaks: c.Upstream.Speaks(), tier: vendor.Tier, retention: vendor.Retention, order: vendor.Order}
 }
 
 func vendorFor(vendors []chatRoute, p protocol) chatRoute {
@@ -112,9 +126,17 @@ func (w *InProcess) openChat(o Opening, compaction bool) (Admission, error) {
 	if !known {
 		return nil, apierr.ErrModelNotFound
 	}
-	provider, _ := req.Field("provider")
 	ask := askOf(p, o.KeyCaller, req)
-	routes, err := name.reach(p, ask, compaction, namesFloor(provider))
+	var digest affinity.Digest
+	if o.inTheClear(ask) {
+		digest = affinity.DigestOf(req)
+	}
+	var want providerAsk
+	var wantErr error
+	if p.scheme == nil {
+		want, wantErr = floorOf(req)
+	}
+	routes, err := name.reach(p, ask, compaction, want, o.KeyFloor)
 	if err != nil && ask == askLooksSealed {
 		return nil, hintedHexOnly(err)
 	}
@@ -122,11 +144,16 @@ func (w *InProcess) openChat(o Opening, compaction bool) (Admission, error) {
 		return nil, err
 	}
 	if p.scheme == nil {
-		floor, err := floorOf(req)
-		if err != nil {
+		if wantErr != nil {
+			return nil, wantErr
+		}
+		if routes, err = name.atFloor(routes, want.floor); err != nil {
 			return nil, err
 		}
-		if routes, err = name.atFloor(routes, floor); err != nil {
+		if routes, err = withoutUnsealable(routes, req); err != nil {
+			return nil, err
+		}
+		if routes, err = want.narrow(name, routes, o.KeyFloor); err != nil {
 			return nil, err
 		}
 	}
@@ -157,10 +184,18 @@ func (w *InProcess) openChat(o Opening, compaction bool) (Admission, error) {
 		return nil, err
 	}
 	return ChatAdmission{
-		admitted: admitted{w.keep(o, oc)}, Model: name.model, Candidates: endpointsOf(routes), Sealable: name.sealable(), OnBehalf: route.onBehalf,
-		PromptSize: oc.call.Size(), PromptBytes: limits.KibibytesCovering(oc.promptBytes), OutputAsked: oc.asked,
+		admitted: admitted{w.keep(o, oc)}, Model: name.model, Candidates: endpointsOf(routes), Affinity: digest, MaxPrice: want.maxPrice, Sealable: name.sealable(), OnBehalf: route.onBehalf,
+		PromptSize: oc.call.Size(), PromptBytes: limits.KibibytesCovering(oc.promptBytes), TextMessages: textMessages(oc.call), OutputAsked: oc.asked,
 		Stream: req.Stream, Compaction: compaction, Character: oc.character,
 	}, nil
+}
+
+func textMessages(c chat.Call) int {
+	msgs, err := c.Messages()
+	if _, text := c.PromptTexts(); !text || err != nil || !norm.NFC.IsNormal(c.Verbatim()) {
+		return 0
+	}
+	return len(msgs)
 }
 
 // requestOf reads a request from its body, or, when its scheme seals the body whole, from its clear headers:
@@ -236,9 +271,10 @@ func (o *openedChat) run(_ context.Context, w *InProcess, h Handle, g Grant, rep
 	for i, r := range granted {
 		last := i == len(granted)-1
 		a = o.attempt(r, cg, last)
+		rw.Header().Set(HeaderTier, r.tier.String())
 		got, e, m = o.try(ctx, w, a, cg, rw)
 		retries, hedges = retries+m.Health.Retries, hedges+m.Health.Hedges
-		if last || rw.status != 0 || !m.Health.Outcome.FailsOver() {
+		if last || rw.status != 0 || !m.Health.Outcome.FailsOver() || brokeSeal(got.callErr) {
 			break
 		}
 		failedOver = append(failedOver, Try{Endpoint: r.endpoint, Health: m.Health})
@@ -246,10 +282,13 @@ func (o *openedChat) run(_ context.Context, w *InProcess, h Handle, g Grant, rep
 	}
 	m.FailedOver, m.Health.Retries, m.Health.Hedges = failedOver, retries, hedges
 	if got.callErr != nil && rw.status == 0 {
+		rw.Header().Del(HeaderTier)
 		refuse(ctx, rw, got.callErr)
 	}
 	p := a.route.Upstream.count(a, e, got)
 	switch {
+	case got.unproven != nil && e.Outcome == measure.Completed:
+		m.Follow, m.Counted = FollowCount, w.startProof(h, e, *got.unproven)
 	case p != nil && p.count != nil && e.NeedsCount():
 		m.Follow, m.Counted = FollowCount, w.startCount(h, p, cg.Figures)
 	case p != nil && cg.Sample && e.Outcome == measure.Completed:
@@ -271,7 +310,7 @@ func (o *openedChat) try(ctx context.Context, w *InProcess, a attempt, g ChatGra
 	e := got.evidence(end, a, g)
 	m := Measured{Measurement: e.Measure(), Cut: end.cut(), Served: got.callErr == nil, Refusal: end.refusal(got.callErr), Endpoint: a.route.endpoint, VendorCost: got.reported.VendorCost}
 	m.Health = rw.observed(ctx, got.callErr, false, opened, returned)
-	m.Health.Retries, m.Health.Hedges = got.attempts.Retries, got.attempts.Hedges
+	m.Health.Retries, m.Health.Hedges, m.Health.OutputTokens = got.attempts.Retries, got.attempts.Hedges, a.route.tokensAfterFirstByte(got.reported)
 	if refused, ok := errors.AsType[upstream.Refused](got.callErr); ok && vendorFaults[m.Health.Outcome] {
 		w.reports.VendorRefused(a.call.Model, refused.Status)
 	}
@@ -292,6 +331,23 @@ var (
 	errLaunchSystemSealed      = apierr.Invalid(http.StatusBadRequest, "character_prompt_sent", "With X-Character-Content the proxy writes the sealed system message of an e2ee chat, so send the chat's own additions as a user message.")
 	errCharacterMessageTooLong = apierr.Invalid(http.StatusBadRequest, "message_too_long", fmt.Sprintf("A character chat's latest user message may be at most %d tokens, counted at %d bytes of text a token: %d bytes. Send a shorter message.", limits.CharacterMessageTokens, limits.IncludedWindowBytesPerToken, limits.CharacterMessageBytes))
 )
+
+// withoutUnsealable drops the on-behalf endpoints from a request they cannot carry through their seal, and refuses it only
+// when no endpoint is left.
+func withoutUnsealable(routes []chatRoute, req *chat.Request) ([]chatRoute, error) {
+	if !slices.ContainsFunc(routes, func(r chatRoute) bool { return r.seals }) {
+		return routes, nil
+	}
+	err := openaicompat.Unsealable(req)
+	if err == nil {
+		return routes, nil
+	}
+	kept := slices.DeleteFunc(slices.Clone(routes), func(r chatRoute) bool { return r.seals })
+	if len(kept) == 0 {
+		return nil, unsealableRefusal(err)
+	}
+	return kept, nil
+}
 
 func unsealableRefusal(err error) error {
 	unsealable, ok := errors.AsType[*openaicompat.UnsealableField](err)
@@ -420,6 +476,7 @@ type served struct {
 	writeErr, callErr error
 	thought           thought
 	transcript        *chat.Transcript
+	unproven          *unproven
 }
 
 func (s served) evidence(end ending, a attempt, g ChatGrant) measure.Evidence {
@@ -431,6 +488,7 @@ func (s served) evidence(end ending, a attempt, g ChatGrant) measure.Evidence {
 	return measure.Evidence{
 		Outcome:            end.outcome(),
 		Cut:                end.cut(),
+		Unsent:             errors.Is(s.callErr, upstream.ErrNotSent),
 		Upstream:           s.reported,
 		PromptBytes:        c.Size() - attachmentBytes,
 		Attachments:        attachments,
@@ -448,6 +506,14 @@ func (s served) evidence(end ending, a attempt, g ChatGrant) measure.Evidence {
 		Thinking:           measure.ThinkingTime{Duration: s.thought.duration, Rate: g.Figures.ThinkingRate},
 		ReasonedAgain:      s.thought.interleaved,
 	}
+}
+
+func (r chatRoute) tokensAfterFirstByte(u chat.Usage) int {
+	u = u.Normalized()
+	if r.SilentWhileReasoning {
+		return u.CompletionTokens - u.ReasoningTokens
+	}
+	return u.CompletionTokens
 }
 
 type thought struct {

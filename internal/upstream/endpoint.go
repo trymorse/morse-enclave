@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"slices"
+	"strings"
 
 	"morse/backend/internal/apierr"
 	"morse/backend/internal/capped"
@@ -194,10 +195,17 @@ func (e Endpoint) send(ctx context.Context, r Request) (*http.Response, error) {
 	if h == nil {
 		h = http.Header{}
 	}
+	for name := range e.Auth {
+		for have := range h {
+			if strings.EqualFold(have, name) {
+				delete(h, have)
+			}
+		}
+	}
 	maps.Copy(h, e.Auth)
 	req, err := http.NewRequestWithContext(ctx, r.Method, e.BaseURL+r.Path, nil)
 	if err != nil {
-		return nil, ErrUnreachable
+		return nil, notSent(ErrUnreachable)
 	}
 	if r.Body != nil || r.Parts != nil {
 		if h.Get("Content-Type") == "" {

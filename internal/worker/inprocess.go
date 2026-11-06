@@ -30,6 +30,7 @@ type InProcess struct {
 	now            func() time.Time
 	keepaliveEvery time.Duration
 	videoSubmit    time.Duration
+	proofBudget    time.Duration
 	counters       counters
 	sealing        sealedState
 	mu             sync.Mutex
@@ -68,6 +69,7 @@ type Config struct {
 	Sealing       Sealing
 	Keepalive     time.Duration
 	VideoSubmit   time.Duration
+	ProofBudget   time.Duration
 }
 
 func NewInProcess(cfg Config) (*InProcess, error) {
@@ -81,7 +83,7 @@ func NewInProcess(cfg Config) (*InProcess, error) {
 		searches: map[string]web.Searcher{}, fetches: map[string]web.Fetcher{}, researchers: map[string]research.Researcher{}, transcribers: map[string]transcriber{},
 		endpoints: map[string]catalog.EndpointID{},
 		lookup:    cfg.Lookup, reports: cfg.Reports,
-		now: cfg.Now, keepaliveEvery: cmp.Or(cfg.Keepalive, keepalive), videoSubmit: cmp.Or(cfg.VideoSubmit, videoSubmitTimeout), opened: map[Handle]*entry{},
+		now: cfg.Now, keepaliveEvery: cmp.Or(cfg.Keepalive, keepalive), videoSubmit: cmp.Or(cfg.VideoSubmit, videoSubmitTimeout), proofBudget: cmp.Or(cfg.ProofBudget, proofBudget), opened: map[Handle]*entry{},
 	}
 	if w.now == nil {
 		w.now = time.Now
@@ -90,33 +92,44 @@ func NewInProcess(cfg Config) (*InProcess, error) {
 	if w.reports == nil {
 		w.reports = NopReporter{}
 	}
+	named := make([]catalog.Named, 0, len(cfg.Models))
 	for name, m := range cfg.Models {
-		for _, vendor := range append([]Model{m}, m.Fallbacks...) {
-			if _, chats := vendor.Serves.(Chat); chats {
-				continue
-			}
-			w.endpoints[name] = vendor.Endpoint
-			switch s := vendor.Serves.(type) {
-			case Images:
-				w.images[name] = s.ImageGenerator
-			case Videos:
-				w.videos[name] = s.VideoGenerator
-			case Search:
-				w.searches[name] = s.Searcher
-			case Fetch:
-				w.fetches[name] = s.Fetcher
-			case Research:
-				w.researchers[name] = s.Researcher
-			case Transcription:
-				w.transcribers[name] = transcriber{Transcription: s, attester: vendor.Attester}
-			}
-		}
+		w.indexNonChat(name, m)
+		named = append(named, catalog.Named{Name: name, Model: m.ID, Tier: m.Tier, Order: m.Order})
+	}
+	for id, name := range catalog.IDNames(named) {
+		w.indexNonChat(id, cfg.Models[name])
 	}
 	w.counters.init(cfg.CountingSlots)
 	return w, nil
 }
 
+func (w *InProcess) indexNonChat(name string, m Model) {
+	for _, vendor := range append([]Model{m}, m.Fallbacks...) {
+		if _, chats := vendor.Serves.(Chat); chats {
+			continue
+		}
+		w.endpoints[name] = vendor.Endpoint
+		switch s := vendor.Serves.(type) {
+		case Images:
+			w.images[name] = s.ImageGenerator
+		case Videos:
+			w.videos[name] = s.VideoGenerator
+		case Search:
+			w.searches[name] = s.Searcher
+		case Fetch:
+			w.fetches[name] = s.Fetcher
+		case Research:
+			w.researchers[name] = s.Researcher
+		case Transcription:
+			w.transcribers[name] = transcriber{Transcription: s, attester: vendor.Attester}
+		}
+	}
+}
+
 const videoSubmitTimeout = 2 * time.Minute
+
+const proofBudget = 6 * time.Second
 
 func (w *InProcess) Poll(ctx context.Context, route, vendorID string) (jobs.Poll, error) {
 	if videos, known := w.videos[route]; known {

@@ -67,6 +67,7 @@ type Replied struct {
 	// for a relay that can't read them (a reply sealed whole). The bill falls back on it without a usage.
 	Tokens        int
 	UnknownFields []string
+	Prove         func(context.Context) error
 }
 
 type Relayer interface {

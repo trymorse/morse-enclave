@@ -80,6 +80,11 @@ func (o *Outcome) UnmarshalText(text []byte) error { return outcomeNames.Unmarsh
 
 func Outcomes() []Outcome { return outcomeNames.Values() }
 
+const (
+	MinDecodeTokens = 200
+	MaxDecodeRate   = 2000
+)
+
 type Observation struct {
 	Path         Path
 	Outcome      Outcome
@@ -144,9 +149,9 @@ func (m *Meter) Observe(o Observation) {
 			measured.hist.Record(measured.took)
 		}
 	}
-	if o.OutputTokens > 0 {
+	if decode := o.Duration - o.TTFT; o.OutputTokens >= MinDecodeTokens && o.TTFT > 0 && !burst(o.OutputTokens, decode) {
 		s.outputTokens.Add(uint64(o.OutputTokens))
-		s.generationMicros.Add(uint64(o.Duration.Microseconds()))
+		s.generationMicros.Add(uint64(decode.Microseconds()))
 	}
 	if o.Retries > 0 {
 		s.retries.Add(uint64(o.Retries))
@@ -154,6 +159,10 @@ func (m *Meter) Observe(o Observation) {
 	if o.Hedges > 0 {
 		s.hedges.Add(uint64(o.Hedges))
 	}
+}
+
+func burst(tokens int, decode time.Duration) bool {
+	return decode < time.Duration(tokens)*time.Second/MaxDecodeRate
 }
 
 type Row struct {

@@ -44,9 +44,9 @@ var byCode = map[string]Outcome{
 
 var breaksMidstream = map[Outcome]bool{UpstreamBusy: true, UpstreamError: true, UpstreamUnavailable: true, UpstreamRefused: true}
 
-var failsOver = map[Outcome]bool{UpstreamBusy: true, UpstreamError: true, Unreachable: true, UpstreamUnavailable: true}
+var failsOver = map[Outcome]bool{UpstreamBusy: true, UpstreamError: true, Unreachable: true, UpstreamUnavailable: true, Unattested: true}
 
-var tripsBreaker = map[Outcome]bool{UpstreamBusy: true, UpstreamError: true, Unreachable: true, UpstreamUnavailable: true}
+var tripsBreaker = map[Outcome]bool{UpstreamBusy: true, UpstreamError: true, Unreachable: true, UpstreamUnavailable: true, Unattested: true}
 
 func (o Outcome) FailsOver() bool { return failsOver[o] }
 

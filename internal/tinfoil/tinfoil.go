@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"slices"
 	"sync"
 
 	"morse/backend/internal/attestation"
@@ -52,7 +53,27 @@ func (g Gateway) Bundle(ctx context.Context) ([]byte, error) {
 }
 
 func (g Gateway) object(ctx context.Context, path string, into any) error {
-	raw, err := g.router.Object(ctx, path, maxWellKnown)
+	return object(ctx, g.router, path, into)
+}
+
+func nonced(ctx context.Context, router upstream.Endpoint, host, nonce string) ([]byte, error) {
+	var d attestation.TinfoilNonced
+	if err := object(ctx, router, attestationPath+"?nonce="+nonce, &d); err != nil {
+		return nil, err
+	}
+	if d.Format != attestation.TinfoilNoncedFormat || d.Challenge.Nonce != nonce {
+		return nil, fmt.Errorf("%w: the router answered format %q for nonce %q", attestation.ErrTinfoilNonced, d.Format, d.Challenge.Nonce)
+	}
+	d.Host = host
+	d.Collateral = slices.DeleteFunc(d.Collateral, func(c attestation.TinfoilCollateral) bool { return !c.AMDCollateral() })
+	if _, err := d.VCEK(); err != nil {
+		return nil, err
+	}
+	return json.Marshal(d)
+}
+
+func object(ctx context.Context, router upstream.Endpoint, path string, into any) error {
+	raw, err := router.Object(ctx, path, maxWellKnown)
 	if err != nil {
 		return fmt.Errorf("tinfoil: %s: %w", path, err)
 	}

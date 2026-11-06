@@ -16,6 +16,7 @@ type common struct {
 	UpstreamModel string       `json:"upstream_model"`
 	APIKeyEnv     string       `json:"api_key_env"`
 	Provider      string       `json:"provider"`
+	ProviderName  string       `json:"provider_name"`
 	Label         string       `json:"label"`
 	OwnedBy       string       `json:"owned_by"`
 	Lab           string       `json:"lab"`
@@ -25,6 +26,9 @@ type common struct {
 	Included      *Included    `json:"included"`
 	RequiresPlan  string       `json:"requires_plan"`
 	AppOnly       bool         `json:"app_only"`
+	RebateShare   *int64       `json:"rebate_share_bps"`
+	// OnBehalfOf is set by Flatten on an on-behalf endpoint's route, which it builds from the sealed endpoint it names.
+	OnBehalfOf catalog.EndpointID `json:"on_behalf_of"`
 }
 
 type marked struct {
@@ -56,15 +60,17 @@ type chatRoute struct {
 	Tokenizer              string      `json:"tokenizer"`
 	OpenRouterID           string      `json:"openrouter_id"`
 	HidesReasoning         bool        `json:"hides_reasoning"`
+	AnswersInReasoning     bool        `json:"answers_in_reasoning"`
 	HiddenReasoningTPS     int         `json:"hidden_reasoning_tps"`
 	DecodeMaxTPS           int         `json:"decode_max_tps"`
 	Fallbacks              []fallback  `json:"fallbacks"`
 }
 
 type fallback struct {
-	Attester  string `json:"attester"`
-	BaseURL   string `json:"base_url"`
-	APIKeyEnv string `json:"api_key_env"`
+	Attester     string `json:"attester"`
+	BaseURL      string `json:"base_url"`
+	APIKeyEnv    string `json:"api_key_env"`
+	ProviderName string `json:"provider_name"`
 }
 
 type imageRoute struct {

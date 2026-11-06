@@ -53,9 +53,14 @@ type outputConfig struct {
 }
 
 type tool struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description,omitempty"`
-	InputSchema json.RawMessage `json:"input_schema"`
+	Name         string          `json:"name"`
+	Description  string          `json:"description,omitempty"`
+	InputSchema  json.RawMessage `json:"input_schema"`
+	CacheControl *cacheControl   `json:"cache_control,omitempty"`
+}
+
+type cacheControl struct {
+	Type string `json:"type"`
 }
 
 type toolChoice struct {
@@ -77,13 +82,15 @@ func (toolUseBlock) block()    {}
 func (toolResultBlock) block() {}
 
 type textBlock struct {
-	Type string `json:"type"`
-	Text string `json:"text"`
+	Type         string        `json:"type"`
+	Text         string        `json:"text"`
+	CacheControl *cacheControl `json:"cache_control,omitempty"`
 }
 
 type imageBlock struct {
-	Type   string      `json:"type"`
-	Source imageSource `json:"source"`
+	Type         string        `json:"type"`
+	Source       imageSource   `json:"source"`
+	CacheControl *cacheControl `json:"cache_control,omitempty"`
 }
 
 type imageSource struct {
@@ -93,16 +100,18 @@ type imageSource struct {
 }
 
 type toolUseBlock struct {
-	Type  string          `json:"type"`
-	ID    string          `json:"id"`
-	Name  string          `json:"name"`
-	Input json.RawMessage `json:"input"`
+	Type         string          `json:"type"`
+	ID           string          `json:"id"`
+	Name         string          `json:"name"`
+	Input        json.RawMessage `json:"input"`
+	CacheControl *cacheControl   `json:"cache_control,omitempty"`
 }
 
 type toolResultBlock struct {
-	Type      string      `json:"type"`
-	ToolUseID string      `json:"tool_use_id"`
-	Content   []textBlock `json:"content,omitempty"`
+	Type         string        `json:"type"`
+	ToolUseID    string        `json:"tool_use_id"`
+	Content      []textBlock   `json:"content,omitempty"`
+	CacheControl *cacheControl `json:"cache_control,omitempty"`
 }
 
 type usageWire struct {
@@ -250,6 +259,7 @@ func (t translator) request(conv completions.Conversation) request {
 		}
 		out.Messages = append(out.Messages, message)
 	}
+	out.cacheRepeatedPrefix(conv.RequestBytes)
 	return out
 }
 

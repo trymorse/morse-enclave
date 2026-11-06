@@ -52,10 +52,16 @@ func (p Price) Validate() error {
 	return long.Price.Validate()
 }
 
-func (p Price) Cost(u chat.Usage) Micros {
-	if long := p.LongContext; long != nil && u.PromptTokens >= long.FromPromptTokens {
-		p = long.Price
+// At is the price a chat of promptTokens bills at: the long-context price once the prompt reaches its threshold.
+func (p Price) At(promptTokens int) Price {
+	if long := p.LongContext; long != nil && promptTokens >= long.FromPromptTokens {
+		return long.Price
 	}
+	return p
+}
+
+func (p Price) Cost(u chat.Usage) Micros {
+	p = p.At(u.PromptTokens)
 	prompt := billableTokens(u.PromptTokens)
 	cached := min(billableTokens(u.CachedPromptTokens), prompt)
 	written := min(billableTokens(u.CacheWritePromptTokens), prompt-cached)
@@ -77,9 +83,7 @@ func (p Price) Hold(promptTokens, completionBound int) Micros {
 // OutputWithin is the most completion tokens whose Hold with promptTokens stays within micros, and zero when
 // micros does not cover the prompt and one token.
 func (p Price) OutputWithin(micros Micros, promptTokens int) int {
-	if long := p.LongContext; long != nil && promptTokens >= long.FromPromptTokens {
-		p = long.Price
-	}
+	p = p.At(promptTokens)
 	left := int64(min(max(micros, 0), math.MaxInt64/tokensPerPriceUnit))*tokensPerPriceUnit -
 		billableTokens(promptTokens)*int64(billableRate(p.CacheWritePromptPerMTok))
 	rate := int64(billableRate(p.CompletionPerMTok))
@@ -95,3 +99,118 @@ func (p Price) OutputWithin(micros Micros, promptTokens int) int {
 func billableTokens(n int) int64 { return int64(min(max(n, 0), maxBillableTokens)) }
 
 func billableRate(r Micros) Micros { return min(max(r, 0), MaxMicrosPerMTok) }
+
+// Dearest is the price that is at least a and b at every prompt size. Its long-context price starts at the lowest
+// from_prompt_tokens either sets, and each rate takes the larger of the two prices' rates there.
+func Dearest(a, b Price) Price {
+	base := maxRates(a, b)
+	from := 0
+	for _, p := range []Price{a, b} {
+		if long := p.LongContext; long != nil && (from == 0 || long.FromPromptTokens < from) {
+			from = long.FromPromptTokens
+		}
+	}
+	if from == 0 {
+		return base
+	}
+	base.LongContext = &LongContext{FromPromptTokens: from, Price: maxRates(a.beyondAll(), b.beyondAll())}
+	return base
+}
+
+func maxRates(a, b Price) Price {
+	return Price{
+		PromptPerMTok:           max(a.PromptPerMTok, b.PromptPerMTok),
+		CachedPromptPerMTok:     max(a.CachedPromptPerMTok, b.CachedPromptPerMTok),
+		CacheWritePromptPerMTok: max(a.CacheWritePromptPerMTok, b.CacheWritePromptPerMTok),
+		CompletionPerMTok:       max(a.CompletionPerMTok, b.CompletionPerMTok),
+	}
+}
+
+// beyondAll is the dearest rates the price charges at any prompt size: its long-context rates if it has them.
+func (p Price) beyondAll() Price {
+	if p.LongContext != nil {
+		return p.LongContext.Price
+	}
+	return p.at(0)
+}
+
+// at is the price's rates for a prompt of that many tokens.
+func (p Price) at(promptTokens int) Price {
+	if long := p.LongContext; long != nil && promptTokens >= long.FromPromptTokens {
+		return long.Price
+	}
+	return Price{PromptPerMTok: p.PromptPerMTok, CachedPromptPerMTok: p.CachedPromptPerMTok, CacheWritePromptPerMTok: p.CacheWritePromptPerMTok, CompletionPerMTok: p.CompletionPerMTok}
+}
+
+var ReferenceTurn = chat.Usage{PromptTokens: 100_000, CachedPromptTokens: 95_000, CompletionTokens: 1_000}
+
+var cacheWrittenTurn = chat.Usage{PromptTokens: 100_000, CacheWritePromptTokens: 95_000, CompletionTokens: 1_000}
+
+func (p Price) ReferenceCost() Micros { return p.Cost(ReferenceTurn) }
+
+// promptSizes are the prompt sizes at which p or retail changes price: zero and each long-context threshold.
+func promptSizes(p, retail Price) []int {
+	sizes := []int{0}
+	for _, q := range []Price{p, retail} {
+		if q.LongContext != nil {
+			sizes = append(sizes, q.LongContext.FromPromptTokens)
+		}
+	}
+	return sizes
+}
+
+// ExceedsRetail says why p, a host's cost, may not be served at retail's price, or "" when it may. Its prompt and
+// completion rates must be at most retail's at every prompt size. Its cached and cache-write rates may be above
+// retail's while ReferenceTurn, cached or cache-written, costs p no more than retail charges.
+func (p Price) ExceedsRetail(retail Price) string {
+	for _, n := range promptSizes(p, retail) {
+		cost, sold := p.at(n), retail.at(n)
+		for _, rate := range []struct {
+			name       string
+			cost, sold Micros
+		}{
+			{"prompt", cost.PromptPerMTok, sold.PromptPerMTok},
+			{"completion", cost.CompletionPerMTok, sold.CompletionPerMTok},
+		} {
+			if rate.cost > rate.sold {
+				if n > 0 {
+					return fmt.Sprintf("its %s rate is above the tier's at a prompt of %d tokens", rate.name, n)
+				}
+				return fmt.Sprintf("its %s rate is above the tier's", rate.name)
+			}
+		}
+	}
+	for _, mix := range []struct {
+		name string
+		turn chat.Usage
+	}{
+		{"cached", ReferenceTurn},
+		{"cache-written", cacheWrittenTurn},
+	} {
+		if cost, sold := p.Cost(mix.turn), retail.Cost(mix.turn); cost > sold {
+			return fmt.Sprintf("a request of %d prompt tokens, %d of them %s, and %d completion tokens costs it %d micros against the tier's %d",
+				mix.turn.PromptTokens, mix.turn.CachedPromptTokens+mix.turn.CacheWritePromptTokens, mix.name, mix.turn.CompletionTokens, cost, sold)
+		}
+	}
+	return ""
+}
+
+// CacheRateAbove says which of p's cached or cache-write rates is above retail's at some prompt size, or "" when
+// neither is.
+func (p Price) CacheRateAbove(retail Price) string {
+	for _, n := range promptSizes(p, retail) {
+		cost, sold := p.at(n), retail.at(n)
+		for _, rate := range []struct {
+			name       string
+			cost, sold Micros
+		}{
+			{"cached", cost.CachedPromptPerMTok, sold.CachedPromptPerMTok},
+			{"cache-write", cost.CacheWritePromptPerMTok, sold.CacheWritePromptPerMTok},
+		} {
+			if rate.cost > rate.sold {
+				return fmt.Sprintf("its %s rate %d is above the tier's %d at a prompt of %d tokens", rate.name, rate.cost, rate.sold, n)
+			}
+		}
+	}
+	return ""
+}

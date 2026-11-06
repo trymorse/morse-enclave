@@ -12,6 +12,7 @@ import (
 
 	"morse/backend/internal/apierr"
 	"morse/backend/internal/billing/measure"
+	"morse/backend/internal/catalog"
 	"morse/backend/internal/chat"
 	"morse/backend/internal/enum"
 	"morse/backend/internal/seal"
@@ -178,6 +179,7 @@ type Served struct {
 type evidenceRequest struct {
 	Vendor
 	Nonce string `json:"nonce,omitempty"`
+	V3    bool   `json:"v3,omitempty"`
 	ID    string `json:"id,omitempty"`
 }
 
@@ -199,10 +201,16 @@ type openingWire struct {
 	Own       *chat.OwnFrame    `json:"own,omitempty"`
 	Writing   *chat.Writing     `json:"writing,omitempty"`
 	KeyCaller bool              `json:"key_caller,omitempty"`
+	KeyFloor  string            `json:"key_floor,omitempty"`
+	keyFloor  catalog.Tier
 }
 
-func setOpening(header http.Header, c chat.Cast, f Framing, keyCaller bool) {
-	raw, _ := json.Marshal(openingWire{Prompts: c.Prompts(), Rules: c.Rules(), Launch: f.Launch, Own: f.Own, Writing: f.Writing, KeyCaller: keyCaller})
+func setOpening(header http.Header, c chat.Cast, f Framing, keyCaller bool, keyFloor catalog.Tier) {
+	o := openingWire{Prompts: c.Prompts(), Rules: c.Rules(), Launch: f.Launch, Own: f.Own, Writing: f.Writing, KeyCaller: keyCaller}
+	if keyFloor.Valid() {
+		o.KeyFloor = keyFloor.String()
+	}
+	raw, _ := json.Marshal(o)
 	header.Set(headerOpening, base64.StdEncoding.EncodeToString(raw))
 }
 
@@ -212,6 +220,11 @@ func openingOf(header http.Header) (openingWire, error) {
 	if err != nil || json.Unmarshal(raw, &o) != nil || o.Launch != nil && o.Launch.ID == "" || o.Launch != nil && o.Own != nil ||
 		o.Writing != nil && slices.ContainsFunc(o.Writing.Examples, func(e chat.Example) bool { return e.ID == "" }) {
 		return openingWire{}, errors.New("worker: malformed " + headerOpening)
+	}
+	if o.KeyFloor != "" {
+		if o.keyFloor, err = catalog.ParseTier(o.KeyFloor); err != nil {
+			return openingWire{}, errors.New("worker: malformed " + headerOpening)
+		}
 	}
 	return o, nil
 }

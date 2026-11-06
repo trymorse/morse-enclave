@@ -122,12 +122,8 @@ func (p Policy) VerifyTinfoil(_ context.Context, raw []byte, host string) (Tinfo
 	if err != nil {
 		return TinfoilReport{}, err
 	}
-	now := p.now()
-	attested := &spb.Attestation{Report: report, CertificateChain: &spb.CertificateChain{VcekCert: vcek}, Product: genoa}
-	if err := verify.SnpAttestation(attested, &verify.Options{DisableCertFetching: true, Now: now, Product: genoa}); err != nil {
-		return TinfoilReport{}, fmt.Errorf("%w: %w", ErrSNPReport, err)
-	}
-	if err := refuseSNPPolicy(report.GetPolicy()); err != nil {
+	notAfter, err := p.verifySNP(report, vcek)
+	if err != nil {
 		return TinfoilReport{}, err
 	}
 	data := report.GetReportData()
@@ -135,22 +131,38 @@ func (p Policy) VerifyTinfoil(_ context.Context, raw []byte, host string) (Tinfo
 	if !bytes.Equal(data[:reportDataTLS], tls[:]) {
 		return TinfoilReport{}, fmt.Errorf("%w: REPORT_DATA %x, certificate SPKI %x", ErrTinfoilTLS, data[:reportDataTLS], tls)
 	}
+	var hpke [32]byte
+	copy(hpke[:], data[reportDataTLS:reportDataTLS+reportDataHPKE])
+	return tinfoilReport(host, report, aci.SPKI(tls), hpke, notAfter), nil
+}
+
+func (p Policy) verifySNP(report *spb.Report, vcek []byte) (notAfter time.Time, err error) {
+	attested := &spb.Attestation{Report: report, CertificateChain: &spb.CertificateChain{VcekCert: vcek}, Product: genoa}
+	if err := verify.SnpAttestation(attested, &verify.Options{DisableCertFetching: true, Now: p.now(), Product: genoa}); err != nil {
+		return time.Time{}, fmt.Errorf("%w: %w", ErrSNPReport, err)
+	}
+	if err := refuseSNPPolicy(report.GetPolicy()); err != nil {
+		return time.Time{}, err
+	}
 	vcekCert, err := x509.ParseCertificate(vcek)
 	if err != nil {
-		return TinfoilReport{}, fmt.Errorf("%w: %w", ErrTinfoilBundle, err)
+		return time.Time{}, fmt.Errorf("%w: %w", ErrTinfoilBundle, err)
 	}
-	r := TinfoilReport{
+	return vcekCert.NotAfter, nil
+}
+
+func tinfoilReport(host string, report *spb.Report, tls aci.SPKI, hpke [32]byte, notAfter time.Time) TinfoilReport {
+	return TinfoilReport{
 		Host:        host,
 		Measurement: hex.EncodeToString(report.GetMeasurement()),
-		TLS:         aci.SPKI(tls),
+		TLS:         tls,
+		HPKE:        hpke,
 		ChipID:      hex.EncodeToString(report.GetChipId()),
 		TCB:         snpTCB(report.GetReportedTcb()),
 		Policy:      report.GetPolicy(),
 		VMPL:        report.GetVmpl(),
-		Endpoint:    Endpoint[aci.SPKI]{ID: host, NotAfter: vcekCert.NotAfter, Keys: []aci.SPKI{aci.SPKI(tls)}},
+		Endpoint:    Endpoint[aci.SPKI]{ID: host, NotAfter: notAfter, Keys: []aci.SPKI{tls}},
 	}
-	copy(r.HPKE[:], data[reportDataTLS:reportDataTLS+reportDataHPKE])
-	return r, nil
 }
 
 // refuseSNPPolicy refuses a guest the host may read: one that allows debugging, or a migration agent

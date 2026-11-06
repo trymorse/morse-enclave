@@ -5,6 +5,8 @@ import (
 	"errors"
 	"sync/atomic"
 	"time"
+
+	"morse/backend/internal/upstream"
 )
 
 // A Hedge is a second, identical call to the provider, made when the first has emitted nothing by After plus the
@@ -66,7 +68,7 @@ func hedged(ctx context.Context, p Provider, c Call, emit func(Chunk) error, aft
 	first := start(1)
 	var second, won *leg
 	var usage Usage
-	var err error
+	var err, hedgeErr error
 	timer := time.NewTimer(after)
 	defer timer.Stop()
 	fire := timer.C
@@ -90,10 +92,18 @@ func hedged(ctx context.Context, p Provider, c Call, emit func(Chunk) error, aft
 			case e.leg == won, won == nil && e.leg == first:
 				usage, err = e.usage, e.err
 				live--
+			case won == nil && e.leg == second:
+				hedgeErr = e.err
+				live--
 			default:
 				live--
 			}
 		}
+	}
+	// With no winner the first call's error stands, unless it never reached the host and the hedge did: a chat a host
+	// received is billed as received.
+	if won == nil && errors.Is(err, upstream.ErrNotSent) && hedgeErr != nil && !errors.Is(hedgeErr, upstream.ErrNotSent) {
+		err = hedgeErr
 	}
 	return usage, second != nil, err
 }

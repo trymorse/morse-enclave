@@ -1,7 +1,9 @@
 package routes
 
 import (
+	"bytes"
 	"cmp"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -22,15 +24,9 @@ func (r chatRoute) serves(defaultMarkup money.Markup) (Serves, error) {
 }
 
 func (r chatRoute) chat(defaultMarkup money.Markup) (Chat, error) {
-	price, err := r.Price.price("price")
+	price, err := r.Price.parse("price")
 	if err != nil {
 		return Chat{}, err
-	}
-	if r.Price.FromPromptTokens != 0 {
-		return Chat{}, errors.New("sets from_prompt_tokens outside price.long_context")
-	}
-	if err := price.Validate(); err != nil {
-		return Chat{}, fmt.Errorf("has an invalid price: %w", err)
 	}
 	markup, err := r.markup(defaultMarkup)
 	if err != nil {
@@ -74,7 +70,7 @@ func (r chatRoute) chat(defaultMarkup money.Markup) (Chat, error) {
 		},
 		Price: price, Markup: markup, DecodeMaxTPS: r.DecodeMaxTPS,
 		Tokenizer: r.Tokenizer, HiddenReasoningTPS: r.HiddenReasoningTPS,
-		OpenRouterID: cmp.Or(r.OpenRouterID, r.UpstreamModel),
+		OpenRouterID: cmp.Or(r.OpenRouterID, r.UpstreamModel), AnswersInReasoning: r.AnswersInReasoning,
 	}, nil
 }
 
@@ -95,6 +91,53 @@ func (r chatRoute) compactAt() (int, error) {
 		return 0, fmt.Errorf("needs a compact_at_tokens between 1 and %d, so a reply and the compaction call still fit its context_tokens %d", threshold, r.ContextTokens)
 	}
 	return r.CompactAtTokens, nil
+}
+
+// ParsePrice parses a token-rate object as routes.json writes a tier's price: prompt, cached, and completion rates per
+// million tokens, a cache-write rate that defaults to the prompt rate, and an optional long_context with its
+// from_prompt_tokens. field names the object in errors.
+func ParsePrice(raw json.RawMessage, field string) (money.Price, error) {
+	var tp *tokenPrice
+	if err := decodeStrict(raw, &tp); err != nil {
+		return money.Price{}, fmt.Errorf("%s: %w", field, err)
+	}
+	return tp.parse(field)
+}
+
+// ParseMicrosPerCall parses {"micros_per_call": n} as routes.json writes a per-call price, from 1 to
+// money.MaxMicrosPerUnit. field names the object in errors.
+func ParseMicrosPerCall(raw json.RawMessage, field string) (money.Micros, error) {
+	var cp *callPrice
+	if err := decodeStrict(raw, &cp); err != nil {
+		return 0, fmt.Errorf("%s: %w", field, err)
+	}
+	if cp == nil || cp.MicrosPerCall == nil {
+		return 0, fmt.Errorf("needs %s.micros_per_call", field)
+	}
+	return cp.micros(field)
+}
+
+func decodeStrict(raw json.RawMessage, into any) error {
+	if len(raw) == 0 {
+		return nil
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	return dec.Decode(into)
+}
+
+func (tp *tokenPrice) parse(field string) (money.Price, error) {
+	p, err := tp.price(field)
+	if err != nil {
+		return money.Price{}, err
+	}
+	if tp.FromPromptTokens != 0 {
+		return money.Price{}, fmt.Errorf("sets from_prompt_tokens outside %s.long_context", field)
+	}
+	if err := p.Validate(); err != nil {
+		return money.Price{}, fmt.Errorf("has an invalid %s: %w", field, err)
+	}
+	return p, nil
 }
 
 func (tp *tokenPrice) price(field string) (money.Price, error) {
@@ -154,11 +197,19 @@ func (c common) mediaPrice(m marked, defaultMarkup money.Markup, perUnit *money.
 }
 
 func (r callRoute) serves(money.Markup) (Serves, error) {
-	switch {
-	case r.Price == nil || r.Price.MicrosPerCall == nil:
+	if r.Price == nil || r.Price.MicrosPerCall == nil {
 		return nil, fmt.Errorf("of kind %s needs price.micros_per_call", r.Kind)
-	case *r.Price.MicrosPerCall <= 0 || *r.Price.MicrosPerCall > money.MaxMicrosPerUnit:
-		return nil, fmt.Errorf("price.micros_per_call must be between 1 and %d micros", money.MaxMicrosPerUnit)
 	}
-	return PerCall{Call: r.Kind, Price: *r.Price.MicrosPerCall}, nil
+	price, err := r.Price.micros("price")
+	if err != nil {
+		return nil, err
+	}
+	return PerCall{Call: r.Kind, Price: price}, nil
+}
+
+func (cp callPrice) micros(field string) (money.Micros, error) {
+	if *cp.MicrosPerCall <= 0 || *cp.MicrosPerCall > money.MaxMicrosPerUnit {
+		return 0, fmt.Errorf("%s.micros_per_call must be between 1 and %d micros", field, money.MaxMicrosPerUnit)
+	}
+	return *cp.MicrosPerCall, nil
 }

@@ -3,9 +3,7 @@ package routes
 import (
 	"cmp"
 	"fmt"
-	"net"
 	"slices"
-	"strings"
 
 	"morse/backend/internal/attester"
 	"morse/backend/internal/billing/measure"
@@ -26,9 +24,13 @@ const (
 	ProviderFal
 	ProviderParallel
 	ProviderGemini
-	ProviderOpenRouter
 	ProviderVenice
 	ProviderFireworks
+	ProviderIsoquant
+	ProviderWafer
+	ProviderNovita
+	ProviderMorph
+	ProviderDeepInfra
 )
 
 var providerNames = enum.Names[Provider]{
@@ -40,9 +42,13 @@ var providerNames = enum.Names[Provider]{
 	ProviderFal:             "fal",
 	ProviderParallel:        "parallel",
 	ProviderGemini:          "gemini",
-	ProviderOpenRouter:      "openrouter",
 	ProviderVenice:          "venice",
 	ProviderFireworks:       "fireworks",
+	ProviderIsoquant:        "isoquant",
+	ProviderWafer:           "wafer",
+	ProviderNovita:          "novita",
+	ProviderMorph:           "morph",
+	ProviderDeepInfra:       "deepinfra",
 }
 
 func (p Provider) String() string { return providerNames.String(p) }
@@ -73,6 +79,7 @@ type Route struct {
 	Lab           string
 	OpenWeights   bool
 	Retention     catalog.Retention
+	ProviderName  string
 	Serves        Serves
 	Included      *Included
 	RequiresPlan  plankind.Kind
@@ -80,10 +87,18 @@ type Route struct {
 	// Unnamed are the endpoints of the model at this route's tier that have no name of their own. A chat on the route
 	// may be served by any of them, on the route's terms: no list, price row, or request name shows them.
 	Unnamed []Route
+	// OnBehalf are the model's on-behalf endpoints of this sealed route: tee endpoints through which the worker seals a
+	// plaintext chat to this route's vendor for its client. They are no route of their own and take their
+	// host, upstream model, key, and window from the sealed endpoint they name.
+	OnBehalf []Route `json:",omitempty"`
+	// OnBehalfOf is the sealed endpoint an on-behalf route seals to, and empty on every other route.
+	OnBehalfOf catalog.EndpointID `json:",omitempty"`
 	// Order is the endpoint's place in the routes file, the order a tier's endpoints are tried in.
 	Order int
 	// AppOnly keeps the route from API keys: only a login or a guest may list or call it.
 	AppOnly bool
+	// RebateShare is the part of an API key's margin on the model that the daily rebate returns.
+	RebateShare money.RebateShare
 }
 
 // Upstreams is the route, its fallbacks, and its unnamed endpoints: every endpoint that serves under its name.
@@ -135,8 +150,12 @@ func (rt Route) ReasoningUncapped() bool {
 // than adding to a full queue.
 func (rt Route) Hedgeable() bool {
 	up, vendor := rt.Upstream.(Vendor)
-	c := capabilities[up.Provider]
-	return vendor && !c.silentWhileReasoning && !c.slowsTogether
+	return vendor && !rt.SilentWhileReasoning() && !capabilities[up.Provider].slowsTogether
+}
+
+func (rt Route) SilentWhileReasoning() bool {
+	up, vendor := rt.Upstream.(Vendor)
+	return vendor && capabilities[up.Provider].silentWhileReasoning
 }
 
 type Upstream interface {
@@ -155,12 +174,16 @@ type Serves interface{ Kind() catalog.Kind }
 
 type Chat struct {
 	catalog.ChatTerms
+	// Price is what the model sells at this tier before markup, the list price a key pays.
 	Price              money.Price
 	Markup             money.Markup
 	DecodeMaxTPS       int
 	Tokenizer          string
 	HiddenReasoningTPS int
 	OpenRouterID       string
+	// AnswersInReasoning marks a model that can send a whole answer as reasoning and stop with no content, as Ling
+	// 3.0 Flash does on every host it runs on. Its provider shows that reasoning to the client as the answer.
+	AnswersInReasoning bool
 }
 
 func (c Chat) reasons() bool { return len(c.ReasoningEfforts) > 0 }
@@ -189,22 +212,3 @@ func (Chat) Kind() catalog.Kind      { return catalog.KindChat }
 func (Image) Kind() catalog.Kind     { return catalog.KindImage }
 func (Video) Kind() catalog.Kind     { return catalog.KindVideo }
 func (c PerCall) Kind() catalog.Kind { return c.Call }
-
-func (r Route) ProviderName() string {
-	switch up := r.Upstream.(type) {
-	case Attested:
-		return up.Attester.Name
-	case Vendor:
-		if up.Provider != ProviderOpenAI && up.Provider != ProviderOpenAIResponses {
-			return up.Provider.String()
-		}
-	}
-	if net.ParseIP(r.Host) != nil {
-		return ""
-	}
-	labels := strings.Split(r.Host, ".")
-	if len(labels) < 2 {
-		return ""
-	}
-	return labels[len(labels)-2]
-}

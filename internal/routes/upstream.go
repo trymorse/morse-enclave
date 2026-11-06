@@ -1,13 +1,17 @@
 package routes
 
 import (
+	"errors"
 	"fmt"
 	"net/url"
+	"regexp"
 
 	"morse/backend/internal/attester"
 	"morse/backend/internal/baseurl"
 	"morse/backend/internal/catalog"
 )
+
+var providerNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 
 func (c common) upstream(tier catalog.Tier) (Upstream, error) {
 	vendor, err := parseAttester(c.Attester, tier)
@@ -25,6 +29,19 @@ func (c common) upstream(tier catalog.Tier) (Upstream, error) {
 		return nil, fmt.Errorf("is tier %s, so attester %s serves it and it takes no provider", tier, vendor)
 	}
 	return Attested{Attester: vendor}, nil
+}
+
+func (c common) checkProviderName(up Upstream) error {
+	switch {
+	case c.ProviderName == "":
+		return errors.New("has no provider_name; set it to the lowercase name a customer knows the provider by, such as together, and an attested route's is its attester")
+	case !providerNamePattern.MatchString(c.ProviderName):
+		return fmt.Errorf("has provider_name %q; a provider name is lowercase letters, digits, and hyphens", c.ProviderName)
+	}
+	if a, attested := up.(Attested); attested && c.ProviderName != a.Attester.Name {
+		return fmt.Errorf("has provider_name %q but attester %s; an attested route's provider_name is its attester", c.ProviderName, a.Attester.Name)
+	}
+	return nil
 }
 
 func parseAttester(raw string, tier catalog.Tier) (*attester.Vendor, error) {

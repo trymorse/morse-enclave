@@ -10,8 +10,8 @@ import (
 )
 
 const (
-	frameHeaderLen = 4
-	gcmTagLen      = 16
+	FrameHeaderLen = 4
+	TagLen         = 16
 	// MaxFrame bounds one reply frame. EHBP allows 64 MiB; a router seals each event it writes as a
 	// frame, so a larger one is no reply the proxy should hold.
 	MaxFrame = 1 << 20
@@ -25,8 +25,8 @@ var ErrTruncated = errors.New("ehbp: the reply ended inside a frame")
 // piece: the 731-byte frame among GLM 5.3's and DeepSeek V4.1 Flash's replies carried 93 tokens
 // (2026-11-03).
 const (
-	tokenlessFrame   = frameHeaderLen + gcmTagLen + 16
-	eventFrame       = frameHeaderLen + 400
+	tokenlessFrame   = FrameHeaderLen + TagLen + 16
+	eventFrame       = FrameHeaderLen + 400
 	eventFrameTokens = 6
 	bytesPerToken    = 2
 )
@@ -47,7 +47,7 @@ func FrameTokens(size int) int {
 // plaintext SSE or JSON reads as a length far beyond max. A reply that ends mid-frame is truncated.
 func Frames(r io.Reader, max int, each func(frame []byte) error) (int, error) {
 	n := 0
-	header := make([]byte, frameHeaderLen)
+	header := make([]byte, FrameHeaderLen)
 	for {
 		if _, err := io.ReadFull(r, header); err != nil {
 			switch {
@@ -65,12 +65,12 @@ func Frames(r io.Reader, max int, each func(frame []byte) error) (int, error) {
 			}
 			continue
 		}
-		if size < gcmTagLen || size > max {
+		if size < TagLen || size > max {
 			return n, fmt.Errorf("%w: a frame of %d bytes", chat.ErrUnsealedReply, size)
 		}
-		frame := make([]byte, frameHeaderLen+size)
+		frame := make([]byte, FrameHeaderLen+size)
 		copy(frame, header)
-		if _, err := io.ReadFull(r, frame[frameHeaderLen:]); err != nil {
+		if _, err := io.ReadFull(r, frame[FrameHeaderLen:]); err != nil {
 			if err == io.EOF || errors.Is(err, io.ErrUnexpectedEOF) {
 				return n, ErrTruncated
 			}

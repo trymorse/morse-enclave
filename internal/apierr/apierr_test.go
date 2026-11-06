@@ -29,6 +29,9 @@ func TestSanitizedUpstreamErrorMapsStatusAndNeverCarriesVendorText(t *testing.T)
 		{403, ``, 502, "upstream_refused"},
 		{404, `not json ` + canary, 502, "upstream_refused"},
 		{403, `{"error":{"code":"insufficient_quota","message":"` + canary + `"}}`, 502, "upstream_unavailable"},
+		{403, `{"error":{"code":"model_forbidden","message":"` + canary + `","type":"gateway_error"},"request_id":"iqr_x"}`, 502, "upstream_unavailable"},
+		{422, `{"error":{"code":"model_zdr_not_supported","message":"` + canary + `"}}`, 502, "upstream_unavailable"},
+		{422, `{"error":{"code":"other","message":"` + canary + `"}}`, 400, "invalid_request"},
 		{413, ``, 413, "request_too_large"},
 		{429, `{"error":{"message":"org-` + canary + ` TPM limit"}}`, 503, "upstream_busy"},
 		{529, ``, 503, "upstream_busy"},
@@ -51,6 +54,7 @@ func TestSanitizedUpstreamErrorMapsStatusAndNeverCarriesVendorText(t *testing.T)
 		{400, `{"code":"Client specified an invalid argument","error":"` + canary + `"}`, 400, "invalid_request"},
 		{422, `{"error":{"message":"prompt is too long ` + canary + `"}}`, 400, "invalid_request"},
 		{500, `{"error":{"message":"This model's maximum context length is 131072 tokens"}}`, 502, "upstream_error"},
+		{400, `{"error":{"message":"Model 'morph-nope' is not served by this endpoint; accepted models: morph-v3-fast ` + canary + `","type":"invalid_request_error"}}`, 502, "upstream_refused"},
 	}
 	for _, tc := range cases {
 		up := apierr.SanitizedUpstreamError(tc.status, []byte(tc.vendorBody))

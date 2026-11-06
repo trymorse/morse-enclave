@@ -13,6 +13,7 @@ import (
 	"morse/backend/internal/apierr"
 	"morse/backend/internal/audio"
 	"morse/backend/internal/billing/measure"
+	"morse/backend/internal/catalog"
 	"morse/backend/internal/chat"
 	"morse/backend/internal/health"
 	"morse/backend/internal/research"
@@ -44,6 +45,7 @@ type SealedOpening struct {
 	Cast chat.Cast
 	Framing
 	KeyCaller bool
+	KeyFloor  catalog.Tier
 }
 
 type SealedAdmission struct {
@@ -118,7 +120,7 @@ func (w *InProcess) OpenSealed(ctx context.Context, o SealedOpening) (SealedAdmi
 		header.Set(name, value)
 	}
 	cek := req.CEK
-	admitted, err := w.Open(ctx, Opening{Method: req.Method, Path: target.Path, Query: target.RawQuery, Header: ContentHeaders(header), Body: bytes.NewReader(req.Body), Cast: o.Cast, Framing: o.Framing, KeyCaller: o.KeyCaller, cek: &cek})
+	admitted, err := w.Open(ctx, Opening{Method: req.Method, Path: target.Path, Query: target.RawQuery, Header: ContentHeaders(header), Body: bytes.NewReader(req.Body), Cast: o.Cast, Framing: o.Framing, KeyCaller: o.KeyCaller, KeyFloor: o.KeyFloor, cek: &cek})
 	if err != nil {
 		refusal := refusalWire(contentRefusal(err))
 		return refuse(refusal.Envelope(), refusal.Status)

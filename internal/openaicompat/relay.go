@@ -2,13 +2,16 @@ package openaicompat
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
+	"hash"
 	"io"
 	"maps"
 	"net/http"
 	"reflect"
 	"slices"
 
+	"morse/backend/internal/aci"
 	"morse/backend/internal/capped"
 	"morse/backend/internal/chat"
 	"morse/backend/internal/completions"
@@ -23,6 +26,14 @@ type Relay struct {
 	// Admits widens a forced field to every value its func accepts, beside the forced one.
 	Admits  map[string]func(json.RawMessage) bool
 	Receipt Receipt
+	Proves  Prover
+}
+
+type Prover func(ctx context.Context, read Read) error
+
+type Read struct {
+	ReceiptID, ReplyID string
+	Hash               aci.Hash
 }
 
 var _ chat.Relayer = (*Relay)(nil)
@@ -110,6 +121,8 @@ func (r *Relay) Relay(ctx context.Context, c chat.Call, sealed chat.E2EE, begin 
 	if err := sealed.Confirm(resp.Header.Get); err != nil {
 		return chat.Replied{}, err
 	}
+	read := sha256.New()
+	body := io.TeeReader(resp.Body, read)
 	head := chat.Relayed{ContentType: resp.Header.Get("Content-Type")}
 	var w io.Writer
 	var held []byte
@@ -131,7 +144,7 @@ func (r *Relay) Relay(ctx context.Context, c chat.Call, sealed chat.E2EE, begin 
 	}
 	g := gate{sealed: sealed}
 	if !c.Stream {
-		body, err := capped.ReadAll(resp.Body, MaxCompletionBody)
+		body, err := capped.ReadAll(body, MaxCompletionBody)
 		if err != nil {
 			return chat.Replied{}, err
 		}
@@ -141,16 +154,25 @@ func (r *Relay) Relay(ctx context.Context, c chat.Call, sealed chat.E2EE, begin 
 		if err := write(body, body); err != nil {
 			return chat.Replied{}, err
 		}
-		replied := chat.Replied{UnknownFields: g.unknown}
 		var peek usagePeek
-		if json.Unmarshal(body, &peek); peek.Usage != nil {
+		json.Unmarshal(body, &peek)
+		replied := chat.Replied{UnknownFields: g.unknown, Prove: r.proof(resp.Header, peek.ID, read)}
+		if peek.Usage != nil {
 			replied.Usage = peek.Usage.Domain()
 		}
 		return replied, nil
 	}
 	var tap usageTap
-	err = relayGated(resp.Body, &g, write, &tap)
-	return chat.Replied{Usage: tap.last, Events: tap.events, UnknownFields: g.unknown}, err
+	err = relayGated(body, &g, write, &tap)
+	return chat.Replied{Usage: tap.last, Events: tap.events, UnknownFields: g.unknown, Prove: r.proof(resp.Header, tap.id, read)}, err
+}
+
+func (r *Relay) proof(header http.Header, replyID string, body hash.Hash) func(context.Context) error {
+	if r.Proves == nil {
+		return nil
+	}
+	read := Read{ReceiptID: header.Get(chat.HeaderReceiptID), ReplyID: replyID, Hash: aci.Hash(body.Sum(nil))}
+	return func(ctx context.Context) error { return r.Proves(ctx, read) }
 }
 
 func replyID(event []byte) string {
@@ -160,10 +182,12 @@ func replyID(event []byte) string {
 }
 
 type usagePeek struct {
+	ID    string             `json:"id"`
 	Usage *completions.Usage `json:"usage"`
 }
 
 type usageTap struct {
+	id     string
 	last   chat.Usage
 	events int
 }
@@ -174,7 +198,13 @@ func (t *usageTap) event(data []byte) (done bool) {
 	}
 	t.events++
 	var peek usagePeek
-	if json.Unmarshal(data, &peek) == nil && peek.Usage != nil {
+	if json.Unmarshal(data, &peek) != nil {
+		return false
+	}
+	if t.id == "" {
+		t.id = peek.ID
+	}
+	if peek.Usage != nil {
 		t.last = peek.Usage.Domain()
 	}
 	return false

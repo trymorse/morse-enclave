@@ -173,9 +173,7 @@ func TestTheClientRefusesAReplyWithNoTextAndLeavesATransportFailureBare(t *testi
 			t.Errorf("%s: err %v, want a bare malformed reply", name, err)
 		}
 	}
-	srv := httptest.NewServer(http.NotFoundHandler())
-	srv.Close()
-	_, err := audio.NewOpenAI(srv.URL, "k", "m", srv.Client()).Transcribe(context.Background(), request(t, "", wav([]byte{1})))
+	_, err := audio.NewOpenAI("http://127.0.0.1:1", "k", "m", &http.Client{}).Transcribe(context.Background(), request(t, "", wav([]byte{1})))
 	if !errors.Is(err, upstream.ErrUnreachable) {
 		t.Errorf("an unreachable vendor: err %v, want upstream.ErrUnreachable", err)
 	}

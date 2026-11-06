@@ -140,8 +140,8 @@ func TestClassifyRanksWhatTheProviderDidAboveWhoHungUp(t *testing.T) {
 	}
 }
 
-func TestOnlyBusyAVendorErrorUnreachableAndAVendorRefusalOfOurAccountFailOver(t *testing.T) {
-	want := map[Outcome]bool{UpstreamBusy: true, UpstreamError: true, Unreachable: true, UpstreamUnavailable: true}
+func TestOnlyBusyAVendorErrorUnreachableAVendorRefusalOfOurAccountAndAnUnattestedVendorFailOver(t *testing.T) {
+	want := map[Outcome]bool{UpstreamBusy: true, UpstreamError: true, Unreachable: true, UpstreamUnavailable: true, Unattested: true}
 	for _, o := range Outcomes() {
 		if o.FailsOver() != want[o] {
 			t.Errorf("%s fails over: %t, want %t", o, o.FailsOver(), want[o])
@@ -149,8 +149,8 @@ func TestOnlyBusyAVendorErrorUnreachableAndAVendorRefusalOfOurAccountFailOver(t 
 	}
 }
 
-func TestOnlyBusyAVendorErrorUnreachableAndAVendorRefusalOfOurAccountTripTheBreaker(t *testing.T) {
-	want := map[Outcome]bool{UpstreamBusy: true, UpstreamError: true, Unreachable: true, UpstreamUnavailable: true}
+func TestOnlyBusyAVendorErrorUnreachableAVendorRefusalOfOurAccountAndAnUnattestedVendorTripTheBreaker(t *testing.T) {
+	want := map[Outcome]bool{UpstreamBusy: true, UpstreamError: true, Unreachable: true, UpstreamUnavailable: true, Unattested: true}
 	for _, o := range Outcomes() {
 		if o.TripsBreaker() != want[o] {
 			t.Errorf("%s trips the breaker: %t, want %t", o, o.TripsBreaker(), want[o])

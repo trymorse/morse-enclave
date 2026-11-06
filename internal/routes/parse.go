@@ -57,6 +57,9 @@ func Parse(data []byte, defaultMarkup money.Markup) ([]Route, error) {
 	for i, f := range flat {
 		parsed, err := parseRoute(f.Route, defaultMarkup)
 		if err != nil {
+			if len(f.Endpoints) > 0 {
+				return nil, fmt.Errorf("route %d endpoint %s: %w", i, f.Endpoints[0], err)
+			}
 			return nil, fmt.Errorf("route %d: %w", i, err)
 		}
 		for j := range parsed {
@@ -69,6 +72,13 @@ func Parse(data []byte, defaultMarkup money.Markup) ([]Route, error) {
 			}
 			parsed[0].Unnamed = append(parsed[0].Unnamed, rt)
 		}
+		for _, u := range f.OnBehalf {
+			rt, err := onBehalfRoute(u, defaultMarkup)
+			if err != nil {
+				return nil, fmt.Errorf("route %d endpoint %s: %w", i, u.Endpoints[0], err)
+			}
+			parsed[0].OnBehalf = append(parsed[0].OnBehalf, rt)
+		}
 		for _, rt := range parsed {
 			if seen[rt.Model] {
 				return nil, fmt.Errorf("route %d repeats model %q", i, rt.Model)
@@ -80,7 +90,51 @@ func Parse(data []byte, defaultMarkup money.Markup) ([]Route, error) {
 	if err := oneAttesterPerHost(routes); err != nil {
 		return nil, err
 	}
+	if err := oneOutputCapPerTier(routes); err != nil {
+		return nil, err
+	}
 	return routes, nil
+}
+
+// oneOutputCapPerTier lowers the max_output_tokens of every chat endpoint of a model at one tier outside e2ee to the
+// smallest among them, so the cap a caller meets, in the plan, the hold, and GET /v1/models, does not tell which host
+// bound or served. A default_max_tokens above that cap is refused.
+func oneOutputCapPerTier(routes []Route) error {
+	type at struct {
+		id   catalog.ModelID
+		tier catalog.Tier
+	}
+	chatOf := func(rt *Route) (Chat, bool) {
+		c, chats := ChatOf(rt.Serves)
+		return c, chats && !rt.Tier.Sealed()
+	}
+	var members []*Route
+	for i := range routes {
+		members = append(members, &routes[i])
+		for j := range routes[i].Unnamed {
+			members = append(members, &routes[i].Unnamed[j])
+		}
+	}
+	least := map[at]int{}
+	for _, rt := range members {
+		if c, ok := chatOf(rt); ok {
+			k := at{rt.ID, rt.Tier}
+			least[k] = min(cmp.Or(least[k], c.MaxOutputTokens), c.MaxOutputTokens)
+		}
+	}
+	for _, rt := range members {
+		c, ok := chatOf(rt)
+		if !ok {
+			continue
+		}
+		cap := least[at{rt.ID, rt.Tier}]
+		if c.DefaultMaxTokens > cap {
+			return fmt.Errorf("endpoint %q serves model %q at tier %s with default_max_tokens %d above the tier's smallest max_output_tokens %d", rt.Endpoint, rt.ID, rt.Tier, c.DefaultMaxTokens, cap)
+		}
+		c.MaxOutputTokens = cap
+		rt.Serves = c
+	}
+	return nil
 }
 
 func unnamedRoute(f Flat, defaultMarkup money.Markup) (Route, error) {
@@ -92,6 +146,16 @@ func unnamedRoute(f Flat, defaultMarkup money.Markup) (Route, error) {
 	if _, chats := ChatOf(rt.Serves); !chats {
 		return Route{}, fmt.Errorf("is unnamed and serves %s; only a chat fails over to an unnamed endpoint", rt.Serves.Kind())
 	}
+	rt.identify(f)
+	return rt, nil
+}
+
+func onBehalfRoute(f Flat, defaultMarkup money.Markup) (Route, error) {
+	parsed, err := parseRoute(f.Route, defaultMarkup)
+	if err != nil {
+		return Route{}, err
+	}
+	rt := parsed[0]
 	rt.identify(f)
 	return rt, nil
 }
@@ -133,7 +197,7 @@ func chatRoutes(object json.RawMessage, defaultMarkup money.Markup) ([]Route, er
 		}
 		named[fb.Attester] = true
 		vendor := r
-		vendor.Attester, vendor.BaseURL, vendor.APIKeyEnv, vendor.Fallbacks = fb.Attester, fb.BaseURL, fb.APIKeyEnv, nil
+		vendor.Attester, vendor.BaseURL, vendor.APIKeyEnv, vendor.ProviderName, vendor.Fallbacks = fb.Attester, fb.BaseURL, fb.APIKeyEnv, fb.ProviderName, nil
 		f, err := build(vendor, defaultMarkup)
 		if err != nil {
 			return nil, fmt.Errorf("fallback %q: %w", fb.Attester, err)
@@ -223,6 +287,13 @@ func (c common) route(serves Serves) (Route, error) {
 	if err != nil {
 		return Route{}, err
 	}
+	share := money.DefaultRebateShare
+	if c.RebateShare != nil {
+		share = money.RebateShare(*c.RebateShare)
+	}
+	if !share.Valid() {
+		return Route{}, fmt.Errorf("rebate_share_bps %d must be from 0 to %d basis points of the margin; leave it out for %d", share, money.WholeMargin, money.DefaultRebateShare)
+	}
 	rt := Route{
 		Model:         c.Model,
 		Tier:          tier,
@@ -236,12 +307,18 @@ func (c common) route(serves Serves) (Route, error) {
 		Lab:           c.Lab,
 		OpenWeights:   c.OpenWeights,
 		Retention:     retention,
+		ProviderName:  c.ProviderName,
 		Serves:        serves,
 		Included:      c.Included,
 		RequiresPlan:  requires,
 		AppOnly:       c.AppOnly,
+		RebateShare:   share,
+		OnBehalfOf:    c.OnBehalfOf,
 	}
-	return rt, up.check(rt)
+	if err := up.check(rt); err != nil {
+		return Route{}, err
+	}
+	return rt, c.checkProviderName(up)
 }
 
 func requiredPlan(raw string) (plankind.Kind, error) {
@@ -265,45 +342,87 @@ func paidPlanNames() []string {
 	return names
 }
 
-// FailoverOnOneTerm refuses a model whose chat endpoints outside e2ee differ in a term the relay bills or gates by:
-// a chat fails over between them, and the relay holds, bills, and applies the plan at the endpoint it bound.
-// includedWindows are the plans' included context windows. The relay runs it rather than Parse, because those come
+// FailoverOnOneTerm refuses a model whose chat endpoints at one tier outside e2ee differ in a term the relay bills or
+// gates by: a tier has one retail price and one set of plan terms, and a chat fails over between its endpoints, paying
+// the endpoint it bound. Two tiers of one model may differ, but only when every plaintext endpoint of the model has a
+// provider that maps a dry account to an account refusal (refusesDryAccount): only the breaker can then move a bind off a
+// dry tier, since the refusal neither fails over to the other tier nor, otherwise, opens the circuit.
+// includedWindows are the plans' included context windows, on which the named endpoints of a tier must agree. An
+// unnamed endpoint may have any window: it sells on its named endpoint's, and the relay sends it only a chat that fits
+// its own with the output the named endpoint would give. The relay runs it rather than Parse, because the windows come
 // from the plan table, which the worker must not link.
-func FailoverOnOneTerm(routes []Route, includedWindows []int) error {
-	first := map[catalog.ModelID]Route{}
+func FailoverOnOneTerm(routes []Route, includedWindows []int, refusesDryAccount func(Route) bool) error {
+	type at struct {
+		id   catalog.ModelID
+		tier catalog.Tier
+	}
+	type endpointOf struct {
+		id       catalog.ModelID
+		endpoint catalog.EndpointID
+	}
+	firstAt, firstOf := map[at]Route{}, map[catalog.ModelID]Route{}
 	var served []Route
+	unnamed := map[endpointOf]bool{}
 	for _, rt := range routes {
-		served = append(append(served, rt), rt.Unnamed...)
+		served = append(append(append(served, rt), rt.Unnamed...), rt.OnBehalf...)
+		for _, u := range rt.Unnamed {
+			unnamed[endpointOf{u.ID, u.Endpoint}] = true
+		}
+	}
+	tiersDiffer := map[catalog.ModelID]string{}
+	for _, rt := range served {
+		if _, chats := ChatOf(rt.Serves); !chats || rt.Tier.Sealed() {
+			continue
+		}
+		if f, seen := firstAt[at{rt.ID, rt.Tier}]; seen {
+			windows := includedWindows
+			if unnamed[endpointOf{rt.ID, rt.Endpoint}] {
+				windows = nil
+			}
+			if differs := termsDiffer(rt, f, windows); differs != "" {
+				return fmt.Errorf("endpoints %q and %q serve model %q at tier %s and differ in %s; a tier has one retail price and one set of plan terms, and a chat fails over between its endpoints and pays the terms of the endpoint it bound, so give them the same terms or serve one as another model", f.Endpoint, rt.Endpoint, rt.ID, rt.Tier, differs)
+			}
+			continue
+		}
+		firstAt[at{rt.ID, rt.Tier}] = rt
+		f, seen := firstOf[rt.ID]
+		if !seen {
+			firstOf[rt.ID] = rt
+			continue
+		}
+		if differs := termsDiffer(rt, f, includedWindows); differs != "" {
+			tiersDiffer[rt.ID] = fmt.Sprintf("tiers %s and %s differ in %s", f.Tier, rt.Tier, differs)
+		}
 	}
 	for _, rt := range served {
-		c, chats := ChatOf(rt.Serves)
-		if !chats || rt.Tier.Sealed() {
+		if _, chats := ChatOf(rt.Serves); !chats || rt.Tier.Sealed() || tiersDiffer[rt.ID] == "" {
 			continue
 		}
-		f, seen := first[rt.ID]
-		if !seen {
-			first[rt.ID] = rt
-			continue
+		if !refusesDryAccount(rt) {
+			return fmt.Errorf("model %q has %s, but endpoint %q is served through %s, which does not map a dry account to an account refusal; a dry account on one tier would then strand requests bound to it, since the refusal neither fails over to the other tier nor opens the circuit, so give the tiers the same terms or serve one as another model", rt.ID, tiersDiffer[rt.ID], rt.Endpoint, rt.Upstream)
 		}
-		fc, _ := ChatOf(f.Serves)
-		var differs string
-		switch {
-		case !reflect.DeepEqual(c.Billed(), fc.Billed()):
-			differs = "price or markup"
-		case !reflect.DeepEqual(rt.Included, f.Included):
-			differs = "included"
-		case rt.Included != nil && !sameIncludedWindow(c.ContextTokens, fc.ContextTokens, includedWindows):
-			differs = "context_tokens, which bounds an included request"
-		case rt.RequiresPlan != f.RequiresPlan:
-			differs = "requires_plan"
-		case rt.ReasoningUncapped() != f.ReasoningUncapped():
-			differs = "whether the provider reasons past the output limit, which sizes the hold"
-		default:
-			continue
-		}
-		return fmt.Errorf("endpoints %q and %q serve model %q outside e2ee and differ in %s; a chat fails over between them and pays the terms of the endpoint it bound, so give them the same terms or serve one as another model", f.Endpoint, rt.Endpoint, rt.ID, differs)
 	}
 	return samePromiseAtATier(served)
+}
+
+// termsDiffer names the first term the relay bills or gates by on which the two endpoints differ, or "". With no
+// includedWindows it leaves the windows uncompared.
+func termsDiffer(rt, f Route, includedWindows []int) string {
+	c, _ := ChatOf(rt.Serves)
+	fc, _ := ChatOf(f.Serves)
+	switch {
+	case !reflect.DeepEqual(c.Billed(), fc.Billed()):
+		return "price or markup"
+	case !reflect.DeepEqual(rt.Included, f.Included):
+		return "included"
+	case rt.Included != nil && !sameIncludedWindow(c.ContextTokens, fc.ContextTokens, includedWindows):
+		return "context_tokens, which bounds an included request"
+	case rt.RequiresPlan != f.RequiresPlan:
+		return "requires_plan"
+	case rt.ReasoningUncapped() != f.ReasoningUncapped():
+		return "whether the provider reasons past the output limit, which sizes the hold"
+	}
+	return ""
 }
 
 // samePromiseAtATier refuses a model whose chat endpoints at one tier outside e2ee differ in a term the tier promises a
@@ -331,6 +450,8 @@ func samePromiseAtATier(served []Route) error {
 			differs = "retention, which GET /v1/models shows"
 		case c.DefaultReasoningEffort != fc.DefaultReasoningEffort:
 			differs = "default_reasoning_effort, the effort a request that names none reasons at"
+		case c.DefaultMaxTokens != fc.DefaultMaxTokens:
+			differs = "default_max_tokens, the output limit a request that names none is held for and sent"
 		default:
 			continue
 		}

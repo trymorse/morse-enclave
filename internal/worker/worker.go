@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"morse/backend/internal/affinity"
 	"morse/backend/internal/billing/measure"
 	"morse/backend/internal/billing/money"
 	"morse/backend/internal/catalog"
@@ -35,10 +36,11 @@ type Worker interface {
 	Cut(h Handle, reason measure.Cut)
 	Poll(ctx context.Context, route, vendorID string) (jobs.Poll, error)
 	Attestation(ctx context.Context) (Attested, error)
-	// The vendor evidence a client may audit: an attestation report for its nonce, a receipt, and the attested
-	// sessions a gateway lists and serves. A vendor error the client may be told about comes back as an
-	// apierr.Error; any other error is the relay's to report.
-	Attest(ctx context.Context, v Vendor, nonce string) (chat.Attestation, error)
+	// The vendor evidence a client may audit: an attestation report for its nonce (Tinfoil's v3 document if v3
+	// was asked for and the route serves one), a receipt, and the attested sessions a gateway lists and serves.
+	// A vendor error the client may be told about comes back as an apierr.Error; any other error is the relay's
+	// to report.
+	Attest(ctx context.Context, v Vendor, nonce string, v3 bool) (chat.Attestation, error)
 	Receipt(ctx context.Context, v Vendor, id string) (json.RawMessage, error)
 	Session(ctx context.Context, v Vendor, id string) (json.RawMessage, error)
 	Sessions(ctx context.Context, v Vendor) ([]chat.ListedSession, error)
@@ -61,6 +63,7 @@ type Opening struct {
 	Cast   chat.Cast
 	Framing
 	KeyCaller bool
+	KeyFloor  catalog.Tier
 	cek       *[32]byte
 }
 
@@ -93,16 +96,24 @@ func (a *admitted) take(h Handle) { a.handle = h }
 
 type ChatAdmission struct {
 	admitted
-	Model       catalog.ModelID
-	Candidates  []catalog.EndpointID
+	Model      catalog.ModelID
+	Candidates []catalog.EndpointID
+	// Affinity is the conversation digest of an unsealed sk_ request (affinity.DigestOf), and zero for every other
+	// request.
+	Affinity    affinity.Digest `json:",omitzero"`
+	MaxPrice    money.PriceCap  `json:",omitzero"`
 	Sealable    bool
 	OnBehalf    bool
 	PromptSize  int
 	PromptBytes limits.Kibibytes
-	OutputAsked int
-	Stream      bool
-	Compaction  bool
-	Character   chat.Character
+	// TextMessages counts the messages of a chat whose prompt is text alone (chat.Request.PromptTexts) and whose body is
+	// in Unicode normal form C, which a smaller backup's window can be judged on (proxy Chat.carries). It is zero for
+	// any other chat.
+	TextMessages int
+	OutputAsked  int
+	Stream       bool
+	Compaction   bool
+	Character    chat.Character
 }
 
 func (ChatAdmission) kind() admissionKind { return admitsChat }
@@ -221,6 +232,20 @@ type Measured struct {
 type Try struct {
 	Endpoint catalog.EndpointID
 	Health   health.Observation
+}
+
+// VendorWait is the vendors' time before a streamed reply's first byte: every failed try's whole call and the
+// serving try's wait for its first byte. It is zero for a reply that did not stream, whose first byte the relay sees
+// only once the vendor has finished.
+func (m Measured) VendorWait() time.Duration {
+	if m.Health.TTFT <= 0 {
+		return 0
+	}
+	wait := m.Health.TTFT
+	for _, try := range m.FailedOver {
+		wait += try.Health.Duration
+	}
+	return wait
 }
 
 type Follow uint8

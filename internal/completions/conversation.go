@@ -92,6 +92,7 @@ type Conversation struct {
 	// "" when it accepts none at or around it.
 	Effort          string
 	ForwardedEffort string
+	RequestBytes    int
 }
 
 // Exchange is one side's consecutive turns, which a vendor whose roles must alternate takes as one message.
@@ -135,7 +136,7 @@ func parseConversation(c chat.Call) (Conversation, error) {
 	if err != nil {
 		return Conversation{}, err
 	}
-	conv := Conversation{Parallel: parallel, OutputLimit: c.OutputLimit, Effort: c.Effort()}
+	conv := Conversation{Parallel: parallel, OutputLimit: c.OutputLimit, Effort: c.Effort(), RequestBytes: c.Size()}
 	conv.ForwardedEffort, _ = c.ForwardedEffort()
 	if conv.Tools, err = tools(defs); err != nil {
 		return Conversation{}, err

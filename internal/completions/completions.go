@@ -1,6 +1,7 @@
 package completions
 
 import (
+	"cmp"
 	"encoding/json"
 	"strings"
 	"time"
@@ -122,6 +123,9 @@ type Usage struct {
 	TotalTokens             int                `json:"total_tokens"`
 	PromptTokensDetails     *promptDetails     `json:"prompt_tokens_details,omitempty"`
 	CompletionTokensDetails *completionDetails `json:"completion_tokens_details,omitempty"`
+	// OutputTokensDetails is where Fireworks reports reasoning tokens, in place of completion_tokens_details. It is
+	// read, never written.
+	OutputTokensDetails *completionDetails `json:"output_tokens_details,omitempty"`
 }
 
 func (u Usage) Domain() chat.Usage {
@@ -129,7 +133,7 @@ func (u Usage) Domain() chat.Usage {
 	if d := u.PromptTokensDetails; d != nil {
 		out.CachedPromptTokens, out.CacheWritePromptTokens = d.CachedTokens, d.CacheWriteTokens
 	}
-	if d := u.CompletionTokensDetails; d != nil {
+	if d := cmp.Or(u.CompletionTokensDetails, u.OutputTokensDetails); d != nil {
 		out.ReasoningTokens = max(d.ReasoningTokens, 0)
 	}
 	return out

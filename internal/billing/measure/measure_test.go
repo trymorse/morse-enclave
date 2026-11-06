@@ -61,6 +61,10 @@ func TestEachSideTakesTheBestEvidenceItHasAndTheBillIsLabelledByItsWeakestSide(t
 			e.ReasoningRequested = true
 			e.Counted.Completion = counted(12, measure.MethodCounted)
 		}, chat.Usage{PromptTokens: 50, CompletionTokens: 12}, measure.Sides{Prompt: measure.MethodRequestBytes, Completion: measure.MethodCounted}, measure.UsageEstimated},
+		"cut before it was sent, though counted": {func(e *measure.Evidence) {
+			e.Unsent = true
+			e.Counted = measure.Counted{Prompt: counted(36, measure.MethodCalibrated), Completion: counted(12, measure.MethodCounted)}
+		}, chat.Usage{}, measure.Sides{}, measure.UsageNone},
 		"reasoning cut with nothing counted": {func(e *measure.Evidence) {
 			e.ReasoningRequested = true
 		}, chat.Usage{PromptTokens: 50, CompletionTokens: 7}, measure.Sides{Prompt: measure.MethodRequestBytes, Completion: measure.MethodChunks}, measure.UsageEstimated},
@@ -83,6 +87,7 @@ func TestOnlyAClientOrDeadlineCutMissingASideOfItsReportNeedsACount(t *testing.T
 		"deadline cut, prompt reported": {measure.Evidence{Outcome: measure.Cancelled, Cut: measure.CutByDeadline, Upstream: chat.Usage{PromptTokens: 3}}, true},
 		"client cut, both reported":     {measure.Evidence{Outcome: measure.Cancelled, Cut: measure.CutByClient, Upstream: chat.Usage{PromptTokens: 3, CompletionTokens: 4}}, false},
 		"shutdown cut":                  {measure.Evidence{Outcome: measure.Cancelled, Cut: measure.CutByProxy}, false},
+		"client cut, never sent":        {measure.Evidence{Outcome: measure.Cancelled, Cut: measure.CutByClient, Unsent: true}, false},
 		"completed":                     {measure.Evidence{Outcome: measure.Completed}, false},
 		"failed":                        {measure.Evidence{Outcome: measure.Failed}, false},
 		"exhausted":                     {measure.Evidence{Outcome: measure.Exhausted}, false},

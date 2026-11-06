@@ -30,19 +30,23 @@ The worker calls these services.
 Model and media vendors:
 
 - Anthropic, `api.anthropic.com`
+- DeepInfra, `api.deepinfra.com`
 - fal, `queue.fal.run`
 - Fireworks AI, `api.fireworks.ai`
 - Google, `generativelanguage.googleapis.com`
+- Isoquant, `api.isoquant.ai`
 - Meta, `api.meta.ai`
+- Morph, `api.morphllm.com`
 - NEAR AI, `cloud-api.near.ai`
+- Novita AI, `api.novita.ai`
 - OpenAI, `api.openai.com`
-- OpenRouter, `openrouter.ai`
 - Parallel, `api.parallel.ai`
 - Phala, `inference.phala.com`
 - Runware, `api.runware.ai`
 - Tinfoil, `inference.tinfoil.sh`
 - Together AI, `api.together.xyz`
 - Venice, `api.venice.ai`
+- Wafer, `pass.wafer.ai`
 - xAI, `api.x.ai`
 
 Lookup tools:
@@ -64,7 +68,7 @@ Attestation checks for the NEAR AI, Phala and Tinfoil enclaves:
 
 The relay, accounts, payments, and the rest of Morse's servers are not in this repo. None of them run in the enclave. The relay does not have the key that opens a sealed request, so it can pass the request along but cannot read it.
 
-Only the enclave can read a request and its reply, so the enclave counts the tokens each request uses and reports that usage, priced at the vendor's list price in `routes.json`. It does not hold account balances, plan prices, or what Morse charges.
+Only the enclave can read a request and its reply, so the enclave counts the tokens each request uses and reports that usage. The relay prices it. What each host charges Morse is in `relay.json`, a file the relay alone holds, and `routes.json` carries no cost. The enclave does not hold account balances, plan prices, or what Morse charges.
 
 ## Rebuild the image
 

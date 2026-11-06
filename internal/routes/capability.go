@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"maps"
 	"slices"
-	"strings"
 
 	"morse/backend/internal/attester"
 	"morse/backend/internal/catalog"
@@ -26,14 +25,14 @@ type capability struct {
 	// The model reasons at the vendor's default effort when the request names none, so only an effort of none the
 	// route lists stops it. Anthropic's models think only at an effort the request names.
 	reasonsUnasked bool
-	// The client hears nothing until the model has finished reasoning it never sees, so a first chunk that is late is
-	// the model's doing, not a stall to hedge. Gemini's adapter drops the thought parts and emits at the first answer
-	// part. Anthropic emits at message_start, the Responses API at the reasoning item's output_item.added, and xAI
-	// streams reasoning_content deltas, each before the answer.
+	// Gemini returns thought parts only to a request that sets includeThoughts, so the first chunk waits out the
+	// reasoning.
 	silentWhileReasoning bool
 	// A slow first chunk is the vendor slowing every request at once, so a second call is as late as the first and
 	// only adds to the bill. Anthropic's slow windows held a hedge's call as long as the first: it won 0 of 36.
 	slowsTogether bool
+	// The provider shows a reply that is all reasoning as the answer for a model that sets answers_in_reasoning.
+	answersFromReasoning bool
 }
 
 var (
@@ -63,14 +62,6 @@ var capabilities = map[Provider]capability{
 		uncapped:       true,
 		reasonsUnasked: true,
 	},
-	// OpenRouter routes a request to whichever host serves the model, so a route stands on the zdr constraint every
-	// request carries, which keeps it to the endpoints OpenRouter lists as zero data retention.
-	ProviderOpenRouter: {
-		kinds:    servedAt{catalog.KindChat: privateOnly},
-		zdrAt:    privateOnly,
-		zdrWhy:   "because every request it sends is held to OpenRouter's zero data retention endpoints",
-		needsKey: true,
-	},
 	// Venice keeps nothing only for the models it serves in its Private mode, under contract with their hosts. Its
 	// image models carry no such contract, so they serve Anonymous.
 	ProviderVenice: {
@@ -84,6 +75,44 @@ var capabilities = map[Provider]capability{
 		zdrAt:    privateOnly,
 		zdrWhy:   "because Fireworks keeps no prompt or reply of an open model on /chat/completions",
 		needsKey: true,
+	},
+	ProviderIsoquant: {
+		kinds:    servedAt{catalog.KindChat: privateOnly},
+		zdrAt:    privateOnly,
+		zdrWhy:   "because Isoquant keeps nothing only for a request that carries the Isoquant-ZDR header, and has no account setting for it",
+		needsKey: true,
+	},
+	ProviderWafer: {
+		kinds:    servedAt{catalog.KindChat: privateOnly},
+		zdrAt:    privateOnly,
+		zdrWhy:   "because Wafer keeps nothing of a request that carries Wafer-ZDR: required, which this provider sends on every request whatever the account's default",
+		needsKey: true,
+	},
+	// Novita has no per-request retention header, so a route stands on its Terms of Service, section 10.2, which Daniel
+	// accepted as zero data retention for Ling 3.0 Flash on 2026-11-05.
+	ProviderNovita: {
+		kinds:                servedAt{catalog.KindChat: privateOnly},
+		zdrAt:                privateOnly,
+		zdrWhy:               "because Novita's Terms of Service, section 10.2 (https://novita.ai/legal/terms-of-service), keep nothing beyond generating and delivering the output and train on nothing, with carve-outs for law, support and automated safety screening, accepted by Daniel on 2026-11-05 for Ling; no per-request header",
+		needsKey:             true,
+		answersFromReasoning: true,
+	},
+	// Morph documents no zero retention header or setting, so a Morph route stands on the ZDR addendum Morph signed with
+	// us, which covers the account that owns the route's key.
+	ProviderMorph: {
+		kinds:    servedAt{catalog.KindChat: privateOnly},
+		zdrAt:    privateOnly,
+		zdrWhy:   "because Morph documents no zero retention header or setting, so a Morph route stands on the ZDR addendum signed with Morph, which Daniel confirmed covers our account on 2026-11-05",
+		needsKey: true,
+	},
+	// DeepInfra has no per-request retention header, so a route stands on its published data policy alone, which Daniel
+	// accepted as zero data retention on 2026-11-05 without a written agreement.
+	ProviderDeepInfra: {
+		kinds:                servedAt{catalog.KindChat: privateOnly},
+		zdrAt:                privateOnly,
+		zdrWhy:               "because DeepInfra's published data policy (https://docs.deepinfra.com/account/data-privacy) keeps inputs in memory only, logs no content and trains on nothing, which Daniel accepted on 2026-11-05 without a written agreement, since DeepInfra offers no per-request header",
+		needsKey:             true,
+		answersFromReasoning: true,
 	},
 	ProviderRunware: {kinds: servedAt{catalog.KindImage: anonOnly, catalog.KindVideo: anonOnly}, needsKey: true},
 	ProviderFal:     {kinds: servedAt{catalog.KindImage: anonOnly, catalog.KindVideo: anonOnly}, needsKey: true},
@@ -143,12 +172,9 @@ func (p Provider) Reasoning(efforts []string) chat.Reasoning {
 	return chat.ReasonsAlways
 }
 
-// openRouterWebSuffix turns on OpenRouter's web plugin, whose search runs outside the zdr constraint.
-const openRouterWebSuffix = ":online"
-
 func (v Vendor) check(rt Route) error {
-	if v.Provider == ProviderOpenRouter && strings.HasSuffix(rt.UpstreamModel, openRouterWebSuffix) {
-		return fmt.Errorf("uses %s with upstream_model %q, whose %s suffix runs a web search outside zero data retention", v, rt.UpstreamModel, openRouterWebSuffix)
+	if rt.OnBehalfOf != "" {
+		return fmt.Errorf("is on behalf of endpoint %q and uses %s; only an attested endpoint is sealed to", rt.OnBehalfOf, v)
 	}
 	return capabilities[v.Provider].check(v, rt)
 }
@@ -181,6 +207,8 @@ func (c capability) reasoningShown(up Upstream, chat Chat) error {
 		return fmt.Errorf("uses %s, which keeps a model's reasoning from the client, and must set hides_reasoning", up)
 	case (!c.hides || !chat.reasons()) && chat.HidesReasoning:
 		return fmt.Errorf("sets hides_reasoning, but %s streams whatever reasoning the model does", up)
+	case chat.AnswersInReasoning && !c.answersFromReasoning:
+		return fmt.Errorf("sets answers_in_reasoning, but %s would show a reply that is all reasoning as an empty answer", up)
 	}
 	return chat.thinkingTerms()
 }
@@ -202,6 +230,9 @@ func (c Chat) thinkingTerms() error {
 }
 
 func (a Attested) check(rt Route) error {
+	if rt.OnBehalfOf != "" {
+		return a.checkOnBehalf(rt)
+	}
 	if err := attestedCapability(a.Attester).check(a, rt); err != nil {
 		return err
 	}
@@ -221,6 +252,23 @@ func (a Attested) check(rt Route) error {
 		return fmt.Errorf("is tier %s, so model must equal upstream_model %q: the body is forwarded verbatim and its receipt binds model", rt.Tier, rt.UpstreamModel)
 	}
 	return nil
+}
+
+// checkOnBehalf holds an on-behalf route to what the worker can do for it: a plaintext chat at tee, sealed to a vendor
+// that seals each message and not the whole body.
+func (a Attested) checkOnBehalf(rt Route) error {
+	c, chats := ChatOf(rt.Serves)
+	switch {
+	case !chats:
+		return fmt.Errorf("is on behalf of endpoint %q and serves %s; only a chat is sealed on its client's behalf", rt.OnBehalfOf, rt.Serves.Kind())
+	case rt.Tier != catalog.OnBehalfTier:
+		return fmt.Errorf("is on behalf of endpoint %q at tier %s, and a chat sealed on its client's behalf is tier %s", rt.OnBehalfOf, rt.Tier, catalog.OnBehalfTier)
+	case a.Attester.SealsBody():
+		return fmt.Errorf("is on behalf of endpoint %q, whose attester %s seals a request whole, so it has no seal for a plaintext chat", rt.OnBehalfOf, a)
+	case c.Tokenizer != "":
+		return fmt.Errorf("names a tokenizer, but %s relays its stream verbatim and the proxy counts only what it parses", a)
+	}
+	return attestedCapability(a.Attester).reasoningShown(a, c)
 }
 
 func (c capability) checkEfforts(up Upstream, ch Chat) error {

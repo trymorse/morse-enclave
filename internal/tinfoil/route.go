@@ -3,11 +3,11 @@ package tinfoil
 import (
 	"bytes"
 	"context"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"net/http"
 	"strconv"
 	"time"
@@ -29,9 +29,10 @@ const (
 )
 
 var (
-	errKeyStale     = fmt.Errorf("%w: the Tinfoil router no longer holds the key the request was sealed to", apierr.ErrUnattested)
-	errNoPrompt     = errors.New("tinfoil: a request sealed whole takes no prompt from the proxy")
-	errInvalidNonce = &chat.InvalidNonce{Form: "64 lowercase hexadecimal characters; Tinfoil's report binds no nonce, so it is not sent on"}
+	errKeyStale       = fmt.Errorf("%w: the Tinfoil router no longer holds the key the request was sealed to", apierr.ErrUnattested)
+	errNoPrompt       = errors.New("tinfoil: a request sealed whole takes no prompt from the proxy")
+	errInvalidNonce   = &chat.InvalidNonce{Form: "64 lowercase hexadecimal characters; Tinfoil's report binds no nonce, so it is not sent on"}
+	errInvalidNonceV3 = &chat.InvalidNonce{Form: "64 lowercase hexadecimal characters, the 32 bytes Tinfoil's v3 document binds"}
 )
 
 // Gate is the attestation gate the route's client is pinned through: whether it holds a verified report, the
@@ -48,22 +49,26 @@ type Gate interface {
 // none of a request or a reply: the clear headers name the model and the limit, and the router counts usage
 // outside the seal.
 type Route struct {
-	endpoint upstream.Endpoint
-	model    string
-	gate     Gate
-	wait     func(context.Context, time.Duration) error
+	endpoint  upstream.Endpoint
+	wellKnown upstream.Endpoint
+	host      string
+	model     string
+	gate      Gate
+	wait      func(context.Context, time.Duration) error
 }
 
 var (
 	_ chat.VerbatimRoute = (*Route)(nil)
 )
 
-func New(baseURL, upstreamModel, apiKey string, client *http.Client, gate Gate) *Route {
+func New(baseURL, host, upstreamModel, apiKey string, pinned *http.Client, gate Gate) *Route {
 	return &Route{
-		endpoint: upstream.Endpoint{BaseURL: baseURL, Auth: upstream.Bearer(apiKey), HTTP: client, Refuse: refuseSealed},
-		model:    upstreamModel,
-		gate:     gate,
-		wait:     sleep,
+		endpoint:  upstream.Endpoint{BaseURL: baseURL, Auth: upstream.Bearer(apiKey), HTTP: pinned, Refuse: refuseSealed},
+		wellKnown: upstream.Objects(baseURL, "", pinned),
+		host:      host,
+		model:     upstreamModel,
+		gate:      gate,
+		wait:      sleep,
 	}
 }
 
@@ -162,16 +167,39 @@ func (r *Route) SealPrompt(chat.E2EE, string) (string, error) { return "", errNo
 // worker doesn't, so a plaintext chat on a Tinfoil model's id runs on its plaintext routes.
 func (*Route) OnBehalf() chat.Provider { return nil }
 
-// Attest serves the bundle the gate verified: the report binds no nonce, so the nonce is only checked for
-// its form, and the bundle is the one whose TLS key the client is pinned to and whose HPKE key the router
-// holds.
+// Attest serves the v2 bundle the gate verified. The bundle binds no nonce, so the nonce is only checked for its
+// form, and the bundle is the one whose TLS key the client is pinned to and whose HPKE key the router holds.
 func (r *Route) Attest(_ context.Context, nonce string) (chat.Attestation, error) {
-	if b, err := hex.DecodeString(nonce); err != nil || len(b) != 32 || hex.EncodeToString(b) != nonce {
+	if _, ok := ehbp.LowerHex(nonce, ehbp.NonceLen); !ok {
 		return chat.Attestation{}, errInvalidNonce
 	}
 	report := r.gate.Report()
 	if !r.gate.Ready() || report == nil {
 		return chat.Attestation{}, apierr.ErrUnattested
+	}
+	return chat.Attestation{Report: report, BindModel: r.model}, nil
+}
+
+// AttestV3 fetches the router's v3 document for nonce over the gate's pinned client, again once if the router
+// answered a 5xx: the guest makes each quote in one buffer, so a burst of attestations can find it busy. Any
+// other failure fails the attestation; it never falls back to v2.
+func (r *Route) AttestV3(ctx context.Context, nonce string) (chat.Attestation, error) {
+	if _, ok := ehbp.LowerHex(nonce, ehbp.NonceLen); !ok {
+		return chat.Attestation{}, errInvalidNonceV3
+	}
+	if !r.gate.Ready() {
+		return chat.Attestation{}, apierr.ErrUnattested
+	}
+	report, err := nonced(ctx, r.wellKnown, r.host, nonce)
+	var refused upstream.Refused
+	if errors.As(err, &refused) && refused.Status >= 500 {
+		if err := r.wait(ctx, 50*time.Millisecond+rand.N(100*time.Millisecond)); err != nil {
+			return chat.Attestation{}, err
+		}
+		report, err = nonced(ctx, r.wellKnown, r.host, nonce)
+	}
+	if err != nil {
+		return chat.Attestation{}, err
 	}
 	return chat.Attestation{Report: report, BindModel: r.model}, nil
 }

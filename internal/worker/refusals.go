@@ -59,10 +59,14 @@ func evidenceOf(ctx context.Context, err, writeErr error, began bool) health.Evi
 }
 
 func faultOf(err error) error {
-	if errors.Is(err, chat.ErrSealBroken) || errors.Is(err, e2ee.ErrNotApplied) {
+	if brokeSeal(err) {
 		return fmt.Errorf("%w: %w", apierr.ErrUnattested, err)
 	}
 	return err
+}
+
+func brokeSeal(err error) bool {
+	return errors.Is(err, chat.ErrSealBroken) || errors.Is(err, e2ee.ErrNotApplied)
 }
 
 var contentRefusals = apierr.Table{

@@ -23,14 +23,14 @@ func parse(data []byte) ([]Route, error) { return Parse(data, testDefaultMarkup)
 
 const (
 	tokenPriced  = `"price":{"prompt_micros_per_mtok":150000,"cached_prompt_micros_per_mtok":15000,"completion_micros_per_mtok":600000},"max_output_tokens":16384,"default_max_tokens":16384,"context_tokens":131072,"reasoning_efforts":[]`
-	chatJSON     = `{"model":"m","label":"M","tier":"private","base_url":"https://u","upstream_model":"up/m",` + tokenPriced + `}`
-	imageJSON    = `{"model":"i","label":"I","tier":"anon","owned_by":"V","kind":"image","provider":"fal","base_url":"https://u","upstream_model":"fal-ai/flux-2-pro","api_key_env":"K","price":{"hold_micros_per_image":1}}`
-	videoJSON    = `{"model":"v","label":"V","tier":"anon","owned_by":"V","kind":"video","provider":"fal","base_url":"https://u","upstream_model":"x","api_key_env":"K","price":{"hold_micros_per_second":1}}`
-	searchJSON   = `{"model":"s","label":"S","tier":"anon","owned_by":"V","kind":"search","provider":"parallel","base_url":"https://u","upstream_model":"fast","api_key_env":"K","price":{"micros_per_call":1}}`
-	fetchJSON    = `{"model":"f","label":"F","tier":"anon","owned_by":"V","kind":"fetch","provider":"parallel","base_url":"https://u","upstream_model":"extract","api_key_env":"K","price":{"micros_per_call":1}}`
-	researchJSON = `{"model":"r","label":"R","tier":"anon","owned_by":"V","kind":"research","provider":"parallel","base_url":"https://u","upstream_model":"pro","api_key_env":"K","price":{"micros_per_call":100000}}`
-	speechJSON   = `{"model":"w","label":"W","tier":"anon","owned_by":"V","kind":"transcription","base_url":"https://u","upstream_model":"whisper-1","api_key_env":"K","price":{"micros_per_call":1000}}`
-	nearWhisper  = `{"model":"whisper-tee","label":"Whisper","tier":"tee","attester":"near","kind":"transcription","base_url":"https://cloud-api.near.ai","upstream_model":"openai/whisper-large-v3","api_key_env":"NEAR_API_KEY","price":{"micros_per_call":1000}}`
+	chatJSON     = `{"model":"m","provider_name":"together","label":"M","tier":"private","base_url":"https://u","upstream_model":"up/m",` + tokenPriced + `}`
+	imageJSON    = `{"model":"i","provider_name":"fal","label":"I","tier":"anon","owned_by":"V","kind":"image","provider":"fal","base_url":"https://u","upstream_model":"fal-ai/flux-2-pro","api_key_env":"K","price":{"hold_micros_per_image":1}}`
+	videoJSON    = `{"model":"v","provider_name":"fal","label":"V","tier":"anon","owned_by":"V","kind":"video","provider":"fal","base_url":"https://u","upstream_model":"x","api_key_env":"K","price":{"hold_micros_per_second":1}}`
+	searchJSON   = `{"model":"s","provider_name":"parallel","label":"S","tier":"anon","owned_by":"V","kind":"search","provider":"parallel","base_url":"https://u","upstream_model":"fast","api_key_env":"K","price":{"micros_per_call":1}}`
+	fetchJSON    = `{"model":"f","provider_name":"parallel","label":"F","tier":"anon","owned_by":"V","kind":"fetch","provider":"parallel","base_url":"https://u","upstream_model":"extract","api_key_env":"K","price":{"micros_per_call":1}}`
+	researchJSON = `{"model":"r","provider_name":"parallel","label":"R","tier":"anon","owned_by":"V","kind":"research","provider":"parallel","base_url":"https://u","upstream_model":"pro","api_key_env":"K","price":{"micros_per_call":100000}}`
+	speechJSON   = `{"model":"w","provider_name":"together","label":"W","tier":"anon","owned_by":"V","kind":"transcription","base_url":"https://u","upstream_model":"whisper-1","api_key_env":"K","price":{"micros_per_call":1000}}`
+	nearWhisper  = `{"model":"whisper-tee","provider_name":"near","label":"Whisper","tier":"tee","attester":"near","kind":"transcription","base_url":"https://cloud-api.near.ai","upstream_model":"openai/whisper-large-v3","api_key_env":"NEAR_API_KEY","price":{"micros_per_call":1000}}`
 )
 
 func TestChatImageAndVideoRoutesSellAtTheDefaultMarkupUnlessTheyNameTheirOwn(t *testing.T) {
@@ -152,6 +152,11 @@ func patched(t *testing.T, base string, patch map[string]any) []byte {
 			delete(fields, name)
 		} else {
 			fields[name] = value
+		}
+	}
+	if _, named := patch["provider_name"]; !named {
+		if attester, ok := fields["attester"].(string); ok && attester != "" {
+			fields["provider_name"] = attester
 		}
 	}
 	file, err := json.Marshal([]any{fields})
@@ -277,6 +282,30 @@ func TestARouteIsAppOnlyOnlyWhenItSaysSo(t *testing.T) {
 	}
 }
 
+func TestARouteRebatesHalfItsMarginUnlessItListsAShareFromNoneToAll(t *testing.T) {
+	for name, c := range map[string]struct {
+		patch map[string]any
+		want  money.RebateShare
+		err   string
+	}{
+		"unlisted":   {nil, 5_000, ""},
+		"a share":    {map[string]any{"rebate_share_bps": 2_500}, 2_500, ""},
+		"none":       {map[string]any{"rebate_share_bps": 0}, 0, ""},
+		"all":        {map[string]any{"rebate_share_bps": 10_000}, 10_000, ""},
+		"above all":  {map[string]any{"rebate_share_bps": 10_001}, 0, "rebate_share_bps 10001 must be from 0 to 10000"},
+		"negative":   {map[string]any{"rebate_share_bps": -1}, 0, "rebate_share_bps -1 must be from 0 to 10000"},
+		"a fraction": {map[string]any{"rebate_share_bps": 0.5}, 0, "json: cannot unmarshal number 0.5"},
+	} {
+		rts, err := parse(patched(t, chatJSON, c.patch))
+		switch {
+		case c.err != "" && (err == nil || !strings.Contains(err.Error(), c.err)):
+			t.Errorf("%s: err %v, want %q", name, err, c.err)
+		case c.err == "" && (err != nil || rts[0].RebateShare != c.want):
+			t.Errorf("%s: %+v %v, want rebate share %d", name, rts, err, c.want)
+		}
+	}
+}
+
 func TestTheFileIsANonEmptyArrayOfUniqueModelsAndOneAttesterPerHost(t *testing.T) {
 	for name, c := range map[string]struct{ file, want string }{
 		"not an array":  {`"m"`, "routes must be a JSON array of routes or an object of models and aliases"},
@@ -289,7 +318,7 @@ func TestTheFileIsANonEmptyArrayOfUniqueModelsAndOneAttesterPerHost(t *testing.T
 		}
 	}
 	attested := func(model, tier, attester string) string {
-		return `{"model":"` + model + `","label":"M","tier":"` + tier + `","attester":"` + attester + `","base_url":"https://gw.example","upstream_model":"` + model + `",` + tokenPriced + `}`
+		return `{"model":"` + model + `","provider_name":"` + attester + `","label":"M","tier":"` + tier + `","attester":"` + attester + `","base_url":"https://gw.example","upstream_model":"` + model + `",` + tokenPriced + `}`
 	}
 	rts, err := parse([]byte(`[` + attested("a", "tee", "phala") + `,` + attested("b", "e2ee", "phala") + `]`))
 	if err != nil || rts[0].Upstream != (Attested{Attester: attester.Phala}) || rts[1].Upstream != (Attested{Attester: attester.Phala}) {
@@ -398,16 +427,23 @@ func TestARouteItsUpstreamCannotServeAsDeclaredIsRefusedNamingWhy(t *testing.T) 
 		"anon xai image":                   {imageJSON, map[string]any{"provider": "xai", "retention": "zdr"}, `route "i" is tier anon, and provider xai serves image routes only at tiers [private]`},
 		"xai private chat no zdr":          {chatJSON, map[string]any{"provider": "xai", "api_key_env": "K"}, `route "m" uses provider xai at tier private and must set retention zdr, so every reply must confirm zero data retention`},
 		"xai private image no zdr":         {imageJSON, map[string]any{"provider": "xai", "tier": "private"}, `route "i" uses provider xai at tier private and must set retention zdr`},
-		"anon openrouter":                  {chatJSON, map[string]any{"provider": "openrouter", "api_key_env": "K", "retention": "zdr", "tier": "anon", "owned_by": "V"}, `route "m" is tier anon, and provider openrouter serves chat routes only at tiers [private]`},
-		"openrouter private no zdr":        {chatJSON, map[string]any{"provider": "openrouter", "api_key_env": "K"}, `route "m" uses provider openrouter at tier private and must set retention zdr, because every request it sends is held to OpenRouter's zero data retention endpoints`},
-		"openrouter without a key":         {chatJSON, map[string]any{"provider": "openrouter", "retention": "zdr"}, `route "m" uses provider openrouter and needs api_key_env`},
-		"openrouter online model":          {chatJSON, map[string]any{"provider": "openrouter", "api_key_env": "K", "retention": "zdr", "upstream_model": "deepseek/deepseek-v4.1-flash-1017:online"}, `route "m" uses provider openrouter with upstream_model "deepseek/deepseek-v4.1-flash-1017:online", whose :online suffix runs a web search outside zero data retention`},
-		"openrouter image":                 {imageJSON, map[string]any{"provider": "openrouter", "api_key_env": "K", "retention": "zdr", "tier": "private"}, `route "i" is of kind image, which provider openrouter does not serve`},
 		"anon venice":                      {chatJSON, map[string]any{"provider": "venice", "api_key_env": "K", "retention": "zdr", "tier": "anon", "owned_by": "V"}, `route "m" is tier anon, and provider venice serves chat routes only at tiers [private]`},
 		"anon fireworks":                   {chatJSON, map[string]any{"provider": "fireworks", "api_key_env": "K", "retention": "zdr", "tier": "anon", "owned_by": "V"}, `route "m" is tier anon, and provider fireworks serves chat routes only at tiers [private]`},
 		"fireworks private no zdr":         {chatJSON, map[string]any{"provider": "fireworks", "api_key_env": "K"}, `route "m" uses provider fireworks at tier private and must set retention zdr, because Fireworks keeps no prompt or reply of an open model on /chat/completions`},
 		"fireworks without a key":          {chatJSON, map[string]any{"provider": "fireworks", "retention": "zdr"}, `route "m" uses provider fireworks and needs api_key_env`},
 		"fireworks image":                  {imageJSON, map[string]any{"provider": "fireworks", "api_key_env": "K", "retention": "zdr"}, `route "i" is of kind image, which provider fireworks does not serve`},
+		"anon isoquant":                    {chatJSON, map[string]any{"provider": "isoquant", "api_key_env": "K", "retention": "zdr", "tier": "anon", "owned_by": "V"}, `route "m" is tier anon, and provider isoquant serves chat routes only at tiers [private]`},
+		"isoquant private no zdr":          {chatJSON, map[string]any{"provider": "isoquant", "api_key_env": "K"}, `route "m" uses provider isoquant at tier private and must set retention zdr, because Isoquant keeps nothing only for a request that carries the Isoquant-ZDR header, and has no account setting for it`},
+		"isoquant without a key":           {chatJSON, map[string]any{"provider": "isoquant", "retention": "zdr"}, `route "m" uses provider isoquant and needs api_key_env`},
+		"anon wafer":                       {chatJSON, map[string]any{"provider": "wafer", "api_key_env": "K", "retention": "zdr", "tier": "anon", "owned_by": "V"}, `route "m" is tier anon, and provider wafer serves chat routes only at tiers [private]`},
+		"wafer private no zdr":             {chatJSON, map[string]any{"provider": "wafer", "api_key_env": "K"}, `route "m" uses provider wafer at tier private and must set retention zdr, because Wafer keeps nothing of a request that carries Wafer-ZDR: required, which this provider sends on every request whatever the account's default`},
+		"wafer without a key":              {chatJSON, map[string]any{"provider": "wafer", "retention": "zdr"}, `route "m" uses provider wafer and needs api_key_env`},
+		"anon morph":                       {chatJSON, map[string]any{"provider": "morph", "api_key_env": "K", "retention": "zdr", "tier": "anon", "owned_by": "V"}, `route "m" is tier anon, and provider morph serves chat routes only at tiers [private]`},
+		"morph private no zdr":             {chatJSON, map[string]any{"provider": "morph", "api_key_env": "K"}, `route "m" uses provider morph at tier private and must set retention zdr, because Morph documents no zero retention header or setting, so a Morph route stands on the ZDR addendum signed with Morph, which Daniel confirmed covers our account on 2026-11-05`},
+		"morph without a key":              {chatJSON, map[string]any{"provider": "morph", "retention": "zdr"}, `route "m" uses provider morph and needs api_key_env`},
+		"anon deepinfra":                   {chatJSON, map[string]any{"provider": "deepinfra", "api_key_env": "K", "retention": "zdr", "tier": "anon", "owned_by": "V"}, `route "m" is tier anon, and provider deepinfra serves chat routes only at tiers [private]`},
+		"deepinfra private no zdr":         {chatJSON, map[string]any{"provider": "deepinfra", "api_key_env": "K"}, `route "m" uses provider deepinfra at tier private and must set retention zdr, because DeepInfra's published data policy (https://docs.deepinfra.com/account/data-privacy) keeps inputs in memory only, logs no content and trains on nothing, which Daniel accepted on 2026-11-05 without a written agreement, since DeepInfra offers no per-request header`},
+		"deepinfra without a key":          {chatJSON, map[string]any{"provider": "deepinfra", "retention": "zdr"}, `route "m" uses provider deepinfra and needs api_key_env`},
 		"venice private no zdr":            {chatJSON, map[string]any{"provider": "venice", "api_key_env": "K"}, `route "m" uses provider venice at tier private and must set retention zdr, because Venice keeps no prompt or reply only for the models it serves in its Private mode`},
 		"venice without a key":             {chatJSON, map[string]any{"provider": "venice", "retention": "zdr"}, `route "m" uses provider venice and needs api_key_env`},
 		"venice video":                     {videoJSON, map[string]any{"provider": "venice", "api_key_env": "K"}, `route "v" is of kind video, which provider venice does not serve`},
@@ -652,6 +688,8 @@ func TestATokenizerAndHiddenReasoningAreDeclaredOnlyWhereTheProxyCanUseThem(t *t
 		"declared on a model that cannot reason": {anon("anthropic", map[string]any{"reasoning_efforts": []string{}, "hides_reasoning": true}), `route "m" sets hides_reasoning, but provider anthropic streams whatever reasoning the model does`},
 		"declared on a streaming provider":       {map[string]any{"hides_reasoning": true}, `route "m" sets hides_reasoning, but provider openai streams whatever reasoning the model does`},
 		"declared on an attested route":          {map[string]any{"tier": "tee", "attester": "phala", "hides_reasoning": true}, `route "m" sets hides_reasoning, but attester phala streams whatever reasoning the model does`},
+		"answers in reasoning on openai":         {map[string]any{"answers_in_reasoning": true}, `route "m" sets answers_in_reasoning, but provider openai would show a reply that is all reasoning as an empty answer`},
+		"answers in reasoning on an attester":    {map[string]any{"tier": "tee", "attester": "phala", "answers_in_reasoning": true}, `route "m" sets answers_in_reasoning, but attester phala would show a reply that is all reasoning as an empty answer`},
 	} {
 		if _, err := parse(patched(t, chatJSON, c.patch)); err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Errorf("%s: err %v, want %q", name, err, c.want)
@@ -663,6 +701,15 @@ func TestATokenizerAndHiddenReasoningAreDeclaredOnlyWhereTheProxyCanUseThem(t *t
 	}
 	if c := rs[0].Serves.(Chat); c.Tokenizer != "glm-5" || c.HidesReasoning {
 		t.Errorf("parsed %+v, want tokenizer glm-5 showing its reasoning", c)
+	}
+	for _, provider := range []string{"novita", "deepinfra"} {
+		rs, err := parse(patched(t, chatJSON, map[string]any{"provider": provider, "retention": "zdr", "api_key_env": "K", "answers_in_reasoning": true}))
+		if err != nil {
+			t.Fatalf("%s: %v", provider, err)
+		}
+		if !rs[0].Serves.(Chat).AnswersInReasoning {
+			t.Errorf("%s: parsed without answers_in_reasoning", provider)
+		}
 	}
 }
 
@@ -719,8 +766,8 @@ func TestARouteThatHidesReasoningDeclaresAMeasuredThinkingRateWithinItsDecodeBou
 }
 
 func TestASealedRouteListsFallbackVendorsThatServeItsTermsUnderTheirOwnAttesterHostAndKey(t *testing.T) {
-	const sealed = `{"model":"z/m","label":"M","tier":"e2ee","attester":"near","base_url":"https://cloud-api.near.ai","api_key_env":"NEAR_API_KEY","upstream_model":"z/m",` + tokenPriced
-	phala := `{"attester":"phala","base_url":"https://inference.phala.com","api_key_env":"PHALA_API_KEY"}`
+	const sealed = `{"model":"z/m","provider_name":"near","label":"M","tier":"e2ee","attester":"near","base_url":"https://cloud-api.near.ai","api_key_env":"NEAR_API_KEY","upstream_model":"z/m",` + tokenPriced
+	phala := `{"attester":"phala","provider_name":"phala","base_url":"https://inference.phala.com","api_key_env":"PHALA_API_KEY"}`
 	withFallbacks := func(route string, fallbacks ...string) string {
 		return route + `,"fallbacks":[` + strings.Join(fallbacks, ",") + `]}`
 	}
@@ -743,15 +790,15 @@ func TestASealedRouteListsFallbackVendorsThatServeItsTermsUnderTheirOwnAttesterH
 	}
 
 	for name, c := range map[string]struct{ file, want string }{
-		"on tier tee":                        {`[` + withFallbacks(strings.Replace(strings.Replace(sealed, `"tier":"e2ee"`, `"tier":"tee"`, 1), `"attester":"near"`, `"attester":"phala"`, 1), `{"attester":"near","base_url":"https://cloud-api.near.ai"}`) + `]`, `route "z/m" is tier tee and takes no fallbacks`},
+		"on tier tee":                        {`[` + withFallbacks(strings.NewReplacer(`"tier":"e2ee"`, `"tier":"tee"`, `"attester":"near"`, `"attester":"phala"`, `"provider_name":"near"`, `"provider_name":"phala"`).Replace(sealed), `{"attester":"near","provider_name":"near","base_url":"https://cloud-api.near.ai"}`) + `]`, `route "z/m" is tier tee and takes no fallbacks`},
 		"on tier private":                    {`[` + strings.TrimSuffix(chatJSON, `}`) + `,"fallbacks":[` + phala + `]}]`, `route "m" is tier private and takes no fallbacks`},
-		"naming the route's own attester":    {`[` + withFallbacks(sealed, `{"attester":"near","base_url":"https://other.near.ai"}`) + `]`, `route "z/m" names attester near twice`},
+		"naming the route's own attester":    {`[` + withFallbacks(sealed, `{"attester":"near","provider_name":"near","base_url":"https://other.near.ai"}`) + `]`, `route "z/m" names attester near twice`},
 		"naming one attester twice":          {`[` + withFallbacks(sealed, phala, phala) + `]`, `route "z/m" names attester phala twice`},
-		"naming its own upstream_model":      {`[` + withFallbacks(sealed, `{"attester":"phala","base_url":"https://inference.phala.com","upstream_model":"z/m"}`) + `]`, `json: unknown field "upstream_model"`},
-		"with an unknown attester":           {`[` + withFallbacks(sealed, `{"attester":"acme","base_url":"https://acme.example"}`) + `]`, `fallback "acme": route "z/m" unknown attester "acme"`},
-		"failing the vendor's own check":     {`[` + withFallbacks(sealed, `{"attester":"phala","base_url":"http://inference.phala.com"}`) + `]`, `fallback "phala": route "z/m" base_url must use https`},
-		"on a host another attester gates":   {`[` + withFallbacks(sealed, `{"attester":"phala","base_url":"https://cloud-api.near.ai/phala"}`) + `]`, `share host cloud-api.near.ai but name attesters near and phala`},
-		"beside another object of the model": {`[` + withFallbacks(sealed, phala) + `,` + strings.Replace(sealed, `"attester":"near","base_url":"https://cloud-api.near.ai"`, `"attester":"phala","base_url":"https://inference.phala.com"`, 1) + `}]`, `route 1 repeats model "z/m"`},
+		"naming its own upstream_model":      {`[` + withFallbacks(sealed, `{"attester":"phala","provider_name":"phala","base_url":"https://inference.phala.com","upstream_model":"z/m"}`) + `]`, `json: unknown field "upstream_model"`},
+		"with an unknown attester":           {`[` + withFallbacks(sealed, `{"attester":"acme","provider_name":"acme","base_url":"https://acme.example"}`) + `]`, `fallback "acme": route "z/m" unknown attester "acme"`},
+		"failing the vendor's own check":     {`[` + withFallbacks(sealed, `{"attester":"phala","provider_name":"phala","base_url":"http://inference.phala.com"}`) + `]`, `fallback "phala": route "z/m" base_url must use https`},
+		"on a host another attester gates":   {`[` + withFallbacks(sealed, `{"attester":"phala","provider_name":"phala","base_url":"https://cloud-api.near.ai/phala"}`) + `]`, `share host cloud-api.near.ai but name attesters near and phala`},
+		"beside another object of the model": {`[` + withFallbacks(sealed, phala) + `,` + strings.NewReplacer(`"provider_name":"near"`, `"provider_name":"phala"`, `"attester":"near","base_url":"https://cloud-api.near.ai"`, `"attester":"phala","base_url":"https://inference.phala.com"`).Replace(sealed) + `}]`, `route 1 repeats model "z/m"`},
 	} {
 		if _, err := parse([]byte(c.file)); err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Errorf("%s: err %v, want %q", name, err, c.want)
@@ -766,9 +813,13 @@ func TestEveryChatRouteOfEveryUpstreamAndTierListsItsEfforts(t *testing.T) {
 	efforts := []string{"none", "low", "high"}
 	for name, patch := range map[string]map[string]any{
 		"openai":     {},
-		"openrouter": {"provider": "openrouter", "retention": "zdr", "api_key_env": "K"},
 		"venice":     {"provider": "venice", "retention": "zdr", "api_key_env": "K"},
 		"fireworks":  {"provider": "fireworks", "retention": "zdr", "api_key_env": "K"},
+		"isoquant":   {"provider": "isoquant", "retention": "zdr", "api_key_env": "K"},
+		"wafer":      {"provider": "wafer", "retention": "zdr", "api_key_env": "K"},
+		"novita":     {"provider": "novita", "retention": "zdr", "api_key_env": "K"},
+		"morph":      {"provider": "morph", "retention": "zdr", "api_key_env": "K"},
+		"deepinfra":  {"provider": "deepinfra", "retention": "zdr", "api_key_env": "K"},
 		"xai":        {"provider": "xai", "retention": "zdr", "api_key_env": "K", "hides_reasoning": true, "hidden_reasoning_tps": 1, "decode_max_tps": 1},
 		"phala tee":  {"tier": "tee", "attester": "phala"},
 		"phala e2ee": {"tier": "e2ee", "attester": "phala", "model": "up/m"},
@@ -828,8 +879,7 @@ func TestARouteHedgesUnlessItIsAttestedOrItsProviderIsSilentWhileReasoningOrSlow
 			t.Errorf("%s: Hedgeable %t, want %t", name, got, c.want)
 		}
 	}
-	tee := strings.Replace(chatJSON, `"tier":"private"`, `"tier":"tee","attester":"phala"`, 1)
-	rts, err := parse([]byte(`[` + tee + `]`))
+	rts, err := parse(patched(t, chatJSON, map[string]any{"tier": "tee", "attester": "phala"}))
 	if err != nil {
 		t.Fatal(err)
 	}

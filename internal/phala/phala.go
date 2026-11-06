@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"morse/backend/internal/aci"
 	"morse/backend/internal/apierr"
 	"morse/backend/internal/attestation"
 	"morse/backend/internal/capped"
@@ -118,10 +119,10 @@ type Route struct {
 	keys     Keys
 }
 
-// Keys are the gateway's E2EE keys that verified reports list now.
 type Keys interface {
 	Holds(key []byte) bool
 	HeldX25519() (*ecdh.PublicKey, bool)
+	Keyset(digest aci.Hash) (aci.Keyset, bool)
 }
 
 var (
@@ -155,7 +156,7 @@ func New(baseURL, upstreamModel, apiKey string, clients Clients, keys Keys) *Rou
 	return &Route{
 		Provider: provider(openaicompat.HTTPSender{Endpoint: plaintext}),
 		Gateway:  objects,
-		verbatim: openaicompat.Relay{Endpoint: sealed, Model: upstreamModel, Force: maps.Clone(constraint), Admits: map[string]func(json.RawMessage) bool{"provider": admitsProvider}, Receipt: openaicompat.ReceiptHeaders(chat.ReceiptHeaders...)},
+		verbatim: openaicompat.Relay{Endpoint: sealed, Model: upstreamModel, Force: maps.Clone(constraint), Admits: map[string]func(json.RawMessage) bool{"provider": admitsProvider}, Receipt: openaicompat.ReceiptHeaders(chat.ReceiptHeaders...), Proves: objects.prover(upstreamModel, keys)},
 		onBehalf: provider(openaicompat.SealedSender{Endpoint: plaintext, Sealer: sealer{model: upstreamModel, keys: keys}}),
 		keys:     keys,
 	}
@@ -243,6 +244,15 @@ func (g Gateway) Report(ctx context.Context, nonce string) ([]byte, error) {
 }
 
 func (g Gateway) Receipt(ctx context.Context, id string) (json.RawMessage, error) {
+	if raw, ok := kept.get(id); ok {
+		receiptsKept.Add("hits", 1)
+		return raw, nil
+	}
+	receiptsKept.Add("misses", 1)
+	return g.fetchReceipt(ctx, id)
+}
+
+func (g Gateway) fetchReceipt(ctx context.Context, id string) (json.RawMessage, error) {
 	if !receiptID.MatchString(id) {
 		return nil, errInvalidReceipt
 	}

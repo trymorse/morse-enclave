@@ -2,14 +2,9 @@ package ehbp
 
 import (
 	"bytes"
-	"crypto/ecdh"
-	"crypto/rand"
 	"encoding/binary"
-	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"net/http"
-	"os"
 	"strings"
 	"testing"
 
@@ -107,98 +102,6 @@ func TestFramesRefusesPlaintextAndTruncation(t *testing.T) {
 	}
 }
 
-func TestARequestRoundTripsThroughBothEnds(t *testing.T) {
-	key, err := ecdh.X25519().GenerateKey(rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	plain := bytes.Repeat([]byte(`{"model":"glm-5-3","tools":[]}`), 5000) // over one request chunk
-	req, body, err := SealRequest(key.PublicKey().Bytes(), plain)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if binary.BigEndian.Uint32(body) != requestChunk+gcmTagLen {
-		t.Fatalf("the first frame seals %d bytes, not one chunk", binary.BigEndian.Uint32(body))
-	}
-	opened, responder, err := OpenRequest(key, req.EncapsulatedHex(), bytes.NewReader(body))
-	if err != nil || !bytes.Equal(opened, plain) {
-		t.Fatalf("opened %d bytes, err %v", len(opened), err)
-	}
-	reply := slicesConcat(responder.Seal([]byte("data: one\n\n")), responder.Seal([]byte("data: [DONE]\n\n")))
-	opener, err := req.Reply(responder.Nonce)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got, err := opener.OpenAll(bytes.NewReader(reply)); err != nil || string(got) != "data: one\n\ndata: [DONE]\n\n" {
-		t.Fatalf("got %q, err %v", got, err)
-	}
-	other, _ := req.Reply(strings.Repeat("00", 32))
-	if _, err := other.OpenAll(bytes.NewReader(reply)); !errors.Is(err, ErrOpen) {
-		t.Fatalf("a reply opened under another nonce: %v", err)
-	}
-}
-
-// Tinfoil's own vectors: the reply key schedule, and a sealed reply.
-func TestTinfoilsVectors(t *testing.T) {
-	var derive struct{ ExportedSecret, RequestEnc, ResponseNonce, DerivedKey, DerivedNonceBase string }
-	readJSON(t, "testdata/derive.json", &derive)
-	_, nbase, err := replyKeys(unhex(t, derive.ExportedSecret), unhex(t, derive.RequestEnc), unhex(t, derive.ResponseNonce))
-	if err != nil || hex.EncodeToString(nbase) != derive.DerivedNonceBase {
-		t.Fatalf("nonce base %x, err %v", nbase, err)
-	}
-	var reply struct{ ExportedSecret, RequestEnc, ResponseNonce, Plaintext, EncryptedResponse string }
-	readJSON(t, "testdata/response-decryption.json", &reply)
-	o, err := replyOpener(unhex(t, reply.ExportedSecret), unhex(t, reply.RequestEnc), reply.ResponseNonce)
-	if err != nil {
-		t.Fatal(err)
-	}
-	got, err := o.OpenAll(bytes.NewReader(unhex(t, reply.EncryptedResponse)))
-	if err != nil || hex.EncodeToString(got) != reply.Plaintext {
-		t.Fatalf("got %x, err %v", got, err)
-	}
-}
-
-// A reply inference.tinfoil.sh sealed, opened from the client's exported secret: what the proxy relays opens to
-// the SSE stream, frame by frame.
-func TestALiveTinfoilReplyOpens(t *testing.T) {
-	var live struct {
-		Enc            string   `json:"enc"`
-		ResponseSecret string   `json:"response_secret"`
-		ResponseNonce  string   `json:"response_nonce"`
-		Frames         []string `json:"frames"`
-		Plaintext      string   `json:"plaintext"`
-		UsageTrailer   string   `json:"usage_trailer"`
-	}
-	readJSON(t, "testdata/live-exchange.json", &live)
-	var body []byte
-	for _, f := range live.Frames {
-		body = append(body, unhex(t, f)...)
-	}
-	o, err := replyOpener(unhex(t, live.ResponseSecret), unhex(t, live.Enc), live.ResponseNonce)
-	if err != nil {
-		t.Fatal(err)
-	}
-	got, err := o.OpenAll(bytes.NewReader(body))
-	if err != nil || string(got) != live.Plaintext {
-		t.Fatalf("err %v, opened %q", err, got)
-	}
-	estimate := 0
-	n, err := Frames(bytes.NewReader(body), MaxFrame, func(frame []byte) error {
-		estimate += FrameTokens(len(frame))
-		return nil
-	})
-	if err != nil || n != len(live.Frames) {
-		t.Fatalf("framed %d of %d, err %v", n, len(live.Frames), err)
-	}
-	usage, model, err := ParseUsageMetrics(live.UsageTrailer)
-	if err != nil || model != "glm-5-3" || usage.PromptTokens != 164 || usage.CompletionTokens != 15 {
-		t.Fatalf("usage %+v model %q err %v", usage, model, err)
-	}
-	if estimate < usage.CompletionTokens {
-		t.Fatalf("the frames' estimate %d falls short of the %d tokens the router counted", estimate, usage.CompletionTokens)
-	}
-}
-
 func TestParseUsageMetricsReadsNamedFieldsInAnyOrder(t *testing.T) {
 	u, model, err := ParseUsageMetrics("completion=30,model=deepseek-v4-1-flash,prompt=2000,total=2030,cached_prompt_tokens=1500,uncached_prompt_tokens=500,cost_usd=0.001")
 	if err != nil || model != "deepseek-v4-1-flash" || u != (chat.Usage{PromptTokens: 2000, CompletionTokens: 30, CachedPromptTokens: 1500}) {
@@ -211,27 +114,11 @@ func TestParseUsageMetricsReadsNamedFieldsInAnyOrder(t *testing.T) {
 	}
 }
 
-func readJSON(t *testing.T, path string, into any) {
-	t.Helper()
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := json.Unmarshal(raw, into); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func unhex(t *testing.T, s string) []byte {
-	t.Helper()
-	b, err := hex.DecodeString(s)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return b
-}
-
 func slicesConcat(parts ...[]byte) []byte { return bytes.Join(parts, nil) }
+
+func frame(sealed []byte) []byte {
+	return append(binary.BigEndian.AppendUint32(nil, uint32(len(sealed))), sealed...)
+}
 
 // Frames of GLM 5.3's and DeepSeek V4.1 Flash's live replies through Tinfoil's router (2026-11-03): each
 // frame's size, its length header included, and the completion tokens its running usage grew by.

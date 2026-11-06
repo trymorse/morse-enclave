@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
@@ -11,6 +12,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"morse/backend/internal/apierr"
 	"morse/backend/internal/upstream"
@@ -80,11 +82,85 @@ func TestARedirectIsARefusalAndIsNeverFollowed(t *testing.T) {
 }
 
 func TestAnUnreachableVendorIsOpaqueAndNamesNoAddress(t *testing.T) {
-	srv := httptest.NewServer(http.NotFoundHandler())
-	srv.Close()
-	_, err := post(t, srv.Client(), srv.URL)
+	_, err := post(t, &http.Client{}, "http://127.0.0.1:1")
 	if !errors.Is(err, upstream.ErrUnreachable) || errors.As(err, new(apierr.Error)) || strings.Contains(err.Error(), "127.0.0.1") {
 		t.Errorf("err %v", err)
+	}
+}
+
+func TestAVendorThatNeverReceivedTheRequestIsNotSentAndOneThatDroppedItIsOnlyUnreachable(t *testing.T) {
+	plain := httptest.NewServer(http.NotFoundHandler())
+	t.Cleanup(plain.Close)
+	dropping := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.ReadAll(r.Body)
+		conn, _, err := w.(http.Hijacker).Hijack()
+		if err == nil {
+			conn.Close()
+		}
+	}))
+	t.Cleanup(dropping.Close)
+	for name, c := range map[string]struct {
+		url     string
+		notSent bool
+	}{
+		"a refused connection":                   {"http://127.0.0.1:1", true},
+		"a name that never resolves":             {"http://vendor.invalid", true},
+		"a failed tls handshake":                 {"https://" + plain.Listener.Addr().String(), true},
+		"a connection dropped after the request": {dropping.URL, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := post(t, &http.Client{}, c.url)
+			if !errors.Is(err, upstream.ErrUnreachable) || errors.Is(err, upstream.ErrNotSent) != c.notSent {
+				t.Errorf("err %v, want unreachable and not sent %v", err, c.notSent)
+			}
+		})
+	}
+}
+
+func TestACallerWhoLeavesDuringTheHandshakeGetsTheirCancelNotSentAndNotUnreachable(t *testing.T) {
+	silent, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { silent.Close() })
+	accepted := make(chan net.Conn, 1)
+	go func() {
+		if conn, err := silent.Accept(); err == nil {
+			accepted <- conn
+		}
+	}()
+	t.Cleanup(func() {
+		if conn, ok := <-accepted; ok {
+			conn.Close()
+		}
+	})
+	ctx, leave := context.WithCancel(context.Background())
+	time.AfterFunc(50*time.Millisecond, leave)
+	vendor := upstream.Endpoint{BaseURL: "https://" + silent.Addr().String(), HTTP: &http.Client{}}
+	_, err = vendor.Open(ctx, upstream.Request{Method: http.MethodPost, Body: []byte(`{"a":1}`)})
+	if !errors.Is(err, context.Canceled) || !errors.Is(err, upstream.ErrNotSent) || errors.Is(err, upstream.ErrUnreachable) {
+		t.Errorf("err %v, want the caller's cancel, not sent, and not unreachable", err)
+	}
+}
+
+func TestOverHTTP2AStreamAbortedAfterItsBodyWasReadIsSentAndAClosedServerIsNot(t *testing.T) {
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.ReadAll(r.Body)
+		panic(http.ErrAbortHandler)
+	}))
+	srv.EnableHTTP2 = true
+	srv.StartTLS()
+	t.Cleanup(srv.Close)
+	client := srv.Client()
+	_, err := post(t, client, srv.URL)
+	if !errors.Is(err, upstream.ErrUnreachable) || errors.Is(err, upstream.ErrNotSent) {
+		t.Errorf("aborted stream: err %v, want unreachable and sent", err)
+	}
+	srv.Close()
+	client.CloseIdleConnections()
+	_, err = post(t, client, srv.URL)
+	if !errors.Is(err, upstream.ErrUnreachable) || !errors.Is(err, upstream.ErrNotSent) {
+		t.Errorf("closed server: err %v, want unreachable and not sent", err)
 	}
 }
 

@@ -46,7 +46,7 @@ func TestADrainReturnsWhatWasObservedSinceTheLastOneUnderTheRoutesKey(t *testing
 	if again := r.Meter(route); again != m {
 		t.Fatal("the same route got a second meter, so one batch would name its key twice")
 	}
-	m.Observe(Observation{Path: PathStream, Outcome: OK, Duration: 2 * time.Second, TTFT: 300 * time.Millisecond, Overhead: time.Millisecond, OutputTokens: 40, Retries: 2, Hedges: 1})
+	m.Observe(Observation{Path: PathStream, Outcome: OK, Duration: 2 * time.Second, TTFT: 300 * time.Millisecond, Overhead: time.Millisecond, OutputTokens: 400, Retries: 2, Hedges: 1})
 	m.Observe(Observation{Path: PathStream, Outcome: OK, Duration: time.Second, TTFT: 200 * time.Millisecond, Overhead: time.Millisecond})
 	m.Observe(Observation{Path: PathBuffered, Outcome: Throttled, Overhead: time.Millisecond})
 	batch := r.Drain()
@@ -57,8 +57,8 @@ func TestADrainReturnsWhatWasObservedSinceTheLastOneUnderTheRoutesKey(t *testing
 	if ok.Key != route || ok.Requests != 2 || ok.Duration.Total() != 2 || ok.TTFT.Total() != 2 || ok.Overhead.Total() != 2 {
 		t.Errorf("stream/ok row %+v, want two requests with every latency under the route's key", ok)
 	}
-	if ok.OutputTokens != 40 || ok.GenerationMicros != 2_000_000 || ok.Retries != 2 || ok.Hedges != 1 {
-		t.Errorf("stream/ok sums %d tokens, %dµs, %d retries, %d hedges, want 40 over the 2s of the one call that reported them, 2, and 1", ok.OutputTokens, ok.GenerationMicros, ok.Retries, ok.Hedges)
+	if ok.OutputTokens != 400 || ok.GenerationMicros != 1_700_000 || ok.Retries != 2 || ok.Hedges != 1 {
+		t.Errorf("stream/ok sums %d tokens, %dµs, %d retries, %d hedges, want 400 over the 1.7s after the first token of the one call that reported them, 2, and 1", ok.OutputTokens, ok.GenerationMicros, ok.Retries, ok.Hedges)
 	}
 	throttled := rowFor(t, batch, PathBuffered, Throttled)
 	if throttled.Requests != 1 || len(throttled.Duration) != 0 || len(throttled.TTFT) != 0 || throttled.Overhead.Total() != 1 {
@@ -91,8 +91,8 @@ func TestAnObservationRacingADrainIsNeitherLostNorDoubled(t *testing.T) {
 			for i := range each {
 				meters[w%len(meters)].Observe(Observation{
 					Path: PathStream, Outcome: Outcome(i % int(outcomeCount)),
-					Duration: time.Duration(i+1) * time.Microsecond, TTFT: time.Millisecond, Overhead: time.Microsecond,
-					OutputTokens: 3, Retries: 1, Hedges: 1,
+					Duration: 101*time.Millisecond + time.Duration(i+1)*time.Microsecond, TTFT: time.Millisecond, Overhead: time.Microsecond,
+					OutputTokens: MinDecodeTokens, Retries: 1, Hedges: 1,
 				})
 			}
 		})
@@ -130,8 +130,75 @@ func TestAnObservationRacingADrainIsNeitherLostNorDoubled(t *testing.T) {
 	if total.Requests != want || total.Duration.Total() != want || total.TTFT.Total() != want || total.Overhead.Total() != want {
 		t.Errorf("drains took %d requests, %d durations, %d ttfts, %d overheads, want %d each", total.Requests, total.Duration.Total(), total.TTFT.Total(), total.Overhead.Total(), want)
 	}
-	const micros = writers * each * (each + 1) / 2
-	if total.OutputTokens != 3*want || total.GenerationMicros != micros || total.Retries != want || total.Hedges != want {
-		t.Errorf("drains took %d tokens, %dµs, %d retries, %d hedges, want %d, %d, %d, %d", total.OutputTokens, total.GenerationMicros, total.Retries, total.Hedges, 3*want, micros, want, want)
+	micros := uint64(writers * (each*100_000 + each*(each+1)/2))
+	if total.OutputTokens != MinDecodeTokens*want || total.GenerationMicros != micros || total.Retries != want || total.Hedges != want {
+		t.Errorf("drains took %d tokens, %dµs, %d retries, %d hedges, want %d, %d, %d, %d", total.OutputTokens, total.GenerationMicros, total.Retries, total.Hedges, MinDecodeTokens*want, micros, want, want)
+	}
+}
+
+func tokensPerSecond(row Row) float64 {
+	return float64(row.OutputTokens) * 1e6 / float64(row.GenerationMicros)
+}
+
+func TestTokensPerSecondIsTheDecodeSpeedOfLongStreamedReplies(t *testing.T) {
+	r := NewRecorder()
+	m := r.Meter(route)
+	m.Observe(Observation{Path: PathStream, Outcome: OK, Duration: 3 * time.Second, TTFT: time.Second, OutputTokens: 276})
+	m.Observe(Observation{Path: PathStream, Outcome: OK, Duration: 1500 * time.Millisecond, TTFT: 1200 * time.Millisecond, OutputTokens: 11})
+	m.Observe(Observation{Path: PathBuffered, Outcome: OK, Duration: 3 * time.Second, OutputTokens: 500})
+	m.Observe(Observation{Path: PathStream, Outcome: OK, Duration: 2*time.Second - time.Microsecond, TTFT: time.Second, OutputTokens: 2000})
+	batch := r.Drain()
+	stream := rowFor(t, batch, PathStream, OK)
+	if got := tokensPerSecond(stream); got != 138 {
+		t.Errorf("stream/ok reads %d tokens over %dµs, %.1f a second, want 138: the 276 tokens over the 2s after the first token, the 11-token reply and the 2,000 that came in one burst left out", stream.OutputTokens, stream.GenerationMicros, got)
+	}
+	if stream.Requests != 3 || stream.Duration.Total() != 3 || stream.TTFT.Total() != 3 {
+		t.Errorf("stream/ok row %+v, want all three replies counted with a duration and a ttft", stream)
+	}
+	buffered := rowFor(t, batch, PathBuffered, OK)
+	if buffered.Requests != 1 || buffered.Duration.Total() != 1 || buffered.OutputTokens != 0 || buffered.GenerationMicros != 0 {
+		t.Errorf("buffered/ok row %+v, want one request with a duration and no tokens, since a buffered reply has no first token to measure decode from", buffered)
+	}
+}
+
+func TestALongReplyFasterThanMaxDecodeRateIsABurstAndLeftOut(t *testing.T) {
+	r := NewRecorder()
+	m := r.Meter(route)
+	for range 10 {
+		m.Observe(Observation{Path: PathStream, Outcome: OK, Duration: 11 * time.Second, TTFT: time.Second, OutputTokens: 500})
+	}
+	m.Observe(Observation{Path: PathStream, Outcome: OK, Duration: time.Second + 101*time.Millisecond, TTFT: time.Second, OutputTokens: 5000})
+	if row := rowFor(t, r.Drain(), PathStream, OK); tokensPerSecond(row) != 50 {
+		t.Errorf("%d tokens over %dµs, %.1f a second, want 50: ten 500-token replies over 10s each, and the 5,000 tokens in 101ms left out as a burst", row.OutputTokens, row.GenerationMicros, tokensPerSecond(row))
+	}
+}
+
+func TestALongReplyJustUnderMaxDecodeRateCounts(t *testing.T) {
+	r := NewRecorder()
+	m := r.Meter(route)
+	m.Observe(Observation{Path: PathStream, Outcome: OK, Duration: time.Second + 2600*time.Millisecond, TTFT: time.Second, OutputTokens: 5000})
+	if row := rowFor(t, r.Drain(), PathStream, OK); row.OutputTokens != 5000 || row.GenerationMicros != 2_600_000 {
+		t.Errorf("%d tokens over %dµs, want 5000 over 2600000: about 1,923 a second is under the cap", row.OutputTokens, row.GenerationMicros)
+	}
+}
+
+func TestADecodeAtExactlyMaxDecodeRateCountsAndOneMicrosecondFasterDoesNot(t *testing.T) {
+	for _, tc := range []struct {
+		decode         time.Duration
+		tokens, micros uint64
+	}{{2500 * time.Millisecond, 5000, 2_500_000}, {2500*time.Millisecond - time.Microsecond, 0, 0}} {
+		r := NewRecorder()
+		r.Meter(route).Observe(Observation{Path: PathStream, Outcome: OK, Duration: time.Second + tc.decode, TTFT: time.Second, OutputTokens: 5000})
+		if row := rowFor(t, r.Drain(), PathStream, OK); row.OutputTokens != tc.tokens || row.GenerationMicros != tc.micros {
+			t.Errorf("5,000 tokens over %v recorded %d tokens over %dµs, want %d over %dµs: 5,000 at 2,000 a second take exactly 2.5s", tc.decode, row.OutputTokens, row.GenerationMicros, tc.tokens, tc.micros)
+		}
+	}
+}
+
+func TestAReplyUnderMinDecodeTokensIsLeftOut(t *testing.T) {
+	r := NewRecorder()
+	r.Meter(route).Observe(Observation{Path: PathStream, Outcome: OK, Duration: 11 * time.Second, TTFT: time.Second, OutputTokens: 199})
+	if row := rowFor(t, r.Drain(), PathStream, OK); row.OutputTokens != 0 || row.GenerationMicros != 0 {
+		t.Errorf("a 199-token reply recorded %d tokens over %dµs, want none: under %d tokens a reply is mostly fixed latency", row.OutputTokens, row.GenerationMicros, MinDecodeTokens)
 	}
 }

@@ -96,6 +96,19 @@ func (w *InProcess) startCount(h Handle, p *pendingCount, f measure.RouteFigures
 	})
 }
 
+func (w *InProcess) startProof(h Handle, e measure.Evidence, u unproven) <-chan Count {
+	return w.counts(h, func(ctx context.Context) Count {
+		ctx, cancel := context.WithTimeout(ctx, w.proofBudget)
+		defer cancel()
+		defer context.AfterFunc(w.counters.ctx, cancel)()
+		if u.prove(ctx) != nil {
+			return Count{}
+		}
+		e.Upstream = u.usage
+		return Count{Measurement: e.Measure(), Counted: true}
+	})
+}
+
 func (w *InProcess) startSample(h Handle, p *pendingCount) <-chan Count {
 	return w.counts(h, func(ctx context.Context) Count {
 		var raw measure.RawCount

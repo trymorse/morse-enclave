@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"iter"
 	"maps"
 	"net/http"
 	"slices"
@@ -153,7 +154,7 @@ type e2eeKeys struct {
 
 type keyset struct {
 	notAfter time.Time
-	keys     []aci.Key
+	aci.Keyset
 }
 
 func (k *e2eeKeys) keep(r attestation.PhalaReport) {
@@ -164,7 +165,7 @@ func (k *e2eeKeys) keep(r attestation.PhalaReport) {
 	if k.byEndpoint == nil {
 		k.byEndpoint = map[string]keyset{}
 	}
-	k.byEndpoint[r.Endpoint.ID] = keyset{notAfter: r.Endpoint.NotAfter, keys: slices.Clone(r.Keyset.E2EEKeys)}
+	k.byEndpoint[r.Endpoint.ID] = keyset{notAfter: r.Endpoint.NotAfter, Keyset: r.Keyset}
 }
 
 func (g phalaGate) Holds(key []byte) bool {
@@ -182,23 +183,39 @@ func (g phalaGate) HeldX25519() (*ecdh.PublicKey, bool) {
 }
 
 func (g phalaGate) firstHeld(match func(aci.Key) bool) (aci.Key, bool) {
-	a := g.Anchor()
-	if a == nil {
-		return aci.Key{}, false
-	}
-	g.keys.mu.Lock()
-	defer g.keys.mu.Unlock()
-	now := g.keys.now()
-	for _, id := range slices.Sorted(maps.Keys(a.Endpoints)) {
-		ks := g.keys.byEndpoint[id]
-		if !now.Before(ks.notAfter) {
-			continue
-		}
-		if i := slices.IndexFunc(ks.keys, match); i >= 0 {
-			return ks.keys[i], true
+	for ks := range g.verified() {
+		if i := slices.IndexFunc(ks.E2EEKeys, match); i >= 0 {
+			return ks.E2EEKeys[i], true
 		}
 	}
 	return aci.Key{}, false
+}
+
+func (g phalaGate) Keyset(digest aci.Hash) (aci.Keyset, bool) {
+	for ks := range g.verified() {
+		if ks.Digest == digest {
+			return ks, true
+		}
+	}
+	return aci.Keyset{}, false
+}
+
+func (g phalaGate) verified() iter.Seq[aci.Keyset] {
+	return func(yield func(aci.Keyset) bool) {
+		a := g.Anchor()
+		if a == nil {
+			return
+		}
+		g.keys.mu.Lock()
+		defer g.keys.mu.Unlock()
+		now := g.keys.now()
+		for _, id := range slices.Sorted(maps.Keys(a.Endpoints)) {
+			ks := g.keys.byEndpoint[id]
+			if now.Before(ks.notAfter) && !yield(ks.Keyset) {
+				return
+			}
+		}
+	}
 }
 
 func (g phalaGate) Route(up attester.Upstream) chat.VerbatimRoute { return g.route(up) }
@@ -339,7 +356,7 @@ type tinfoilGate struct {
 }
 
 func (g tinfoilGate) Route(up attester.Upstream) chat.VerbatimRoute {
-	return tinfoil.New(up.BaseURL, up.Model, up.APIKey, g.Client(), g)
+	return tinfoil.New(up.BaseURL, up.Host, up.Model, up.APIKey, g.Client(), g)
 }
 
 func (tinfoilGate) Plain(attester.Upstream) (Plain, bool) { return nil, false }

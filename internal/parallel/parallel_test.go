@@ -228,11 +228,10 @@ func TestVendorStatusesBecomeProxyErrorsWithoutVendorOrQueryText(t *testing.T) {
 }
 
 func TestAnUnreachableOrOversizedVendorIsAnUpstreamErrorThatNamesNothing(t *testing.T) {
-	gone := httptest.NewServer(http.NotFoundHandler())
-	gone.Close()
-	p, _ := NewSearch(gone.URL, apiKey, "fast", &http.Client{})
+	const gone = "http://127.0.0.1:1"
+	p, _ := NewSearch(gone, apiKey, "fast", &http.Client{})
 	_, err := p.Search(context.Background(), parseSearch(t, `{"model":"m","queries":["`+queryCanary+`"]}`))
-	if !errors.Is(err, web.ErrUpstream) || strings.Contains(err.Error(), gone.URL) || strings.Contains(err.Error(), queryCanary) || strings.Contains(err.Error(), apiKey) {
+	if !errors.Is(err, web.ErrUpstream) || strings.Contains(err.Error(), gone) || strings.Contains(err.Error(), queryCanary) || strings.Contains(err.Error(), apiKey) {
 		t.Errorf("err %v", err)
 	}
 	huge := &standIn{reply: func(w http.ResponseWriter, _ *http.Request) {
@@ -248,9 +247,7 @@ func TestAnUnreachableOrOversizedVendorIsAnUpstreamErrorThatNamesNothing(t *test
 }
 
 func TestHealthSeesAnUnreachableOrSlowVendorBehindTheProductError(t *testing.T) {
-	gone := httptest.NewServer(http.NotFoundHandler())
-	gone.Close()
-	unreachable, _ := NewSearch(gone.URL, apiKey, "fast", &http.Client{})
+	unreachable, _ := NewSearch("http://127.0.0.1:1", apiKey, "fast", &http.Client{})
 	hang := (&standIn{reply: func(_ http.ResponseWriter, r *http.Request) { <-r.Context().Done() }}).serve(t)
 	slow, _ := NewSearch(hang.URL, apiKey, "fast", hang.Client())
 	slow.Timeout = 10 * time.Millisecond

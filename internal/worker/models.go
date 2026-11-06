@@ -21,22 +21,27 @@ type Model struct {
 	ID        catalog.ModelID
 	Endpoint  catalog.EndpointID
 	Tier      catalog.Tier
+	Retention catalog.Retention
 	Attester  string
 	Order     int
 	Serves    Serving
 	Fallbacks []Model
 	// Unnamed are the model's endpoints at this tier that have no name: they join the tier's candidates, never a name's.
 	Unnamed []Model
+	// OnBehalf are the model's on-behalf endpoints: tee endpoints through which the worker seals a plaintext chat to the
+	// model's sealed endpoint for its client. They join the plaintext candidates at tee, never a name's.
+	OnBehalf []Model
 }
 
 type Serving interface{ validate(catalog.Tier) error }
 
 type Chat struct {
 	catalog.ChatTerms
-	Upstream          ChatUpstream
-	Reasoning         chat.Reasoning
-	ReasoningUncapped bool
-	Counter           *tokenizer.Tokenizer
+	Upstream             ChatUpstream
+	Reasoning            chat.Reasoning
+	ReasoningUncapped    bool
+	SilentWhileReasoning bool
+	Counter              *tokenizer.Tokenizer
 }
 
 type ChatUpstream interface {
@@ -188,6 +193,22 @@ func (m Model) Validate() error {
 			return fmt.Errorf("has unnamed endpoint %q that %w", u.Endpoint, err)
 		}
 		served[u.Endpoint] = true
+	}
+	for _, b := range m.OnBehalf {
+		plain, chats := b.Serves.(Chat)
+		_, viaPlain := plain.Upstream.(Plain)
+		switch {
+		case !chats || !viaPlain || b.Tier != catalog.OnBehalfTier || !m.Tier.Sealed():
+			return fmt.Errorf("has on-behalf endpoint %q, which must serve a plain chat at tier %s beside a sealed endpoint", b.Endpoint, catalog.OnBehalfTier)
+		case served[b.Endpoint]:
+			return fmt.Errorf("has two vendors at endpoint %q", b.Endpoint)
+		case len(b.Unnamed) > 0 || len(b.Fallbacks) > 0 || len(b.OnBehalf) > 0:
+			return fmt.Errorf("has on-behalf endpoint %q with endpoints of its own; list them beside it", b.Endpoint)
+		}
+		if err := b.Validate(); err != nil {
+			return fmt.Errorf("has on-behalf endpoint %q that %w", b.Endpoint, err)
+		}
+		served[b.Endpoint] = true
 	}
 	return nil
 }

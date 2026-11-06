@@ -27,12 +27,8 @@ const (
 // vendor's TEE reads it, and no key of the client's sealed it.
 const OnBehalfTier = TEE
 
-// OnBehalf is the tier a plaintext chat that names name runs at when the worker seals it, for its client, to an
-// endpoint of model id at tier t, and whether that endpoint takes one. Only a sealed endpoint's vendor holds a key to
-// seal to, a vendor whose scheme seals the whole body has no seal for a plaintext chat, and an alias keeps its own
-// endpoint.
-func OnBehalf(name string, id ModelID, t Tier, sealsBody bool) (Tier, bool) {
-	return OnBehalfTier, t.Sealed() && !sealsBody && name == string(id)
+func OnBehalf(aliased bool, t Tier, sealsBody bool) (Tier, bool) {
+	return OnBehalfTier, t.Sealed() && !sealsBody && !aliased
 }
 
 var tierNames = enum.Names[Tier]{Anon: "anon", Private: "private", TEE: "tee", E2EE: "e2ee"}

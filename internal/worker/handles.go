@@ -165,6 +165,12 @@ func unrunnable(reply http.ResponseWriter) Measured {
 	return Measured{Measurement: measure.Measurement{Outcome: measure.Failed}, Health: health.Observation{Outcome: health.UpstreamUnavailable}}
 }
 
+// unreached answers a run the worker never received. Nothing ran, so it bills nothing and tells no endpoint's health.
+func unreached(reply http.ResponseWriter) Measured {
+	apierr.WriteError(reply, apierr.ErrUnavailable)
+	return Measured{Measurement: measure.Measurement{Outcome: measure.Failed, Unsent: true}, Unsampled: true}
+}
+
 func (w *InProcess) Cut(h Handle, reason measure.Cut) {
 	w.mu.Lock()
 	e := w.opened[h]

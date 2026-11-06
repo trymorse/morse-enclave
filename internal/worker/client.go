@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -117,7 +118,7 @@ func (c *Client) Open(ctx context.Context, o Opening) (Admission, error) {
 	req.Header.Set(headerMethod, o.Method)
 	req.Header.Set(headerPath, o.Path)
 	req.Header.Set(headerQuery, o.Query)
-	setOpening(req.Header, o.Cast, o.Framing, o.KeyCaller)
+	setOpening(req.Header, o.Cast, o.Framing, o.KeyCaller, o.KeyFloor)
 	data, _, err := c.call(req)
 	if sent.err != nil {
 		return nil, sent.err
@@ -135,7 +136,7 @@ func (c *Client) OpenSealed(ctx context.Context, o SealedOpening) (SealedAdmissi
 		return SealedAdmission{}, err
 	}
 	req.Header.Set("Content-Type", SealedContentType)
-	setOpening(req.Header, o.Cast, o.Framing, o.KeyCaller)
+	setOpening(req.Header, o.Cast, o.Framing, o.KeyCaller, o.KeyFloor)
 	data, header, err := c.call(req)
 	switch {
 	case err != nil:
@@ -182,7 +183,10 @@ func (c *Client) Submit(ctx context.Context, h Handle, g JobGrant, reply http.Re
 
 func (c *Client) relay(ctx context.Context, path string, body any, h Handle, reply http.ResponseWriter) Measured {
 	resp, err := c.send(ctx, path, body)
-	if err != nil {
+	switch {
+	case errors.Is(err, upstream.ErrNotSent):
+		return unreached(reply)
+	case err != nil:
 		panic(http.ErrAbortHandler)
 	}
 	defer resp.Body.Close()
@@ -340,9 +344,9 @@ func (c *Client) Poll(ctx context.Context, route, vendorID string) (jobs.Poll, e
 	return p, nil
 }
 
-func (c *Client) Attest(ctx context.Context, v Vendor, nonce string) (chat.Attestation, error) {
+func (c *Client) Attest(ctx context.Context, v Vendor, nonce string, v3 bool) (chat.Attestation, error) {
 	var att attestationWire
-	if err := c.evidence(ctx, "/attest", evidenceRequest{Vendor: v, Nonce: nonce}, &att); err != nil {
+	if err := c.evidence(ctx, "/attest", evidenceRequest{Vendor: v, Nonce: nonce, V3: v3}, &att); err != nil {
 		return chat.Attestation{}, err
 	}
 	return chat.Attestation{Report: att.Report, BindModel: att.BindModel, GPUVerdicts: att.GPUVerdicts}, nil

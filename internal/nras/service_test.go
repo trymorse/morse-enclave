@@ -217,12 +217,11 @@ func TestServiceReportsTransportFailuresAsUnreachable(t *testing.T) {
 	ctx := context.Background()
 	payload := readFile(t, recordedRequestPath)
 
-	closed := httptest.NewServer(http.NotFoundHandler())
-	closed.Close()
-	if _, err := (Service{Base: closed.URL, Client: closed.Client()}).Attest(ctx, payload); !errors.Is(err, ErrUnreachable) {
+	closed := Service{Base: "http://127.0.0.1:1", Client: &http.Client{}}
+	if _, err := closed.Attest(ctx, payload); !errors.Is(err, ErrUnreachable) {
 		t.Errorf("closed server attest: %v", err)
 	}
-	if _, err := (Service{Base: closed.URL, Client: closed.Client()}).JWKS(ctx); !errors.Is(err, ErrUnreachable) {
+	if _, err := closed.JWKS(ctx); !errors.Is(err, ErrUnreachable) {
 		t.Errorf("closed server jwks: %v", err)
 	}
 

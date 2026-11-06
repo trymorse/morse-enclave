@@ -193,9 +193,10 @@ func TestAStreamThatAskedForUsageEndsWithAUsageChunk(t *testing.T) {
 		}); err != nil {
 			t.Fatal(err)
 		}
-		if len(chunks) != 2 {
-			t.Fatalf("%s: client got %d chunks, want the reply and then the usage", name, len(chunks))
+		if len(chunks) != 4 {
+			t.Fatalf("%s: client got %d chunks, want the opener, the reply, its finish, and then the usage", name, len(chunks))
 		}
+		chunks = [][]byte{chunks[1], chunks[3]}
 		var reply, last struct {
 			Choices []json.RawMessage `json:"choices"`
 			Usage   *struct {

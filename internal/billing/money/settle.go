@@ -24,6 +24,7 @@ type Settlement struct {
 	Tier         catalog.Tier
 	EndpointCost EndpointCost
 	Provider     string
+	Placement    Placement
 }
 
 func Unbilled(o measure.Outcome) Settlement { return Settlement{Outcome: o, Source: measure.UsageNone} }

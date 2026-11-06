@@ -11,13 +11,16 @@ import (
 	"morse/backend/internal/catalog"
 	"morse/backend/internal/chat"
 	"morse/backend/internal/completions"
+	"morse/backend/internal/deepinfra"
 	"morse/backend/internal/fal"
 	"morse/backend/internal/fireworks"
 	"morse/backend/internal/gemini"
+	"morse/backend/internal/isoquant"
 	"morse/backend/internal/media"
+	"morse/backend/internal/morph"
+	"morse/backend/internal/novita"
 	"morse/backend/internal/openaicompat"
 	"morse/backend/internal/openairesponses"
-	"morse/backend/internal/openrouter"
 	"morse/backend/internal/parallel"
 	"morse/backend/internal/phala"
 	"morse/backend/internal/routes"
@@ -26,6 +29,7 @@ import (
 	"morse/backend/internal/tokenizer"
 	"morse/backend/internal/upstream"
 	"morse/backend/internal/venice"
+	"morse/backend/internal/wafer"
 	"morse/backend/internal/worker"
 	"morse/backend/internal/xai"
 )
@@ -62,9 +66,13 @@ var chatProviders = map[routes.Provider]newChatProvider{
 	routes.ProviderAnthropic:       translating(anthropic.New),
 	routes.ProviderGemini:          translating(gemini.NewChat),
 	routes.ProviderXAI:             xaiProvider,
-	routes.ProviderOpenRouter:      openRouterProvider,
 	routes.ProviderVenice:          veniceProvider,
 	routes.ProviderFireworks:       fireworksProvider,
+	routes.ProviderIsoquant:        isoquantProvider,
+	routes.ProviderWafer:           waferProvider,
+	routes.ProviderNovita:          novitaProvider,
+	routes.ProviderMorph:           morphProvider,
+	routes.ProviderDeepInfra:       deepinfraProvider,
 }
 
 var builders = withChat(map[routes.Provider]map[catalog.Kind]build{
@@ -157,7 +165,7 @@ func model(rt routes.Route, keys Keys, d Deps) (worker.Model, error) {
 	if err != nil {
 		return worker.Model{}, err
 	}
-	m := worker.Model{ID: rt.ID, Endpoint: rt.Endpoint, Tier: rt.Tier, Attester: Attester(rt), Order: rt.Order, Serves: serves}
+	m := worker.Model{ID: rt.ID, Endpoint: rt.Endpoint, Tier: rt.Tier, Retention: rt.Retention, Attester: Attester(rt), Order: rt.Order, Serves: serves}
 	for _, fb := range rt.Fallbacks {
 		f, err := model(fb, keys, d)
 		if err != nil {
@@ -171,6 +179,13 @@ func model(rt routes.Route, keys Keys, d Deps) (worker.Model, error) {
 			return worker.Model{}, err
 		}
 		m.Unnamed = append(m.Unnamed, f)
+	}
+	for _, b := range rt.OnBehalf {
+		f, err := model(b, keys, d)
+		if err != nil {
+			return worker.Model{}, err
+		}
+		m.OnBehalf = append(m.OnBehalf, f)
 	}
 	return m, nil
 }
@@ -200,6 +215,7 @@ func chatBy(newProvider newChatProvider) builder[routes.Chat] {
 		}
 		served.Upstream = worker.Plain{Provider: newProvider(rt, c, key, d), BusyWaits: chat.BusyWaits, Hedge: hedgeFor(rt)}
 		served.Reasoning, served.ReasoningUncapped = rt.Upstream.(routes.Vendor).Provider.Reasoning(c.ReasoningEfforts), rt.ReasoningUncapped()
+		served.SilentWhileReasoning = rt.SilentWhileReasoning()
 		return served, nil
 	}
 }
@@ -226,16 +242,32 @@ func xaiProvider(rt routes.Route, _ routes.Chat, key string, d Deps) chat.Provid
 	return xai.NewChat(rt.BaseURL, key, rt.UpstreamModel, rt.Retention, d.Client)
 }
 
-func openRouterProvider(rt routes.Route, c routes.Chat, key string, d Deps) chat.Provider {
-	return openrouter.NewChat(rt.BaseURL, key, rt.UpstreamModel, c.Price, d.Client)
-}
-
 func veniceProvider(rt routes.Route, _ routes.Chat, key string, d Deps) chat.Provider {
 	return venice.NewChat(rt.BaseURL, key, rt.UpstreamModel, d.Client)
 }
 
 func fireworksProvider(rt routes.Route, _ routes.Chat, key string, d Deps) chat.Provider {
 	return fireworks.NewChat(rt.BaseURL, key, rt.UpstreamModel, d.Client)
+}
+
+func isoquantProvider(rt routes.Route, _ routes.Chat, key string, d Deps) chat.Provider {
+	return isoquant.NewChat(rt.BaseURL, key, rt.UpstreamModel, d.Client)
+}
+
+func waferProvider(rt routes.Route, _ routes.Chat, key string, d Deps) chat.Provider {
+	return wafer.NewChat(rt.BaseURL, key, rt.UpstreamModel, d.Client)
+}
+
+func novitaProvider(rt routes.Route, c routes.Chat, key string, d Deps) chat.Provider {
+	return novita.NewChat(rt.BaseURL, key, rt.UpstreamModel, c.AnswersInReasoning, d.Client)
+}
+
+func morphProvider(rt routes.Route, _ routes.Chat, key string, d Deps) chat.Provider {
+	return morph.NewChat(rt.BaseURL, key, rt.UpstreamModel, d.Client)
+}
+
+func deepinfraProvider(rt routes.Route, c routes.Chat, key string, d Deps) chat.Provider {
+	return deepinfra.NewChat(rt.BaseURL, key, rt.UpstreamModel, c.AnswersInReasoning, d.Client)
 }
 
 func attestedChat(rt routes.Route, attested routes.Attested, key string, d Deps) (worker.Serving, error) {
@@ -247,6 +279,15 @@ func attestedChat(rt routes.Route, attested routes.Attested, key string, d Deps)
 	served, err := chatServed(rt, rt.Serves.(routes.Chat))
 	if err != nil {
 		return nil, err
+	}
+	if rt.OnBehalfOf != "" {
+		sealed := gate.Route(up)
+		provider := sealed.OnBehalf()
+		if provider == nil {
+			return nil, fmt.Errorf("route %q is on behalf of endpoint %q, and %s seals no plaintext chat for its client", rt.Model, rt.OnBehalfOf, attested.Attester.Name)
+		}
+		served.Upstream = worker.Plain{Provider: provider, Attester: sealed}
+		return served, nil
 	}
 	if !rt.Tier.Sealed() {
 		plain, serves := gate.Plain(up)

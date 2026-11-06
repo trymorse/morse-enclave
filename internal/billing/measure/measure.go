@@ -28,6 +28,7 @@ func (c *Cut) UnmarshalText(text []byte) error { return cutNames.UnmarshalText(c
 type Evidence struct {
 	Outcome            Outcome
 	Cut                Cut
+	Unsent             bool
 	Upstream           chat.Usage
 	Counted            Counted
 	PromptBytes        int
@@ -193,14 +194,18 @@ type Measurement struct {
 	Finish     chat.Finish
 	ServedBy   chat.Host `json:",omitzero"`
 	Unanswered bool
+	Unsent     bool `json:",omitzero"`
 }
 
-func (m Measurement) Source() UsageSource { return m.Sides.source(unmeasured(m.Outcome)) }
+func (m Measurement) Source() UsageSource { return m.Sides.source(m.unmeasured()) }
 
+// Measure bills a refusal, and a request no vendor received, only what the vendor reported: neither did work.
 func (e Evidence) Measure() Measurement {
 	reported := e.Upstream.Normalized()
-	if e.Outcome == Rejected {
-		return measured(e.Outcome, reported, Sides{Prompt: upstreamSide(reported.PromptTokens), Completion: upstreamSide(reported.CompletionTokens)})
+	if e.Outcome == Rejected || e.Unsent {
+		m := measured(e.Outcome, reported, Sides{Prompt: upstreamSide(reported.PromptTokens), Completion: upstreamSide(reported.CompletionTokens)})
+		m.Unsent = e.Unsent
+		return m
 	}
 	prompt := rung(reported.PromptTokens, e.Counted.Prompt, e.promptEstimate())
 	completion := rung(reported.CompletionTokens, e.Counted.Completion, e.Reply.delivered(e.OutputLimit, e.ReplyBytesPerToken))
@@ -224,10 +229,10 @@ func measured(o Outcome, u chat.Usage, sides Sides) Measurement {
 	return Measurement{Outcome: o, Tokens: u, Sides: sides}
 }
 
-// A bill with no measured side is labelled by its outcome: a refusal billed nothing, anything else
-// stands on the upstream's word.
-func unmeasured(o Outcome) UsageSource {
-	if o == Rejected {
+// A bill with no measured side is labelled by its outcome: a refusal, or a request never sent, billed
+// nothing, and anything else stands on the upstream's word.
+func (m Measurement) unmeasured() UsageSource {
+	if m.Outcome == Rejected || m.Unsent {
 		return UsageNone
 	}
 	return UsageReported
@@ -269,5 +274,5 @@ func (e Evidence) hidden(reported chat.Usage, visible Reading) Thinking {
 
 func (e Evidence) NeedsCount() bool {
 	cut := e.Cut == CutByClient || e.Cut == CutByDeadline
-	return e.Outcome == Cancelled && cut && (e.Upstream.PromptTokens <= 0 || e.Upstream.CompletionTokens <= 0)
+	return e.Outcome == Cancelled && cut && !e.Unsent && (e.Upstream.PromptTokens <= 0 || e.Upstream.CompletionTokens <= 0)
 }

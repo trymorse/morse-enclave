@@ -24,8 +24,8 @@ const (
 	HeaderCompletionCount = "X-Tinfoil-Completion-Count"
 	Version               = "1"
 	Protocol              = "tinfoil-ehbp-v1"
-	keyLen                = 32
-	nonceLen              = 32
+	KeyLen                = 32
+	NonceLen              = 32
 )
 
 var RequestHeaders = [...]string{HeaderEncapsulatedKey, HeaderModel, HeaderMaxOutput}
@@ -34,13 +34,13 @@ var (
 	ErrHeaderMissing = &e2ee.Error{Type: "e2ee_header_missing", Message: "EHBP needs Ehbp-Encapsulated-Key, X-Tinfoil-Model, and X-Tinfoil-Max-Output-Tokens."}
 	ErrInvalidKey    = &e2ee.Error{Type: "e2ee_invalid_public_key", Message: "Ehbp-Encapsulated-Key must be the request's X25519 encapsulated key in 64 lowercase hexadecimal characters."}
 	ErrInvalidLimit  = &e2ee.Error{Type: "e2ee_output_limit_required", Message: "X-Tinfoil-Max-Output-Tokens must be a positive integer, because the proxy can't read the sealed body's limit."}
-	errNotApplied    = fmt.Errorf("%w: no %s of %d bytes", e2ee.ErrNotApplied, HeaderResponseNonce, nonceLen)
+	ErrNotApplied    = fmt.Errorf("%w: no %s of %d bytes", e2ee.ErrNotApplied, HeaderResponseNonce, NonceLen)
 )
 
 var Scheme = &chat.Scheme{Name: Protocol, Version: Version, Headers: RequestHeaders[:], Parse: parse, ErrHeaderMissing: ErrHeaderMissing, SealsBody: true}
 
 type Params struct {
-	Encapsulated [keyLen]byte
+	Encapsulated [KeyLen]byte
 	Model        string
 	Limit        int
 }
@@ -55,7 +55,7 @@ func parse(get func(name string) string) (chat.E2EE, bool, error) {
 		return nil, true, ErrHeaderMissing
 	}
 	var p Params
-	if key, ok := lowerHex(get(HeaderEncapsulatedKey), keyLen); ok {
+	if key, ok := LowerHex(get(HeaderEncapsulatedKey), KeyLen); ok {
 		copy(p.Encapsulated[:], key)
 	} else {
 		return nil, true, ErrInvalidKey
@@ -68,7 +68,7 @@ func parse(get func(name string) string) (chat.E2EE, bool, error) {
 	return p, true, nil
 }
 
-func lowerHex(text string, n int) ([]byte, bool) {
+func LowerHex(text string, n int) ([]byte, bool) {
 	b, err := hex.DecodeString(text)
 	return b, err == nil && len(b) == n && hex.EncodeToString(b) == text
 }
@@ -82,8 +82,8 @@ func (p Params) Forward(set func(name, value string)) {
 // Confirm requires the response nonce every sealed reply carries: without it the reply is not sealed to the
 // request's context.
 func (Params) Confirm(get func(name string) string) error {
-	if _, ok := lowerHex(get(HeaderResponseNonce), nonceLen); !ok {
-		return errNotApplied
+	if _, ok := LowerHex(get(HeaderResponseNonce), NonceLen); !ok {
+		return ErrNotApplied
 	}
 	return nil
 }

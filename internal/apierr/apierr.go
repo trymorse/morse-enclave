@@ -159,6 +159,8 @@ var vendorCodes = map[string]Error{
 	"server_is_overloaded":           ErrUpstreamBusy,
 	"overloaded_error":               ErrUpstreamBusy,
 	"insufficient_quota":             ErrUpstreamUnavailable,
+	"model_forbidden":                ErrUpstreamUnavailable,
+	"model_zdr_not_supported":        ErrUpstreamUnavailable,
 	"invalid_image":                  ErrInvalidRequest,
 	"invalid_image_format":           ErrInvalidRequest,
 	"invalid_base64_image":           ErrInvalidRequest,
@@ -188,6 +190,10 @@ var contextOverflowMessages = []*regexp.Regexp{
 	regexp.MustCompile(`^The input \(\d+ tokens\) is longer than the model's context length`),
 	regexp.MustCompile(`^Requested token count exceeds the model's maximum context length`),
 }
+
+// unservedModel is Morph's 400 for a model it does not serve, where Together answers 404. The model is the route's,
+// never the client's, so it is a refusal, not the client's invalid request.
+var unservedModel = regexp.MustCompile(`^Model '[^']*' is not served by this endpoint`)
 
 type vendorReply struct {
 	codes   []string
@@ -245,6 +251,9 @@ func SanitizedUpstreamError(status int, vendorBody []byte) Error {
 		}
 		if status == 400 && reply.overflowsContext() {
 			return ErrContextLengthExceeded
+		}
+		if status == 400 && unservedModel.MatchString(reply.message) {
+			return ErrUpstreamRefused
 		}
 	}
 	switch {
