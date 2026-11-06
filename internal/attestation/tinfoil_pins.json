@@ -17,6 +17,11 @@
       "name": "confidential-model-router v0.0.170",
       "digest": "0931e39a9204a10c6c43018d6fafc595750db1b819fe99db7eac5d7f34eef5db",
       "measurement": "fb8eabe68d3b977b05e48e7a41aff6bbb6dc576cbf5639360fbdf49f357f7d6698be2537f1a425975f89b8a73023022a"
+    },
+    {
+      "name": "confidential-model-router v0.0.171",
+      "digest": "95e49018369d59594468ed5af698631ba011937d3859fcbad21207eb0b0f9007",
+      "measurement": "f5bcc220a94d5c34c5c80db9593dcc88d7d1a19b43796c05ec4b6cdcf921c8176a56cb3d0224650b1250ee892a0ec438"
     }
   ],
   "policy": "0x30000",
