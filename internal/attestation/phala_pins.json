@@ -1,7 +1,7 @@
 {
   "td_attributes": "0000001000000000",
-  "app_id": "fdb7a14e5a6675f752e2cb69c9067a98ca402918",
-  "key_provider_id": "3059301306072a8648ce3d020106082a8648ce3d030107034200048844eb42ccdf8c52fd4f174f362fcb9bbd19c45fd48f1edec2d8f1ca23536ec1a74021b4cee610c074f8294d431b2b7fee2c39e5333fdaf0a4522d43fb159d9f",
+  "app_id": "89c51ab856bee41efe78c40309a4deb277a02a0f",
+  "key_provider_id": "3059301306072a8648ce3d020106082a8648ce3d030107034200048bf84f52911056474c207cb50b4e8010d984f8975ea57b8f0c8b17502181c283e93a68a9864ad19f629508cc699f125be3871ec2e26ab0597e5bca4e29b7425f",
   "releases": [
     {
       "source": "https://github.com/Dstack-TEE/private-ai-gateway.git@8d0a666a2418898a8c823a9af49a634edd122a64",
@@ -57,6 +57,11 @@
       "source": "https://github.com/Dstack-TEE/private-ai-gateway.git@77fac1267000b27f09e2058923f7492e5330bb49",
       "compose_hash": "3dcf9d462955a01d6f188a3dd495573d63a7dee20a0396daa25bbbf31f046a32",
       "launcher_image": "ghcr.io/redpill-ai/private-ai-launcher@sha256:c083ff9e6a5ddf10f6c9e9bb1f74cc618deebecfea5208b563c574399db4637c"
+    },
+    {
+      "source": "https://github.com/Dstack-TEE/private-ai-gateway.git@77fac1267000b27f09e2058923f7492e5330bb49",
+      "compose_hash": "075b0b00c120c577f97747d7cabed78ca2004894bf68c6b3ac37fd7e109b47aa",
+      "launcher_image": "ghcr.io/redpill-ai/private-ai-launcher@sha256:c083ff9e6a5ddf10f6c9e9bb1f74cc618deebecfea5208b563c574399db4637c"
     }
   ],
   "images": [
@@ -91,11 +96,20 @@
       "rtmr0": "46a83f6bbbeaa274aaf04861ef47d7e8898d4e699126b642f72f582e8d7f5349cb266a188bbabf619940d4fece06594b",
       "rtmr1": "4ae609807c765916a31d724786ed74bcb97e168a9d937b04936aeef2015c907eba5ac352c6bcd749c246fd62ffb659ec",
       "rtmr2": "764489f277a8540189761e72b4238ba36d4d647e11bd958d8ab5522af2a4867b0ff63e06b0c4967f1857236244040a5d"
+    },
+    {
+      "name": "dstack-0.5.12-d6118f0e",
+      "os_image_hash": "8db40cb23008d6213668b5816702d100b37b859a8a5bfd18d938ae3a1b3715bd",
+      "mrtd": "7fe60787222bd394cb516abca2435f22f035ab2cc9c0a4b4b3b148e46297f3d931a237b72f359052c6e657d8c1409173",
+      "rtmr0": "d6118f0eeb30e9d9178d2b9106dddd002d979b6fa79bdec415051afae2021384c29a32d2f6454fa369617598378ffb5e",
+      "rtmr1": "4ae609807c765916a31d724786ed74bcb97e168a9d937b04936aeef2015c907eba5ac352c6bcd749c246fd62ffb659ec",
+      "rtmr2": "764489f277a8540189761e72b4238ba36d4d647e11bd958d8ab5522af2a4867b0ff63e06b0c4967f1857236244040a5d"
     }
   ],
   "instances": [
     "b7ea78b1ae3f81c8d4dfbed2dd5fd2b49568c6f5",
     "15e847e02a22706121de347498427469d2e7c379",
-    "15fa4e84744ee3a961dbd77eaf4dc344743dd8ff"
+    "15fa4e84744ee3a961dbd77eaf4dc344743dd8ff",
+    "2c9b6450ff2310d8a217416147514964116986b3"
   ]
 }
