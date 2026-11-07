@@ -4,6 +4,8 @@ import (
 	"context"
 	"net/http"
 	"net/url"
+
+	"morse/backend/internal/plugins"
 )
 
 const (
@@ -20,6 +22,10 @@ const (
 	LookupPattern         = "GET /v1/lookup/{service}/{path...}"
 	TranscriptionPattern  = "POST /v1/audio/transcriptions"
 )
+
+func pluginOpener(kind plugins.Kind) opener {
+	return func(w *InProcess, o Opening, _ func(string) string) (Admission, error) { return w.openPlugin(o, kind) }
+}
 
 type opener func(w *InProcess, o Opening, pathValue func(string) string) (Admission, error)
 
@@ -39,6 +45,9 @@ var sealableRoutes = []struct {
 	{ResearchEventsPattern, (*InProcess).openRead},
 	{LookupPattern, (*InProcess).openLookup},
 	{TranscriptionPattern, func(w *InProcess, o Opening, _ func(string) string) (Admission, error) { return w.openTranscription(o) }},
+	{PluginCallPattern, pluginOpener(plugins.KindCall)},
+	{PluginTokenPattern, pluginOpener(plugins.KindToken)},
+	{PluginRevokePattern, pluginOpener(plugins.KindRevoke)},
 }
 
 var SealablePatterns = func() []string {

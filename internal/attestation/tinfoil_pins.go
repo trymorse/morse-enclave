@@ -47,12 +47,8 @@ func (p RouterPins) Check(r TinfoilReport) []Drift {
 	if !slices.Contains(p.Hosts, r.Host) {
 		drifts = append(drifts, Drift{Kind: DriftAnchor, Field: hostsField, Pinned: strings.Join(p.Hosts, ", "), Observed: r.Host})
 	}
-	if !slices.ContainsFunc(p.Releases, func(rel RouterRelease) bool { return rel.Measurement == r.Measurement }) {
-		pinned := make([]string, len(p.Releases))
-		for i, rel := range p.Releases {
-			pinned[i] = rel.String()
-		}
-		drifts = append(drifts, Drift{Kind: DriftAnchor, Field: ReleasesField, Pinned: strings.Join(pinned, ", "), Observed: r.Measurement})
+	if !p.Pinned(r.Measurement) {
+		drifts = append(drifts, p.releaseDrift(r))
 	}
 	if observed := policyText(r.Policy); observed != p.Policy {
 		drifts = append(drifts, Drift{Kind: DriftAnchor, Field: policyField, Pinned: p.Policy, Observed: observed})
@@ -70,11 +66,80 @@ func (p RouterPins) Check(r TinfoilReport) []Drift {
 	return drifts
 }
 
+// Pinned reports whether a pinned release has measurement m.
+func (p RouterPins) Pinned(m string) bool {
+	return slices.ContainsFunc(p.Releases, func(r RouterRelease) bool { return r.Measurement == m })
+}
+
+// releaseDrift serves an unpinned measurement when Sigstore proves Tinfoil's release workflow
+// published it at a tag newer than every pinned release. Anything less is an anchor. Observed is the
+// bare measurement for both kinds, which cmd/tinfoilpin and the browser read.
+func (p RouterPins) releaseDrift(r TinfoilReport) Drift {
+	pinned := make([]string, len(p.Releases))
+	for i, rel := range p.Releases {
+		pinned[i] = rel.String()
+	}
+	d := Drift{Kind: DriftAnchor, Field: ReleasesField, Pinned: strings.Join(pinned, ", "), Observed: r.Measurement}
+	if p.ReleaseRefusal(r) == nil {
+		d.Kind = DriftRelease
+	}
+	return d
+}
+
+// ReleaseRefusal is why the report's provenance does not serve its measurement: nothing was proven,
+// the proof names another measurement, or the proven tag is not newer than every pin. It is nil when
+// an unpinned measurement is served, and for a pinned one says only what the proof lacks.
+func (p RouterPins) ReleaseRefusal(r TinfoilReport) error {
+	rel, ok := r.Provenance.Release()
+	switch {
+	case !ok:
+		return r.Provenance.Refusal()
+	case rel.Measurement != r.Measurement:
+		return fmt.Errorf("%s proves measurement %s, not the report's", rel.Name(), rel.Measurement)
+	}
+	return p.NewerThanEveryPin(rel.Tag)
+}
+
+// NewerThanEveryPin is nil when tag is newer than every pinned release's tag, so a proven release
+// can never roll the router back to a release the pins once listed. A pinned name without a router
+// tag fails closed. cmd/tinfoilpin applies the same rule before it pins.
+func (p RouterPins) NewerThanEveryPin(tag string) error {
+	if !routerTag.MatchString(tag) {
+		return fmt.Errorf("%q is not a vMAJOR.MINOR.PATCH tag", tag)
+	}
+	for _, r := range p.Releases {
+		pinned, ok := strings.CutPrefix(r.Name, RouterReleasePrefix)
+		if !ok || !routerTag.MatchString(pinned) {
+			return fmt.Errorf("the pinned release %q has no router tag to compare with", r.Name)
+		}
+		if compareRouterTags(tag, pinned) <= 0 {
+			return fmt.Errorf("%s is not newer than the pinned %s, so this is a rollback or a moved tag", tag, pinned)
+		}
+	}
+	return nil
+}
+
+// compareRouterTags orders two vMAJOR.MINOR.PATCH tags that routerTag admits.
+func compareRouterTags(a, b string) int {
+	as, bs := strings.Split(a[1:], "."), strings.Split(b[1:], ".")
+	for i := range 3 {
+		x, _ := strconv.Atoi(as[i])
+		y, _ := strconv.Atoi(bs[i])
+		if x != y {
+			return x - y
+		}
+	}
+	return 0
+}
+
 // Judge refuses the whole report on an anchor, as a router host is one guest: there is no endpoint
-// to drop short of the scope.
+// to drop short of the scope. A refusal names why the router's release provenance did not serve it.
 func (p RouterPins) Judge(r TinfoilReport) (Verdicts[aci.SPKI], error) {
 	drift, err := Enforce(p, r)
 	if err != nil {
+		if refused := p.ReleaseRefusal(r); !p.Pinned(r.Measurement) && refused != nil {
+			err = fmt.Errorf("%w (release provenance: %w)", err, refused)
+		}
 		return Verdicts[aci.SPKI]{}, err
 	}
 	return Verdicts[aci.SPKI]{Endpoints: []Judged[aci.SPKI]{{Endpoint: r.Endpoint, Drift: drift, Verified: r}}}, nil

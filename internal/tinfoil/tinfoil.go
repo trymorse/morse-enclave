@@ -56,7 +56,15 @@ func (g Gateway) object(ctx context.Context, path string, into any) error {
 	return object(ctx, g.router, path, into)
 }
 
-func nonced(ctx context.Context, router upstream.Endpoint, host, nonce string) ([]byte, error) {
+// Nonced fetches the router's v3 document for nonce, keeping the collateral Morse reads: AMD's and
+// the release's Sigstore bundle. The gate reads the bundle from it when the v2 report's release is
+// unpinned.
+func (g Gateway) Nonced(ctx context.Context, nonce string) ([]byte, error) {
+	return nonced(ctx, g.router, g.host, nonce, attestation.TinfoilCollateral.Relayed)
+}
+
+// nonced fetches the router's v3 document for nonce and keeps the collateral keep admits.
+func nonced(ctx context.Context, router upstream.Endpoint, host, nonce string, keep func(attestation.TinfoilCollateral) bool) ([]byte, error) {
 	var d attestation.TinfoilNonced
 	if err := object(ctx, router, attestationPath+"?nonce="+nonce, &d); err != nil {
 		return nil, err
@@ -65,7 +73,7 @@ func nonced(ctx context.Context, router upstream.Endpoint, host, nonce string) (
 		return nil, fmt.Errorf("%w: the router answered format %q for nonce %q", attestation.ErrTinfoilNonced, d.Format, d.Challenge.Nonce)
 	}
 	d.Host = host
-	d.Collateral = slices.DeleteFunc(d.Collateral, func(c attestation.TinfoilCollateral) bool { return !c.AMDCollateral() })
+	d.Collateral = slices.DeleteFunc(d.Collateral, func(c attestation.TinfoilCollateral) bool { return !keep(c) })
 	if _, err := d.VCEK(); err != nil {
 		return nil, err
 	}

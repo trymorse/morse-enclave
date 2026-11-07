@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"morse/backend/internal/billing/money"
+	"morse/backend/internal/plugins"
 	"morse/backend/internal/routes"
 )
 
@@ -96,7 +97,7 @@ func getSecrets(client *http.Client, url string) ([]secret, error) {
 }
 
 func credentials(rts []routes.Route) []string {
-	return slices.Compact(slices.Sorted(slices.Values(slices.Concat(hostCredentials, routes.KeyEnvs(rts)))))
+	return slices.Compact(slices.Sorted(slices.Values(slices.Concat(hostCredentials, routes.KeyEnvs(rts), plugins.SecretEnvs(plugins.Servers)))))
 }
 
 func printCredentials(routesFile string) {

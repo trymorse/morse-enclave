@@ -31,6 +31,7 @@ const (
 	vendorUsageMissing
 	researchUnwrapped
 	upstreamAttested
+	upstreamDrifted
 	upstreamRefused
 	upstreamUnpinned
 	upstreamRefreshFailed
@@ -52,6 +53,7 @@ var messages = [...]struct {
 	vendorUsageMissing:    {"sealed reply ended with no vendor usage, billed on its frames", slog.LevelWarn},
 	researchUnwrapped:     {"parallel research report unwrapped from its answer object", slog.LevelWarn},
 	upstreamAttested:      {"upstream attested", slog.LevelInfo},
+	upstreamDrifted:       {"upstream attested with drift", slog.LevelWarn},
 	upstreamRefused:       {"upstream refused", slog.LevelWarn},
 	upstreamUnpinned:      {"upstream unpinned", slog.LevelError},
 	upstreamRefreshFailed: {"upstream attestation refresh failed", slog.LevelWarn},
@@ -188,12 +190,22 @@ func driftOf(err error) string {
 	if !errors.As(err, &refusal) {
 		return ""
 	}
-	names := make([]string, len(refusal.Drifts))
-	for i, d := range refusal.Drifts {
+	return driftNames(refusal.Drifts)
+}
+
+func driftNames(drifts []attestation.Drift) string {
+	names := make([]string, len(drifts))
+	for i, d := range drifts {
 		names[i] = d.Field
 	}
 	slices.Sort(names)
 	return strings.Join(slices.Compact(names), ",")
+}
+
+// served is a drift the gate serves before anyone reviewed it: a release the pins don't list, or a TCB
+// behind the pinned floor. Each warns until the pins catch up.
+func served(d attestation.Drift) bool {
+	return d.Kind == attestation.DriftRelease || d.Kind == attestation.DriftStaleTCB
 }
 
 func (l *logger) attestation(ev attested.Event) {
@@ -204,6 +216,9 @@ func (l *logger) attestation(ev attested.Event) {
 	f := fields{Scope: ev.Scope, Generation: ev.Generation, Count: len(ev.Keys)}
 	if (m == upstreamUnpinned || m == upstreamRefreshFailed) && ev.Err != nil {
 		f.Reason, f.Drift = reasonOf(ev.Err), driftOf(ev.Err)
+	}
+	if m == upstreamAttested && slices.ContainsFunc(ev.Drift, served) {
+		m, f.Drift = upstreamDrifted, driftNames(ev.Drift)
 	}
 	l.log(m, f)
 }

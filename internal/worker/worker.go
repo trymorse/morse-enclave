@@ -36,15 +36,27 @@ type Worker interface {
 	Cut(h Handle, reason measure.Cut)
 	Poll(ctx context.Context, route, vendorID string) (jobs.Poll, error)
 	Attestation(ctx context.Context) (Attested, error)
-	// The vendor evidence a client may audit: an attestation report for its nonce (Tinfoil's v3 document if v3
-	// was asked for and the route serves one), a receipt, and the attested sessions a gateway lists and serves.
-	// A vendor error the client may be told about comes back as an apierr.Error; any other error is the relay's
-	// to report.
-	Attest(ctx context.Context, v Vendor, nonce string, v3 bool) (chat.Attestation, error)
+	// The vendor evidence a client may audit: an attestation report for its nonce, in the format it asked for
+	// where the route serves one, a receipt, and the attested sessions a gateway lists and serves. A vendor
+	// error the client may be told about comes back as an apierr.Error; any other error is the relay's to
+	// report.
+	Attest(ctx context.Context, v Vendor, nonce string, f Format) (chat.Attestation, error)
 	Receipt(ctx context.Context, v Vendor, id string) (json.RawMessage, error)
 	Session(ctx context.Context, v Vendor, id string) (json.RawMessage, error)
 	Sessions(ctx context.Context, v Vendor) ([]chat.ListedSession, error)
 }
+
+// Format is the attestation document a client asked for. Only a Tinfoil route tells them apart.
+type Format uint8
+
+const (
+	// FormatReport is the gate's own report, which for Tinfoil is the v2 bundle that binds no nonce.
+	FormatReport Format = iota
+	// FormatV3 is Tinfoil's v3 document for the nonce, with AMD's collateral.
+	FormatV3
+	// FormatV3Code is the v3 document with the router's sigstore-code collateral kept.
+	FormatV3Code
+)
 
 // Framing is what the proxy puts around a chat once it checked the caller may have it: a launch character's
 // prompt, or the rules for one of the user's own characters (never both), and the character writer's examples.

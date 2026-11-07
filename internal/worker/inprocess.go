@@ -12,6 +12,7 @@ import (
 	"morse/backend/internal/jobs"
 	"morse/backend/internal/lookup"
 	"morse/backend/internal/media"
+	"morse/backend/internal/plugins"
 	"morse/backend/internal/research"
 	"morse/backend/internal/web"
 )
@@ -26,6 +27,7 @@ type InProcess struct {
 	transcribers   map[string]transcriber
 	endpoints      map[string]catalog.EndpointID
 	lookup         *lookup.Relay
+	plugins        *plugins.Relay
 	reports        Reporter
 	now            func() time.Time
 	keepaliveEvery time.Duration
@@ -61,8 +63,10 @@ func (NopReporter) UpstreamErrorChunk(string, chat.ErrorCode) {}
 func (NopReporter) VendorUsageMissing(string)                 {}
 
 type Config struct {
-	Models        map[string]Model
-	Lookup        *lookup.Relay
+	Models map[string]Model
+	Lookup *lookup.Relay
+	// Plugins calls the vendors' MCP servers. Only a worker in an enclave has one: its calls hold users' tokens.
+	Plugins       *plugins.Relay
 	Reports       Reporter
 	Now           func() time.Time
 	CountingSlots int
@@ -82,7 +86,7 @@ func NewInProcess(cfg Config) (*InProcess, error) {
 		chats: indexChats(cfg.Models), images: map[string]media.ImageGenerator{}, videos: map[string]media.VideoGenerator{},
 		searches: map[string]web.Searcher{}, fetches: map[string]web.Fetcher{}, researchers: map[string]research.Researcher{}, transcribers: map[string]transcriber{},
 		endpoints: map[string]catalog.EndpointID{},
-		lookup:    cfg.Lookup, reports: cfg.Reports,
+		lookup:    cfg.Lookup, plugins: cfg.Plugins, reports: cfg.Reports,
 		now: cfg.Now, keepaliveEvery: cmp.Or(cfg.Keepalive, keepalive), videoSubmit: cmp.Or(cfg.VideoSubmit, videoSubmitTimeout), proofBudget: cmp.Or(cfg.ProofBudget, proofBudget), opened: map[Handle]*entry{},
 	}
 	if w.now == nil {

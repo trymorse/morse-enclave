@@ -42,10 +42,11 @@ const (
 	admitsCall
 	admitsRead
 	admitsLookup
+	admitsPlugin
 )
 
 var admissionKindNames = enum.Names[admissionKind]{
-	admitsChat: "chat", admitsMedia: "media", admitsCall: "call", admitsRead: "read", admitsLookup: "lookup",
+	admitsChat: "chat", admitsMedia: "media", admitsCall: "call", admitsRead: "read", admitsLookup: "lookup", admitsPlugin: "plugin",
 }
 
 func (k admissionKind) MarshalText() ([]byte, error) { return admissionKindNames.MarshalText(k) }
@@ -64,11 +65,13 @@ const (
 	grantsResearchRead
 	grantsResearchEvents
 	grantsLookup
+	grantsPlugin
 )
 
 var grantKindNames = enum.Names[grantKind]{
 	grantsChat: "chat", grantsMedia: "media", grantsCall: "call",
 	grantsVideoRead: "video_read", grantsResearchRead: "research_read", grantsResearchEvents: "research_events", grantsLookup: "lookup",
+	grantsPlugin: "plugin",
 }
 
 func (k grantKind) MarshalText() ([]byte, error) { return grantKindNames.MarshalText(k) }
@@ -109,6 +112,7 @@ var admissionOfKind = map[admissionKind]func(envelope[admissionKind]) (Admission
 	admitsCall:   decodeAdmission[CallAdmission, *CallAdmission],
 	admitsRead:   decodeAdmission[ReadAdmission, *ReadAdmission],
 	admitsLookup: decodeAdmission[LookupAdmission, *LookupAdmission],
+	admitsPlugin: decodeAdmission[PluginAdmission, *PluginAdmission],
 }
 
 var grantOfKind = map[grantKind]func(envelope[grantKind]) (Grant, error){
@@ -119,6 +123,7 @@ var grantOfKind = map[grantKind]func(envelope[grantKind]) (Grant, error){
 	grantsResearchRead:   decodeGrant[ResearchReadGrant],
 	grantsResearchEvents: decodeGrant[ResearchEventsGrant],
 	grantsLookup:         decodeGrant[LookupGrant],
+	grantsPlugin:         decodeGrant[PluginGrant],
 }
 
 func admissionWire(a Admission, pattern string) ([]byte, error) {
@@ -180,7 +185,22 @@ type evidenceRequest struct {
 	Vendor
 	Nonce string `json:"nonce,omitempty"`
 	V3    bool   `json:"v3,omitempty"`
+	Code  bool   `json:"code,omitempty"`
 	ID    string `json:"id,omitempty"`
+}
+
+func (r evidenceRequest) format() Format {
+	switch {
+	case r.V3 && r.Code:
+		return FormatV3Code
+	case r.V3:
+		return FormatV3
+	}
+	return FormatReport
+}
+
+func attestRequest(v Vendor, nonce string, f Format) evidenceRequest {
+	return evidenceRequest{Vendor: v, Nonce: nonce, V3: f != FormatReport, Code: f == FormatV3Code}
 }
 
 // A report crosses as bytes, not as JSON, so the client gets the gateway's exact bytes back.

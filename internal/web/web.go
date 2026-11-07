@@ -150,7 +150,7 @@ func fetchable(page string) bool {
 func publicHost(host string) bool {
 	host = strings.TrimSuffix(host, ".")
 	if addr, err := netip.ParseAddr(host); err == nil {
-		return publicAddr(addr.WithZone("").Unmap())
+		return PublicAddr(addr.WithZone("").Unmap())
 	}
 	labels := strings.Split(host, ".")
 	if len(labels) < 2 || slices.Contains(labels, "") || numericLabel(labels[len(labels)-1]) {
@@ -159,7 +159,9 @@ func publicHost(host string) bool {
 	return !slices.ContainsFunc(nonPublicSuffixes, func(suffix string) bool { return strings.HasSuffix(host, suffix) })
 }
 
-func publicAddr(addr netip.Addr) bool {
+// PublicAddr reports whether addr is a public unicast address: no private, loopback, link-local, CGNAT,
+// reserved, or translated range.
+func PublicAddr(addr netip.Addr) bool {
 	if !addr.IsGlobalUnicast() || addr.IsPrivate() {
 		return false
 	}

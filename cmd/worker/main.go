@@ -19,6 +19,7 @@ import (
 	"morse/backend/internal/door"
 	"morse/backend/internal/lookup"
 	"morse/backend/internal/nitro"
+	"morse/backend/internal/plugins"
 	"morse/backend/internal/routes"
 	"morse/backend/internal/worker"
 )
@@ -86,9 +87,14 @@ func build(getenv func(string) string, log *logger) (built, error) {
 		return built{}, err
 	}
 	services := lookup.Services(lookup.Keys{CoinGecko: getenv("COINGECKO_API_KEY"), OpenAlex: getenv("OPENALEX_API_KEY")})
+	pluginRelay, err := pluginsIn(attester, getenv, environment)
+	if err != nil {
+		return built{}, err
+	}
 	inner, err := worker.NewInProcess(worker.Config{
 		Models:  models,
 		Lookup:  lookup.New(services, client, time.Now),
+		Plugins: pluginRelay,
 		Reports: log,
 		Sealing: worker.Sealing{Identity: identity, Attest: gate.Attest},
 	})
@@ -115,6 +121,15 @@ func doorFloor(value, environment string) (uint64, error) {
 		return 0, errors.New("PROXY_DOOR_FLOOR must be the pins statement sequence the image was built at, the lowest a handoff admits")
 	}
 	return floor, nil
+}
+
+// pluginsIn builds the plugins' relay only for a worker in a Nitro enclave: a plugin's call carries the user's
+// token for their account at a vendor, which a process the host can read must never hold.
+func pluginsIn(attester nitro.Attester, getenv func(string) string, environment string) (*plugins.Relay, error) {
+	if nitro.Name(attester) != "nsm" {
+		return nil, nil
+	}
+	return plugins.New(plugins.Servers, getenv, environment, plugins.NewClient(), time.Now)
 }
 
 func routeNames(rts []routes.Route) []string {

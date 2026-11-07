@@ -344,9 +344,9 @@ func (c *Client) Poll(ctx context.Context, route, vendorID string) (jobs.Poll, e
 	return p, nil
 }
 
-func (c *Client) Attest(ctx context.Context, v Vendor, nonce string, v3 bool) (chat.Attestation, error) {
+func (c *Client) Attest(ctx context.Context, v Vendor, nonce string, f Format) (chat.Attestation, error) {
 	var att attestationWire
-	if err := c.evidence(ctx, "/attest", evidenceRequest{Vendor: v, Nonce: nonce, V3: v3}, &att); err != nil {
+	if err := c.evidence(ctx, "/attest", attestRequest(v, nonce, f), &att); err != nil {
 		return chat.Attestation{}, err
 	}
 	return chat.Attestation{Report: att.Report, BindModel: att.BindModel, GPUVerdicts: att.GPUVerdicts}, nil

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"morse/backend/internal/apierr"
+	"morse/backend/internal/attestation"
 	"morse/backend/internal/chat"
 	"morse/backend/internal/e2ee/ehbp"
 	"morse/backend/internal/upstream"
@@ -182,21 +183,27 @@ func (r *Route) Attest(_ context.Context, nonce string) (chat.Attestation, error
 
 // AttestV3 fetches the router's v3 document for nonce over the gate's pinned client, again once if the router
 // answered a 5xx: the guest makes each quote in one buffer, so a burst of attestations can find it busy. Any
-// other failure fails the attestation; it never falls back to v2.
-func (r *Route) AttestV3(ctx context.Context, nonce string) (chat.Attestation, error) {
+// other failure fails the attestation; it never falls back to v2. The document keeps AMD's collateral, and
+// the release's Sigstore bundle only when the client asked for code, since a client built before the bundle
+// was relayed refuses a collateral item it does not know.
+func (r *Route) AttestV3(ctx context.Context, nonce string, code bool) (chat.Attestation, error) {
 	if _, ok := ehbp.LowerHex(nonce, ehbp.NonceLen); !ok {
 		return chat.Attestation{}, errInvalidNonceV3
 	}
 	if !r.gate.Ready() {
 		return chat.Attestation{}, apierr.ErrUnattested
 	}
-	report, err := nonced(ctx, r.wellKnown, r.host, nonce)
+	keep := attestation.TinfoilCollateral.AMDCollateral
+	if code {
+		keep = attestation.TinfoilCollateral.Relayed
+	}
+	report, err := nonced(ctx, r.wellKnown, r.host, nonce, keep)
 	var refused upstream.Refused
 	if errors.As(err, &refused) && refused.Status >= 500 {
 		if err := r.wait(ctx, 50*time.Millisecond+rand.N(100*time.Millisecond)); err != nil {
 			return chat.Attestation{}, err
 		}
-		report, err = nonced(ctx, r.wellKnown, r.host, nonce)
+		report, err = nonced(ctx, r.wellKnown, r.host, nonce, keep)
 	}
 	if err != nil {
 		return chat.Attestation{}, err

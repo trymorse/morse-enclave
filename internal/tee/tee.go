@@ -321,7 +321,7 @@ func (v tinfoilVendor) NewGate(up attester.Upstream, d Deps) Gate {
 	gateway := tinfoil.NewGateway(up.BaseURL, up.Host, d.Unpinned)
 	return tinfoilGate{TLSGate: attested.NewTLSGate(attested.Config[aci.SPKI]{
 		Scope:    v.Scope(up).String(),
-		Verifier: tinfoilVerifier(d.Policy, up.Host),
+		Verifier: tinfoilVerifier(d.Policy, up.Host, gateway, attestation.TinfoilPins()),
 		Fetch: func(ctx context.Context, _ attestation.Nonce) ([]byte, error) {
 			return gateway.Bundle(ctx)
 		},
@@ -329,14 +329,26 @@ func (v tinfoilVendor) NewGate(up attester.Upstream, d Deps) Gate {
 	}, up.Host, d.Base)}
 }
 
-// tinfoilVerifier serves the bundle it verified, so a client checks the report whose keys the gate pinned.
-func tinfoilVerifier(policy attestation.Policy, host string) attested.Verifier[aci.SPKI] {
-	return func(ctx context.Context, bundle []byte, _ attestation.Nonce) (attestation.Verdicts[aci.SPKI], error) {
+// tinfoilVerifier serves the bundle it verified, so a client checks the report whose keys the gate pinned. The
+// v2 bundle carries no provenance, so when its release is unpinned the verifier fetches the router's v3
+// document for the gate's nonce and judges the Sigstore bundle it carries: the proof binds to the report by
+// the measurement it names, so the document needs no verification of its own. A fetch that fails leaves the
+// report unjudged (an Outage), so the gate keeps its anchor and tries again, rather than refusing the scope
+// over a transient error.
+func tinfoilVerifier(policy attestation.Policy, host string, gateway tinfoil.Gateway, pins attestation.RouterPins) attested.Verifier[aci.SPKI] {
+	return func(ctx context.Context, bundle []byte, nonce attestation.Nonce) (attestation.Verdicts[aci.SPKI], error) {
 		r, err := policy.VerifyTinfoil(ctx, bundle, host)
 		if err != nil {
 			return attestation.Verdicts[aci.SPKI]{}, err
 		}
-		v, err := attestation.TinfoilPins().Judge(r)
+		if !pins.Pinned(r.Measurement) {
+			doc, err := gateway.Nonced(ctx, nonce.String())
+			if err != nil {
+				return attestation.Verdicts[aci.SPKI]{}, attestation.Outage{Err: fmt.Errorf("tinfoil: fetching the release's provenance: %w", err)}
+			}
+			r.Provenance = attestation.ProveRouterRelease(attestation.TinfoilCode(doc))
+		}
+		v, err := pins.Judge(r)
 		if err != nil {
 			return attestation.Verdicts[aci.SPKI]{}, err
 		}

@@ -87,10 +87,17 @@ type TinfoilReport struct {
 	Policy      uint64
 	VMPL        uint32
 	Endpoint    Endpoint[aci.SPKI]
+	// Provenance is what the router's code collateral proved about its release. A v2 bundle carries
+	// none, so VerifyTinfoil leaves it zero and the gate fills it from a v3 document when it needs to.
+	Provenance Provenance
 }
 
 func (r TinfoilReport) Facts() []any {
-	return []any{"endpoint", r.Endpoint.ID, "not_after", r.Endpoint.NotAfter.UTC().Format(time.RFC3339), "measurement", r.Measurement, "chip_id", r.ChipID, "tcb", r.TCB.String(), "policy", fmt.Sprintf("%#x", r.Policy), "vmpl", r.VMPL, "hpke_key", hex.EncodeToString(r.HPKE[:])}
+	facts := []any{"endpoint", r.Endpoint.ID, "not_after", r.Endpoint.NotAfter.UTC().Format(time.RFC3339), "measurement", r.Measurement, "chip_id", r.ChipID, "tcb", r.TCB.String(), "policy", fmt.Sprintf("%#x", r.Policy), "vmpl", r.VMPL, "hpke_key", hex.EncodeToString(r.HPKE[:])}
+	if rel, ok := r.Provenance.Release(); ok {
+		facts = append(facts, "release_tag", rel.Tag)
+	}
+	return facts
 }
 
 var genoa = &spb.SevProduct{Name: spb.SevProduct_SEV_PRODUCT_GENOA}

@@ -73,6 +73,21 @@ func (c TinfoilCollateral) AMDCollateral() bool {
 	return c.Format == TinfoilVCEKCollateral || c.Format == TinfoilCRLCollateral
 }
 
+// Relayed reports whether c is collateral Morse reads or relays: AMD's VCEK and CRL, and the Sigstore
+// bundle of the router's release.
+func (c TinfoilCollateral) Relayed() bool {
+	return c.AMDCollateral() || c.Format == TinfoilCodeCollateral
+}
+
+// Code is the data of the document's sigstore-code collateral, or nil.
+func (d TinfoilNonced) Code() json.RawMessage {
+	i := slices.IndexFunc(d.Collateral, func(c TinfoilCollateral) bool { return c.Format == TinfoilCodeCollateral })
+	if i < 0 {
+		return nil
+	}
+	return d.Collateral[i].Data
+}
+
 // VCEK is the DER of the VCEK the document's AMD collateral carries.
 func (d TinfoilNonced) VCEK() ([]byte, error) {
 	i := slices.IndexFunc(d.Collateral, func(c TinfoilCollateral) bool { return c.Format == TinfoilVCEKCollateral })
@@ -95,7 +110,8 @@ func (d TinfoilNonced) VCEK() ([]byte, error) {
 // VerifyTinfoilNonced verifies one router's v3 document for host and nonce: the report's signature by the
 // VCEK the document carries, the VCEK's chain to AMD's Genoa root, a guest that allows neither debugging nor
 // a migration agent, and REPORT_DATA binding the nonce and the crypto material whose TLS and HPKE keys it
-// returns. Which release and platform may serve is the pins' question.
+// returns, and what the document's code collateral proves about the release. Which release and
+// platform may serve is the pins' question.
 func (p Policy) VerifyTinfoilNonced(_ context.Context, raw []byte, nonce Nonce, host string) (TinfoilReport, error) {
 	var d TinfoilNonced
 	if err := json.Unmarshal(raw, &d); err != nil {
@@ -142,7 +158,9 @@ func (p Policy) VerifyTinfoilNonced(_ context.Context, raw []byte, nonce Nonce, 
 	if err != nil {
 		return TinfoilReport{}, err
 	}
-	return tinfoilReport(host, report, tls, hpke, notAfter), nil
+	r := tinfoilReport(host, report, tls, hpke, notAfter)
+	r.Provenance = ProveRouterRelease(d.Code())
+	return r, nil
 }
 
 func tinfoilReportData(nonce Nonce, material, device []byte) [64]byte {

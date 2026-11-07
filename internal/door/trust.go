@@ -11,16 +11,13 @@ type Trust struct {
 	Witnesses rekorv2.WitnessPolicy
 }
 
-const pinsWorkflow = "https://github.com/Watermark-Labs/pins/.github/workflows/sign.yml@refs/heads/main"
-
 var pinsSigner = pinsig.Identity{
 	Issuer:              "https://token.actions.githubusercontent.com",
-	BuildSignerURI:      pinsWorkflow,
-	BuildConfigURI:      pinsWorkflow,
 	SourceRepositoryURI: "https://github.com/Watermark-Labs/pins",
 	SourceRepositoryID:  "1405118053",
 	SourceOwnerID:       "334112171",
-	Ref:                 "refs/heads/main",
+	Workflow:            ".github/workflows/sign.yml",
+	Ref:                 pinsig.ExactRef("refs/heads/main"),
 	Triggers:            []string{"push", "schedule"},
 }
 

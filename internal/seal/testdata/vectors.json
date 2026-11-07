@@ -253,6 +253,9 @@
     "GET /v1/research/{id}",
     "GET /v1/research/{id}/events",
     "GET /v1/lookup/{service}/{path...}",
-    "POST /v1/audio/transcriptions"
+    "POST /v1/audio/transcriptions",
+    "POST /v1/plugins/call",
+    "POST /v1/plugins/token",
+    "POST /v1/plugins/revoke"
   ]
 }

@@ -69,12 +69,13 @@ func verifyChain(leafDER []byte, root TrustRoot, at time.Time) (*x509.Certificat
 // at another ref or commit could call ours as a reusable one. The run must be
 // the first attempt, since a re-run of an old run signs that commit's pins
 // again under a fresh Rekor time.
-func checkIdentity(leaf *x509.Certificate, id Identity) (sourceDigest, runInvocation string, err error) {
+type signer struct {
+	sourceDigest, runInvocation, ref string
+}
+
+func checkIdentity(leaf *x509.Certificate, id Identity) (signer, error) {
 	if len(leaf.URIs) != 1 || len(leaf.DNSNames)+len(leaf.EmailAddresses)+len(leaf.IPAddresses) != 0 {
-		return "", "", fmt.Errorf("%w: the SAN is not exactly one URI", ErrIdentity)
-	}
-	if leaf.URIs[0].String() != id.BuildSignerURI {
-		return "", "", fmt.Errorf("%w: SAN %s is not the build signer %s", ErrIdentity, leaf.URIs[0], id.BuildSignerURI)
+		return signer{}, fmt.Errorf("%w: the SAN is not exactly one URI", ErrIdentity)
 	}
 	ext := func(oid asn1.ObjectIdentifier) (string, error) {
 		for _, e := range leaf.Extensions {
@@ -90,57 +91,68 @@ func checkIdentity(leaf *x509.Certificate, id Identity) (sourceDigest, runInvoca
 		}
 		return "", fmt.Errorf("%w: no extension %s", ErrIdentity, oid)
 	}
+	ref, err := ext(oidSourceRepoRef)
+	if err != nil {
+		return signer{}, err
+	}
+	if id.Ref == nil || !id.Ref.admits(ref) {
+		return signer{}, fmt.Errorf("%w: source ref %q is not one the identity admits", ErrIdentity, ref)
+	}
+	workflowAtRef := id.SourceRepositoryURI + "/" + id.Workflow + "@" + ref
+	if leaf.URIs[0].String() != workflowAtRef {
+		return signer{}, fmt.Errorf("%w: SAN %s is not the build signer %s", ErrIdentity, leaf.URIs[0], workflowAtRef)
+	}
 	for _, want := range []struct {
 		oid   asn1.ObjectIdentifier
 		value string
 	}{
 		{oidIssuer, id.Issuer},
-		{oidBuildSignerURI, id.BuildSignerURI},
+		{oidBuildSignerURI, workflowAtRef},
 		{oidRunnerEnvironment, githubHostedRunner},
 		{oidSourceRepoURI, id.SourceRepositoryURI},
-		{oidSourceRepoRef, id.Ref},
 		{oidSourceRepoID, id.SourceRepositoryID},
 		{oidSourceRepoOwnerID, id.SourceOwnerID},
-		{oidBuildConfigURI, id.BuildConfigURI},
+		{oidBuildConfigURI, workflowAtRef},
 	} {
 		got, err := ext(want.oid)
 		if err != nil {
-			return "", "", err
+			return signer{}, err
 		}
 		if got != want.value {
-			return "", "", fmt.Errorf("%w: extension %s is %q, not %q", ErrIdentity, want.oid, got, want.value)
+			return signer{}, fmt.Errorf("%w: extension %s is %q, not %q", ErrIdentity, want.oid, got, want.value)
 		}
 	}
 	// The deprecated issuer extension is the raw issuer, not DER, and sigstore-go reads it first.
 	for _, e := range leaf.Extensions {
 		if e.Id.Equal(oidIssuerV1) && string(e.Value) != id.Issuer {
-			return "", "", fmt.Errorf("%w: deprecated issuer %q is not %q", ErrIdentity, e.Value, id.Issuer)
+			return signer{}, fmt.Errorf("%w: deprecated issuer %q is not %q", ErrIdentity, e.Value, id.Issuer)
 		}
 	}
 	trigger, err := ext(oidBuildTrigger)
 	if err != nil {
-		return "", "", err
+		return signer{}, err
 	}
 	if !slices.Contains(id.Triggers, trigger) {
-		return "", "", fmt.Errorf("%w: build trigger %q is not one of %v", ErrIdentity, trigger, id.Triggers)
+		return signer{}, fmt.Errorf("%w: build trigger %q is not one of %v", ErrIdentity, trigger, id.Triggers)
 	}
-	if sourceDigest, err = ext(oidSourceRepoDigest); err != nil {
-		return "", "", err
+	s := signer{ref: ref}
+	if s.sourceDigest, err = ext(oidSourceRepoDigest); err != nil {
+		return signer{}, err
 	}
 	buildConfigDigest, err := ext(oidBuildConfigDigest)
 	if err != nil {
-		return "", "", err
+		return signer{}, err
 	}
-	if buildConfigDigest != sourceDigest {
-		return "", "", fmt.Errorf("%w: build config digest %s is not the source digest %s", ErrIdentity, buildConfigDigest, sourceDigest)
+	if buildConfigDigest != s.sourceDigest {
+		return signer{}, fmt.Errorf("%w: build config digest %s is not the source digest %s", ErrIdentity, buildConfigDigest, s.sourceDigest)
 	}
-	if runInvocation, err = ext(oidRunInvocationURI); err != nil {
-		return "", "", err
+	if s.runInvocation, err = ext(oidRunInvocationURI); err != nil {
+		return signer{}, err
 	}
-	run, isRun := strings.CutPrefix(runInvocation, id.SourceRepositoryURI+"/actions/runs/")
+	run, isRun := strings.CutPrefix(s.runInvocation, id.SourceRepositoryURI+"/actions/runs/")
 	run, isFirstAttempt := strings.CutSuffix(run, "/attempts/1")
 	if !isRun || !isFirstAttempt || run == "" || strings.ContainsFunc(run, func(r rune) bool { return r < '0' || r > '9' }) {
-		return "", "", fmt.Errorf("%w: run invocation %q is not the first attempt of a run in %s", ErrIdentity, runInvocation, id.SourceRepositoryURI)
+		return signer{}, fmt.Errorf("%w: run invocation %q is not the first attempt of a run in %s", ErrIdentity, s.runInvocation, id.SourceRepositoryURI)
 	}
-	return sourceDigest, runInvocation, nil
+	return s, nil
 }

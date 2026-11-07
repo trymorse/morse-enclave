@@ -32,21 +32,23 @@ func (w *InProcess) vendor(v Vendor) (chatRoute, error) {
 	return chatRoute{}, errNoSuchVendor
 }
 
-// v3Attester is a route that also serves Tinfoil's v3 document, which binds the nonce.
+// v3Attester is a route that also serves Tinfoil's v3 document, which binds the nonce, with or without the
+// router's sigstore-code collateral.
 type v3Attester interface {
-	AttestV3(ctx context.Context, nonce string) (chat.Attestation, error)
+	AttestV3(ctx context.Context, nonce string, code bool) (chat.Attestation, error)
 }
 
-func (w *InProcess) Attest(ctx context.Context, v Vendor, nonce string, v3 bool) (chat.Attestation, error) {
+func (w *InProcess) Attest(ctx context.Context, v Vendor, nonce string, f Format) (chat.Attestation, error) {
 	by, err := w.attesterOf(v)
 	if err != nil {
 		return chat.Attestation{}, err
 	}
-	attest := by.Attest
-	if bound, ok := by.(v3Attester); ok && v3 {
-		attest = bound.AttestV3
+	var att chat.Attestation
+	if bound, ok := by.(v3Attester); ok && f != FormatReport {
+		att, err = bound.AttestV3(ctx, nonce, f == FormatV3Code)
+	} else {
+		att, err = by.Attest(ctx, nonce)
 	}
-	att, err := attest(ctx, nonce)
 	return att, evidenceRefusal(err)
 }
 

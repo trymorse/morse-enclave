@@ -2,23 +2,43 @@ package pinsig
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
-	"encoding/json"
-	"encoding/pem"
+	"errors"
 	"fmt"
-	"strconv"
+	"regexp"
+	"strings"
 	"time"
+	"unicode/utf8"
+
+	"morse/backend/internal/exactjson"
 )
 
-// bundle is a Sigstore bundle v0.3 reduced to what a keyless sign-blob with
-// Rekor v1 produces: one leaf certificate, one hashedrekord entry with both
-// a signed entry timestamp and an inclusion proof, and a message signature.
+// bundle is a Sigstore bundle v0.3 reduced to what keyless signing with
+// Rekor v1 produces: one leaf certificate, one signed content, and one Rekor
+// entry of that content's kind with both a signed entry timestamp and an
+// inclusion proof.
 type bundle struct {
 	leafDER   []byte
-	digest    [32]byte
+	content   signed
 	signature []byte
 	entry     logEntry
 }
+
+// signed is the bundle's content: a message digest (cosign sign-blob) or a
+// DSSE envelope (an in-toto attestation). Each has one Rekor body kind.
+type signed interface{ isSigned() }
+
+type messageSignature struct{ digest [32]byte }
+
+type dsseEnvelope struct {
+	payloadType string
+	payload     []byte
+}
+
+func (messageSignature) isSigned() {}
+func (dsseEnvelope) isSigned()     {}
 
 type logEntry struct {
 	logID          [32]byte
@@ -27,7 +47,7 @@ type logEntry struct {
 	set            []byte
 	proof          inclusionProof
 	canonicalBody  []byte
-	body           hashedRekord
+	body           entryBody
 }
 
 type inclusionProof struct {
@@ -35,6 +55,12 @@ type inclusionProof struct {
 	rootHash        [32]byte
 	hashes          [][32]byte
 	checkpoint      string
+}
+
+// entryBody is a parsed Rekor body. matches checks it names the bundle's
+// content, signature, and certificate.
+type entryBody interface {
+	matches(content signed, signature, certDER []byte) error
 }
 
 // hashedRekord is the Rekor v1 hashedrekord 0.0.1 body: the blob's digest,
@@ -45,9 +71,10 @@ type hashedRekord struct {
 	certDER   []byte
 }
 
-func (h hashedRekord) matches(digest [32]byte, signature, certDER []byte) error {
+func (h hashedRekord) matches(content signed, signature, certDER []byte) error {
+	ms, ok := content.(messageSignature)
 	switch {
-	case h.digest != digest:
+	case !ok || h.digest != ms.digest:
 		return fmt.Errorf("%w: names another digest", ErrBody)
 	case !bytes.Equal(h.signature, signature):
 		return fmt.Errorf("%w: names another signature", ErrBody)
@@ -57,165 +84,271 @@ func (h hashedRekord) matches(digest [32]byte, signature, certDER []byte) error 
 	return nil
 }
 
-// protoUint is an unsigned integer that protobuf JSON writes as a string.
-type protoUint uint64
+// dsseRekord is the Rekor v1 dsse 0.0.1 body: the payload's digest and the
+// envelope's one signature with the signer's certificate. Its envelopeHash
+// is Rekor's digest of the envelope text as the signer uploaded it, which
+// sigstore-go does not check either; the payload hash and the signature
+// already bind everything the envelope says.
+type dsseRekord struct {
+	payloadHash [32]byte
+	signature   []byte
+	certDER     []byte
+}
 
-func (n *protoUint) UnmarshalJSON(b []byte) error {
-	s := string(bytes.Trim(b, `"`))
-	v, err := strconv.ParseUint(s, 10, 64)
-	if err != nil {
-		return err
+func (d dsseRekord) matches(content signed, signature, certDER []byte) error {
+	env, ok := content.(dsseEnvelope)
+	switch {
+	case !ok || d.payloadHash != sha256.Sum256(env.payload):
+		return fmt.Errorf("%w: names another payload", ErrBody)
+	case !bytes.Equal(d.signature, signature):
+		return fmt.Errorf("%w: names another signature", ErrBody)
+	case !bytes.Equal(d.certDER, certDER):
+		return fmt.Errorf("%w: names another certificate", ErrBody)
 	}
-	*n = protoUint(v)
 	return nil
 }
 
-type bundleJSON struct {
-	MediaType            string `json:"mediaType"`
-	VerificationMaterial struct {
-		Certificate *struct {
-			RawBytes []byte `json:"rawBytes"`
-		} `json:"certificate"`
-		TlogEntries []struct {
-			LogIndex protoUint `json:"logIndex"`
-			LogID    struct {
-				KeyID []byte `json:"keyId"`
-			} `json:"logId"`
-			KindVersion struct {
-				Kind    string `json:"kind"`
-				Version string `json:"version"`
-			} `json:"kindVersion"`
-			IntegratedTime   protoUint `json:"integratedTime"`
-			InclusionPromise *struct {
-				SignedEntryTimestamp []byte `json:"signedEntryTimestamp"`
-			} `json:"inclusionPromise"`
-			InclusionProof *struct {
-				LogIndex   protoUint `json:"logIndex"`
-				RootHash   []byte    `json:"rootHash"`
-				TreeSize   protoUint `json:"treeSize"`
-				Hashes     [][]byte  `json:"hashes"`
-				Checkpoint struct {
-					Envelope string `json:"envelope"`
-				} `json:"checkpoint"`
-			} `json:"inclusionProof"`
-			CanonicalizedBody []byte `json:"canonicalizedBody"`
-		} `json:"tlogEntries"`
-	} `json:"verificationMaterial"`
-	MessageSignature *struct {
-		MessageDigest struct {
-			Algorithm string `json:"algorithm"`
-			Digest    []byte `json:"digest"`
-		} `json:"messageDigest"`
-		Signature []byte `json:"signature"`
-	} `json:"messageSignature"`
-	DSSEEnvelope json.RawMessage `json:"dsseEnvelope"`
+// pae is DSSE's pre-authentication encoding, what the leaf signs for an
+// envelope.
+func pae(payloadType string, payload []byte) []byte {
+	return []byte(fmt.Sprintf("DSSEv1 %d %s %d %s", len(payloadType), payloadType, len(payload), payload))
 }
 
-type hashedRekordJSON struct {
-	APIVersion string `json:"apiVersion"`
-	Kind       string `json:"kind"`
-	Spec       struct {
-		Data struct {
-			Hash struct {
-				Algorithm string `json:"algorithm"`
-				Value     string `json:"value"`
-			} `json:"hash"`
-		} `json:"data"`
-		Signature struct {
-			Content   []byte `json:"content"`
-			PublicKey struct {
-				Content []byte `json:"content"`
-			} `json:"publicKey"`
-		} `json:"signature"`
-	} `json:"spec"`
-}
+// The bundle, its Rekor body, and the statement under them are the router's
+// text, read through exactjson so the browser's port reads the same values:
+// exact keys, null present, no whitespace in base64, and integers in the
+// range both sides hold. The browser's regexes below are copied verbatim.
+var (
+	pemCertificate = regexp.MustCompile(`^-----BEGIN CERTIFICATE-----\n([A-Za-z0-9+/=\n]+)-----END CERTIFICATE-----\n?$`)
+	lowerHex32     = regexp.MustCompile(`^[0-9a-f]{64}$`)
+)
+
+const (
+	bundleV03       = "application/vnd.dev.sigstore.bundle.v0.3+json"
+	bundleV03Legacy = "application/vnd.dev.sigstore.bundle+json;version=0.3"
+)
 
 func parseBundle(raw []byte) (bundle, error) {
-	var j bundleJSON
-	if err := json.Unmarshal(raw, &j); err != nil {
+	b, err := readBundle(raw)
+	if err != nil {
 		return bundle{}, fmt.Errorf("%w: %v", ErrBundle, err)
 	}
-	if j.MediaType != "application/vnd.dev.sigstore.bundle.v0.3+json" && j.MediaType != "application/vnd.dev.sigstore.bundle+json;version=0.3" {
-		return bundle{}, fmt.Errorf("%w: media type %q is not bundle v0.3", ErrBundle, j.MediaType)
+	switch b.content.(type) {
+	case messageSignature:
+		b.entry.body, err = parseHashedRekord(b.entry.canonicalBody)
+	case dsseEnvelope:
+		b.entry.body, err = parseDSSERekord(b.entry.canonicalBody)
 	}
-	vm := j.VerificationMaterial
-	switch {
-	case j.DSSEEnvelope != nil:
-		return bundle{}, fmt.Errorf("%w: a DSSE envelope is not a message signature", ErrBundle)
-	case j.MessageSignature == nil:
-		return bundle{}, fmt.Errorf("%w: no message signature", ErrBundle)
-	case vm.Certificate == nil:
-		return bundle{}, fmt.Errorf("%w: no leaf certificate", ErrBundle)
-	case len(vm.TlogEntries) != 1:
-		return bundle{}, fmt.Errorf("%w: %d log entries, not one", ErrBundle, len(vm.TlogEntries))
-	}
-	ms := j.MessageSignature
-	if ms.MessageDigest.Algorithm != "SHA2_256" || len(ms.MessageDigest.Digest) != 32 {
-		return bundle{}, fmt.Errorf("%w: the message digest is not a SHA2_256 digest", ErrBundle)
-	}
-	e := vm.TlogEntries[0]
-	switch {
-	case e.KindVersion.Kind != "hashedrekord" || e.KindVersion.Version != "0.0.1":
-		return bundle{}, fmt.Errorf("%w: entry kind %s %s is not hashedrekord 0.0.1", ErrBundle, e.KindVersion.Kind, e.KindVersion.Version)
-	case len(e.LogID.KeyID) != 32:
-		return bundle{}, fmt.Errorf("%w: log id is not 32 bytes", ErrBundle)
-	case e.InclusionPromise == nil || len(e.InclusionPromise.SignedEntryTimestamp) == 0:
-		return bundle{}, fmt.Errorf("%w: no signed entry timestamp", ErrBundle)
-	case e.InclusionProof == nil || len(e.InclusionProof.RootHash) != 32 || e.InclusionProof.Checkpoint.Envelope == "":
-		return bundle{}, fmt.Errorf("%w: no inclusion proof with a root hash and a checkpoint", ErrBundle)
-	case e.IntegratedTime == 0:
-		return bundle{}, fmt.Errorf("%w: no integrated time", ErrBundle)
-	}
-	body, err := parseHashedRekord(e.CanonicalizedBody)
 	if err != nil {
 		return bundle{}, err
 	}
-	proof := inclusionProof{
-		index:      uint64(e.InclusionProof.LogIndex),
-		treeSize:   uint64(e.InclusionProof.TreeSize),
-		rootHash:   [32]byte(e.InclusionProof.RootHash),
-		checkpoint: e.InclusionProof.Checkpoint.Envelope,
+	return b, nil
+}
+
+// readBundle reads everything but the Rekor body, whose errors are ErrBody.
+func readBundle(raw []byte) (bundle, error) {
+	j := exactjson.Parse(raw)
+	mediaType := j.Key("mediaType").Text()
+	vm := j.Key("verificationMaterial")
+	hasSignature, hasEnvelope := j.Has("messageSignature"), j.Has("dsseEnvelope")
+	if err := j.Err(); err != nil {
+		return bundle{}, err
 	}
-	for _, h := range e.InclusionProof.Hashes {
-		if len(h) != 32 {
-			return bundle{}, fmt.Errorf("%w: an inclusion proof hash is not 32 bytes", ErrBundle)
+	switch {
+	case mediaType != bundleV03 && mediaType != bundleV03Legacy:
+		return bundle{}, fmt.Errorf("media type %q is not bundle v0.3", mediaType)
+	case !hasSignature && !hasEnvelope:
+		return bundle{}, errors.New("neither a message signature nor a DSSE envelope")
+	case hasSignature && hasEnvelope:
+		return bundle{}, errors.New("both a message signature and a DSSE envelope")
+	case !vm.Has("certificate"):
+		return bundle{}, errors.New("no leaf certificate")
+	}
+	var entries []exactjson.Value
+	if vm.Has("tlogEntries") {
+		entries = vm.Key("tlogEntries").Items()
+	}
+	if len(entries) != 1 {
+		return bundle{}, fmt.Errorf("%d log entries, not one", len(entries))
+	}
+	b := bundle{leafDER: vm.Key("certificate").Key("rawBytes").Bytes()}
+	var kind string
+	if hasSignature {
+		ms := j.Key("messageSignature")
+		digest := ms.Key("messageDigest")
+		algorithm, value, signature := digest.Key("algorithm").Text(), digest.Key("digest").Bytes(), ms.Key("signature").Bytes()
+		if err := j.Err(); err != nil {
+			return bundle{}, err
 		}
-		proof.hashes = append(proof.hashes, [32]byte(h))
+		if algorithm != "SHA2_256" || len(value) != 32 {
+			return bundle{}, errors.New("the message digest is not a SHA2_256 digest")
+		}
+		b.content, b.signature, kind = messageSignature{digest: [32]byte(value)}, signature, "hashedrekord"
+	} else {
+		env := j.Key("dsseEnvelope")
+		payload, payloadType, signatures := env.Key("payload").Bytes(), env.Key("payloadType").Text(), env.Key("signatures").Items()
+		if err := j.Err(); err != nil {
+			return bundle{}, err
+		}
+		if len(signatures) != 1 || payloadType == "" {
+			return bundle{}, errors.New("the DSSE envelope does not carry one signature and a payload type")
+		}
+		b.content, b.signature, kind = dsseEnvelope{payloadType: payloadType, payload: payload}, signatures[0].Key("sig").Bytes(), "dsse"
 	}
-	return bundle{
-		leafDER:   vm.Certificate.RawBytes,
-		digest:    [32]byte(ms.MessageDigest.Digest),
-		signature: ms.Signature,
-		entry: logEntry{
-			logID:          [32]byte(e.LogID.KeyID),
-			logIndex:       uint64(e.LogIndex),
-			integratedTime: time.Unix(int64(e.IntegratedTime), 0).UTC(),
-			set:            e.InclusionPromise.SignedEntryTimestamp,
-			proof:          proof,
-			canonicalBody:  e.CanonicalizedBody,
-			body:           body,
-		},
-	}, nil
+	e := entries[0]
+	kindVersion := e.Key("kindVersion")
+	entryKind, version := kindVersion.Key("kind").Text(), kindVersion.Key("version").Text()
+	logID := e.Key("logId").Key("keyId").Bytes()
+	logIndex, integratedTime := e.Key("logIndex").Uint(), e.Key("integratedTime").Uint()
+	canonical := e.Key("canonicalizedBody").Bytes()
+	if err := j.Err(); err != nil {
+		return bundle{}, err
+	}
+	switch {
+	case entryKind != kind || version != "0.0.1":
+		return bundle{}, fmt.Errorf("entry kind %s %s is not %s 0.0.1", entryKind, version, kind)
+	case len(logID) != 32:
+		return bundle{}, errors.New("log id is not 32 bytes")
+	case !e.Has("inclusionPromise"):
+		return bundle{}, errors.New("no signed entry timestamp")
+	case !e.Has("inclusionProof"):
+		return bundle{}, errors.New("no inclusion proof with a root hash and a checkpoint")
+	case integratedTime == 0:
+		return bundle{}, errors.New("no integrated time")
+	}
+	set := e.Key("inclusionPromise").Key("signedEntryTimestamp").Bytes()
+	p := e.Key("inclusionProof")
+	proof := inclusionProof{
+		index:      p.Key("logIndex").Uint(),
+		treeSize:   p.Key("treeSize").Uint(),
+		checkpoint: p.Key("checkpoint").Key("envelope").Text(),
+	}
+	rootHash := p.Key("rootHash").Bytes()
+	var hashes []exactjson.Value
+	if p.Has("hashes") {
+		hashes = p.Key("hashes").Items()
+	}
+	for _, h := range hashes {
+		hash := h.Bytes()
+		if len(hash) != 32 {
+			if err := j.Err(); err != nil {
+				return bundle{}, err
+			}
+			return bundle{}, errors.New("an inclusion proof hash is not 32 bytes")
+		}
+		proof.hashes = append(proof.hashes, [32]byte(hash))
+	}
+	if err := j.Err(); err != nil {
+		return bundle{}, err
+	}
+	switch {
+	case len(set) == 0:
+		return bundle{}, errors.New("no signed entry timestamp")
+	case len(rootHash) != 32 || proof.checkpoint == "":
+		return bundle{}, errors.New("no inclusion proof with a root hash and a checkpoint")
+	}
+	proof.rootHash = [32]byte(rootHash)
+	b.entry = logEntry{
+		logID:          [32]byte(logID),
+		logIndex:       logIndex,
+		integratedTime: time.Unix(int64(integratedTime), 0).UTC(),
+		set:            set,
+		proof:          proof,
+		canonicalBody:  canonical,
+	}
+	return b, nil
+}
+
+// body starts a read of a Rekor body, which must be UTF-8 JSON of kind 0.0.1.
+func body(canonical []byte, kind string) (exactjson.Value, error) {
+	if !utf8.Valid(canonical) {
+		return exactjson.Value{}, fmt.Errorf("%w: not UTF-8", ErrBody)
+	}
+	j := exactjson.Parse(canonical)
+	bodyKind, version := j.Key("kind").Text(), j.Key("apiVersion").Text()
+	if err := j.Err(); err != nil {
+		return exactjson.Value{}, fmt.Errorf("%w: %v", ErrBody, err)
+	}
+	if bodyKind != kind || version != "0.0.1" {
+		return exactjson.Value{}, fmt.Errorf("%w: kind %s %s is not %s 0.0.1", ErrBody, bodyKind, version, kind)
+	}
+	return j, nil
 }
 
 func parseHashedRekord(canonical []byte) (hashedRekord, error) {
-	var j hashedRekordJSON
-	if err := json.Unmarshal(canonical, &j); err != nil {
-		return hashedRekord{}, fmt.Errorf("%w: %v", ErrBody, err)
+	j, err := body(canonical, "hashedrekord")
+	if err != nil {
+		return hashedRekord{}, err
 	}
-	if j.Kind != "hashedrekord" || j.APIVersion != "0.0.1" {
-		return hashedRekord{}, fmt.Errorf("%w: kind %s %s is not hashedrekord 0.0.1", ErrBody, j.Kind, j.APIVersion)
+	spec := j.Key("spec")
+	digest, err := sha256Hex(spec.Key("data").Key("hash"))
+	if err != nil {
+		return hashedRekord{}, err
 	}
-	if j.Spec.Data.Hash.Algorithm != "sha256" {
-		return hashedRekord{}, fmt.Errorf("%w: hash algorithm %q is not sha256", ErrBody, j.Spec.Data.Hash.Algorithm)
+	signature := spec.Key("signature")
+	content := signature.Key("content").Bytes()
+	certDER, err := onePEMCertificate(signature.Key("publicKey").Key("content"))
+	if err != nil {
+		return hashedRekord{}, err
 	}
-	digest, err := hex.DecodeString(j.Spec.Data.Hash.Value)
-	if err != nil || len(digest) != 32 {
-		return hashedRekord{}, fmt.Errorf("%w: hash value is not 64 hex digits", ErrBody)
+	return hashedRekord{digest: digest, signature: content, certDER: certDER}, nil
+}
+
+func parseDSSERekord(canonical []byte) (dsseRekord, error) {
+	j, err := body(canonical, "dsse")
+	if err != nil {
+		return dsseRekord{}, err
 	}
-	block, rest := pem.Decode(j.Spec.Signature.PublicKey.Content)
-	if block == nil || block.Type != "CERTIFICATE" || len(rest) != 0 {
-		return hashedRekord{}, fmt.Errorf("%w: public key is not one PEM certificate", ErrBody)
+	spec := j.Key("spec")
+	payloadHash, err := sha256Hex(spec.Key("payloadHash"))
+	if err != nil {
+		return dsseRekord{}, err
 	}
-	return hashedRekord{digest: [32]byte(digest), signature: j.Spec.Signature.Content, certDER: block.Bytes}, nil
+	signatures := spec.Key("signatures").Items()
+	if err := j.Err(); err != nil {
+		return dsseRekord{}, fmt.Errorf("%w: %v", ErrBody, err)
+	}
+	if len(signatures) != 1 {
+		return dsseRekord{}, fmt.Errorf("%w: %d signatures, not one", ErrBody, len(signatures))
+	}
+	signature := signatures[0].Key("signature").Bytes()
+	certDER, err := onePEMCertificate(signatures[0].Key("verifier"))
+	if err != nil {
+		return dsseRekord{}, err
+	}
+	return dsseRekord{payloadHash: payloadHash, signature: signature, certDER: certDER}, nil
+}
+
+// sha256Hex reads a Rekor hash object: sha256 as 64 lowercase hex digits.
+func sha256Hex(h exactjson.Value) ([32]byte, error) {
+	algorithm, value := h.Key("algorithm").Text(), h.Key("value").Text()
+	if err := h.Err(); err != nil {
+		return [32]byte{}, fmt.Errorf("%w: %v", ErrBody, err)
+	}
+	if algorithm != "sha256" {
+		return [32]byte{}, fmt.Errorf("%w: hash algorithm %q is not sha256", ErrBody, algorithm)
+	}
+	if !lowerHex32.MatchString(value) {
+		return [32]byte{}, fmt.Errorf("%w: hash value is not 64 lowercase hex digits", ErrBody)
+	}
+	digest, _ := hex.DecodeString(value)
+	return [32]byte(digest), nil
+}
+
+// onePEMCertificate reads a base64 field holding one PEM certificate, in
+// the shape the browser's regex admits: no headers, and \n line ends.
+func onePEMCertificate(content exactjson.Value) ([]byte, error) {
+	pem := content.Bytes()
+	if err := content.Err(); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrBody, err)
+	}
+	m := pemCertificate.FindSubmatch(pem)
+	if m == nil {
+		return nil, fmt.Errorf("%w: the verifier is not one PEM certificate", ErrBody)
+	}
+	der, err := base64.StdEncoding.DecodeString(strings.ReplaceAll(string(m[1]), "\n", ""))
+	if err != nil {
+		return nil, fmt.Errorf("%w: the verifier is not one PEM certificate", ErrBody)
+	}
+	return der, nil
 }

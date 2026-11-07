@@ -16,6 +16,7 @@ import (
 	"morse/backend/internal/catalog"
 	"morse/backend/internal/chat"
 	"morse/backend/internal/health"
+	"morse/backend/internal/plugins"
 	"morse/backend/internal/research"
 	"morse/backend/internal/seal"
 	"morse/backend/internal/web"
@@ -25,7 +26,10 @@ const SealedContentType = "application/morse-sealed"
 
 var sealedMethods = []string{http.MethodGet, http.MethodPost, http.MethodDelete}
 
-var sealedBodyCaps = map[string]int{SearchPattern: web.MaxRequestBody, FetchPattern: web.MaxRequestBody, ResearchPattern: research.MaxRequestBody, TranscriptionPattern: audio.MaxRequestBody}
+var sealedBodyCaps = map[string]int{
+	SearchPattern: web.MaxRequestBody, FetchPattern: web.MaxRequestBody, ResearchPattern: research.MaxRequestBody, TranscriptionPattern: audio.MaxRequestBody,
+	PluginCallPattern: plugins.MaxCallBody, PluginTokenPattern: plugins.MaxTokenBody, PluginRevokePattern: plugins.MaxTokenBody,
+}
 
 var (
 	ErrSealedKeyUnknown  = apierr.Invalid(http.StatusMisdirectedRequest, "sealed_key_unknown", "No entry is sealed to this instance's key. Seal the request to every key in instances and send it once more.")
