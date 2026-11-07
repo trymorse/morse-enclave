@@ -101,11 +101,12 @@ func (w *InProcess) startProof(h Handle, e measure.Evidence, u unproven) <-chan 
 		ctx, cancel := context.WithTimeout(ctx, w.proofBudget)
 		defer cancel()
 		defer context.AfterFunc(w.counters.ctx, cancel)()
-		if u.prove(ctx) != nil {
+		receipt, err := u.prove(ctx)
+		if err != nil {
 			return Count{}
 		}
 		e.Upstream = u.usage
-		return Count{Measurement: e.Measure(), Counted: true}
+		return Count{Measurement: e.Measure(), Counted: true, Receipt: receipt}
 	})
 }
 

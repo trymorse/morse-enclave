@@ -149,7 +149,7 @@ func (m *Meter) Observe(o Observation) {
 			measured.hist.Record(measured.took)
 		}
 	}
-	if decode := o.Duration - o.TTFT; o.OutputTokens >= MinDecodeTokens && o.TTFT > 0 && !burst(o.OutputTokens, decode) {
+	if decode := o.Duration - o.TTFT; o.OutputTokens >= MinDecodeTokens && o.TTFT > 0 && !Burst(o.OutputTokens, decode) {
 		s.outputTokens.Add(uint64(o.OutputTokens))
 		s.generationMicros.Add(uint64(decode.Microseconds()))
 	}
@@ -161,8 +161,8 @@ func (m *Meter) Observe(o Observation) {
 	}
 }
 
-func burst(tokens int, decode time.Duration) bool {
-	return decode < time.Duration(tokens)*time.Second/MaxDecodeRate
+func Burst(tokens int, decode time.Duration) bool {
+	return tokens > int(decode/(time.Second/MaxDecodeRate))
 }
 
 type Row struct {

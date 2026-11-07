@@ -12,17 +12,13 @@ import (
 	"morse/backend/internal/anthropic"
 	"morse/backend/internal/catalog"
 	"morse/backend/internal/chat"
-	"morse/backend/internal/deepinfra"
 	"morse/backend/internal/fireworks"
 	"morse/backend/internal/gemini"
-	"morse/backend/internal/isoquant"
-	"morse/backend/internal/morph"
-	"morse/backend/internal/novita"
 	"morse/backend/internal/openaicompat"
+	"morse/backend/internal/openaihosts"
 	"morse/backend/internal/openairesponses"
 	"morse/backend/internal/upstream"
 	"morse/backend/internal/venice"
-	"morse/backend/internal/wafer"
 	"morse/backend/internal/xai"
 )
 
@@ -45,11 +41,9 @@ func TestNoPlaintextChatEncoderForwardsTheCallersConversationHandles(t *testing.
 		},
 		"venice":    func(u string, c *http.Client) chat.Provider { return venice.NewChat(u, "k", "m", c) },
 		"fireworks": func(u string, c *http.Client) chat.Provider { return fireworks.NewChat(u, "k", "m", c) },
-		"isoquant":  func(u string, c *http.Client) chat.Provider { return isoquant.NewChat(u, "k", "m", c) },
-		"wafer":     func(u string, c *http.Client) chat.Provider { return wafer.NewChat(u, "k", "m", c) },
-		"novita":    func(u string, c *http.Client) chat.Provider { return novita.NewChat(u, "k", "m", false, c) },
-		"morph":     func(u string, c *http.Client) chat.Provider { return morph.NewChat(u, "k", "m", c) },
-		"deepinfra": func(u string, c *http.Client) chat.Provider { return deepinfra.NewChat(u, "k", "m", false, c) },
+	}
+	for _, h := range openaihosts.Hosts() {
+		encoders[h.Name] = func(u string, c *http.Client) chat.Provider { return h.NewChat(u, "k", "m", false, c) }
 	}
 	for name, encoder := range encoders {
 		var mu sync.Mutex

@@ -115,7 +115,7 @@ func (v phalaVendor) NewGate(up attester.Upstream, d Deps) Gate {
 	keys := &e2eeKeys{now: time.Now}
 	return phalaGate{TLSGate: attested.NewTLSGate(attested.Config[aci.SPKI]{
 		Scope:    v.Scope(up).String(),
-		Verifier: phalaVerifier(d.Policy, up.Host, keys),
+		Verifier: phalaVerifier(d.Policy, attestation.PhalaPins(), up.Host, keys),
 		Fetch: func(ctx context.Context, nonce attestation.Nonce) ([]byte, error) {
 			return gateway.Report(ctx, nonce.String())
 		},
@@ -124,14 +124,14 @@ func (v phalaVendor) NewGate(up attester.Upstream, d Deps) Gate {
 	}, up.Host, d.Base), keys: keys}
 }
 
-func phalaVerifier(policy attestation.Policy, host string, keys *e2eeKeys) attested.Verifier[aci.SPKI] {
+func phalaVerifier(policy attestation.Policy, pins attestation.IdentityPins, host string, keys *e2eeKeys) attested.Verifier[aci.SPKI] {
 	return func(ctx context.Context, report []byte, nonce attestation.Nonce) (attestation.Verdicts[aci.SPKI], error) {
 		r, err := policy.VerifyPhala(ctx, report, nonce, host)
 		if err != nil {
 			return attestation.Verdicts[aci.SPKI]{}, err
 		}
 		keys.keep(r)
-		return attestation.PhalaPins().Judge(r)
+		return pins.Judge(r)
 	}
 }
 

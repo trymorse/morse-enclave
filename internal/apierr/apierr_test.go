@@ -48,8 +48,6 @@ func TestSanitizedUpstreamErrorMapsStatusAndNeverCarriesVendorText(t *testing.T)
 		{400, `{"error":{"message":"This model's maximum context length is 131072 tokens ` + canary + `","type":"invalid_request_error"}}`, 400, "context_length_exceeded"},
 		{400, `{"code":"Client specified an invalid argument","error":"This model's maximum prompt length is 131072 but the request contains 537812 tokens. ` + canary + `"}`, 400, "context_length_exceeded"},
 		{400, `{"error":{"code":400,"message":"This endpoint's maximum context length is 131072 tokens. ` + canary + `","metadata":{"provider_name":"Together"}}}`, 400, "context_length_exceeded"},
-		{400, `{"error":{"code":400,"message":"` + canary + `","metadata":{"error_type":"context_length_exceeded"}}}`, 400, "context_length_exceeded"},
-		{413, `{"error":{"code":413,"message":"` + canary + `","metadata":{"error_type":"context_length_exceeded"}}}`, 400, "context_length_exceeded"},
 		{400, `{"error":{"type":"invalid_request_error","message":"` + canary + ` prompt is too long"}}`, 400, "invalid_request"},
 		{400, `{"code":"Client specified an invalid argument","error":"` + canary + `"}`, 400, "invalid_request"},
 		{422, `{"error":{"message":"prompt is too long ` + canary + `"}}`, 400, "invalid_request"},

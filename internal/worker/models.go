@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"time"
 
 	"morse/backend/internal/audio"
@@ -25,12 +26,22 @@ type Model struct {
 	Attester  string
 	Order     int
 	Serves    Serving
-	Fallbacks []Model
-	// Unnamed are the model's endpoints at this tier that have no name: they join the tier's candidates, never a name's.
-	Unnamed []Model
-	// OnBehalf are the model's on-behalf endpoints: tee endpoints through which the worker seals a plaintext chat to the
-	// model's sealed endpoint for its client. They join the plaintext candidates at tee, never a name's.
-	OnBehalf []Model
+	// Place is how the endpoint serves under its name, and Beside are the endpoints that serve beside a named one: its
+	// sealed fallbacks, which a sealed request names by protocol; its unnamed endpoints, which join the tier's
+	// candidates and never a name's; and its on-behalf endpoints, tee endpoints through which the worker seals a
+	// plaintext chat to the named sealed endpoint for its client, which join the plaintext candidates at tee.
+	Place  catalog.Place
+	Beside []Model
+}
+
+func (m Model) at(places ...catalog.Place) []Model {
+	var at []Model
+	for _, b := range m.Beside {
+		if slices.Contains(places, b.Place) {
+			at = append(at, b)
+		}
+	}
+	return at
 }
 
 type Serving interface{ validate(catalog.Tier) error }
@@ -170,43 +181,21 @@ func (m Model) Validate() error {
 		return err
 	}
 	served := map[catalog.EndpointID]bool{m.Endpoint: true}
-	for _, fb := range m.Fallbacks {
-		if err := fb.Validate(); err != nil {
-			return fmt.Errorf("has fallback %s that %w", fb.Attester, err)
-		}
-		if served[fb.Endpoint] {
-			return fmt.Errorf("has two vendors at endpoint %q", fb.Endpoint)
-		}
-		served[fb.Endpoint] = true
-	}
-	for _, u := range m.Unnamed {
-		_, chats := u.Serves.(Chat)
+	for _, b := range m.Beside {
+		c, chats := b.Serves.(Chat)
+		_, viaPlain := c.Upstream.(Plain)
 		switch {
-		case !chats || u.Tier != m.Tier || u.Tier.Sealed():
-			return fmt.Errorf("has unnamed endpoint %q, which must serve chat at tier %s, outside e2ee", u.Endpoint, m.Tier)
-		case served[u.Endpoint]:
-			return fmt.Errorf("has two vendors at endpoint %q", u.Endpoint)
-		case len(u.Unnamed) > 0 || len(u.Fallbacks) > 0:
-			return fmt.Errorf("has unnamed endpoint %q with endpoints of its own; list them beside it", u.Endpoint)
-		}
-		if err := u.Validate(); err != nil {
-			return fmt.Errorf("has unnamed endpoint %q that %w", u.Endpoint, err)
-		}
-		served[u.Endpoint] = true
-	}
-	for _, b := range m.OnBehalf {
-		plain, chats := b.Serves.(Chat)
-		_, viaPlain := plain.Upstream.(Plain)
-		switch {
-		case !chats || !viaPlain || b.Tier != catalog.OnBehalfTier || !m.Tier.Sealed():
-			return fmt.Errorf("has on-behalf endpoint %q, which must serve a plain chat at tier %s beside a sealed endpoint", b.Endpoint, catalog.OnBehalfTier)
+		case len(b.Beside) > 0:
+			return fmt.Errorf("has %s with endpoints of its own; list them beside it", b.Place.Describe(b.Attester, b.Endpoint))
 		case served[b.Endpoint]:
 			return fmt.Errorf("has two vendors at endpoint %q", b.Endpoint)
-		case len(b.Unnamed) > 0 || len(b.Fallbacks) > 0 || len(b.OnBehalf) > 0:
-			return fmt.Errorf("has on-behalf endpoint %q with endpoints of its own; list them beside it", b.Endpoint)
+		case b.Place == catalog.PlaceUnnamed && (!chats || b.Tier != m.Tier || b.Tier.Sealed()):
+			return fmt.Errorf("has unnamed endpoint %q, which must serve chat at tier %s, outside e2ee", b.Endpoint, m.Tier)
+		case b.Place == catalog.PlaceOnBehalf && (!chats || !viaPlain || b.Tier != catalog.OnBehalfTier || !m.Tier.Sealed()):
+			return fmt.Errorf("has on-behalf endpoint %q, which must serve a plain chat at tier %s beside a sealed endpoint", b.Endpoint, catalog.OnBehalfTier)
 		}
 		if err := b.Validate(); err != nil {
-			return fmt.Errorf("has on-behalf endpoint %q that %w", b.Endpoint, err)
+			return fmt.Errorf("has %s that %w", b.Place.Describe(b.Attester, b.Endpoint), err)
 		}
 		served[b.Endpoint] = true
 	}

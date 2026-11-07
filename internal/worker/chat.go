@@ -308,7 +308,7 @@ func (o *openedChat) try(ctx context.Context, w *InProcess, a attempt, g ChatGra
 		end = verdictOf(got.callErr)
 	}
 	e := got.evidence(end, a, g)
-	m := Measured{Measurement: e.Measure(), Cut: end.cut(), Served: got.callErr == nil, Refusal: end.refusal(got.callErr), Endpoint: a.route.endpoint, VendorCost: got.reported.VendorCost}
+	m := Measured{Measurement: e.Measure(), Cut: end.cut(), Served: got.callErr == nil, Refusal: end.refusal(got.callErr), Endpoint: a.route.endpoint}
 	m.Health = rw.observed(ctx, got.callErr, false, opened, returned)
 	m.Health.Retries, m.Health.Hedges, m.Health.OutputTokens = got.attempts.Retries, got.attempts.Hedges, a.route.tokensAfterFirstByte(got.reported)
 	if refused, ok := errors.AsType[upstream.Refused](got.callErr); ok && vendorFaults[m.Health.Outcome] {
@@ -471,7 +471,6 @@ type served struct {
 	attempts          chat.Attempts
 	reply             measure.Reply
 	finish            chat.Finish
-	host              chat.Host
 	unanswered        bool
 	writeErr, callErr error
 	thought           thought
@@ -496,7 +495,6 @@ func (s served) evidence(end ending, a attempt, g ChatGrant) measure.Evidence {
 		Budgeted:           g.Budgeted,
 		Reply:              s.reply,
 		Finish:             s.finish,
-		ServedBy:           s.host,
 		Unanswered:         s.unanswered,
 		ReasoningRequested: c.Reasoned(r.Reasoning),
 		HidesReasoning:     r.HidesReasoning,
@@ -573,7 +571,7 @@ func stream(ctx context.Context, w http.ResponseWriter, rc *http.ResponseControl
 	case sw.started && ctx.Err() == nil && sw.err == nil:
 		sw.errorEvent()
 	}
-	return served{reported: reported, attempts: attempts, reply: measure.Streamed{Events: sw.delivered, VisibleBytes: sw.visible}, finish: sw.finish, host: sw.host, unanswered: unanswered(sw.finish, sw.sent), writeErr: sw.err, callErr: err, thought: clock.thought()}
+	return served{reported: reported, attempts: attempts, reply: measure.Streamed{Events: sw.delivered, VisibleBytes: sw.visible}, finish: sw.finish, unanswered: unanswered(sw.finish, sw.sent), writeErr: sw.err, callErr: err, thought: clock.thought()}
 }
 
 func complete(ctx context.Context, w http.ResponseWriter, prov chat.BusyRetry, c chat.Call, transcript *chat.Transcript, clock *thinkingClock) served {
@@ -591,5 +589,5 @@ func complete(ctx context.Context, w http.ResponseWriter, prov chat.BusyRetry, c
 	if written > 0 {
 		transcript.Add(d)
 	}
-	return served{reported: tokens, attempts: attempts, reply: measure.Buffered{Bytes: int(written)}, finish: d.Finish, host: body.Host(), unanswered: unanswered(d.Finish, d.Delivered()), writeErr: writeErr}
+	return served{reported: tokens, attempts: attempts, reply: measure.Buffered{Bytes: int(written)}, finish: d.Finish, unanswered: unanswered(d.Finish, d.Delivered()), writeErr: writeErr}
 }

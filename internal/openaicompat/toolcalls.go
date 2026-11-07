@@ -7,6 +7,12 @@ import (
 	"strconv"
 )
 
+// toolCallFields and functionFields are the order a tool call's fields and its function's fields are written in.
+var (
+	toolCallFields = []string{"index", "id", "type", "function"}
+	functionFields = []string{"name", "arguments"}
+)
+
 const idAlphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
 
 // toolCallID is the id a client sees for call index of a choice in the reply named replyID: call_ and 24 letters or
@@ -54,7 +60,7 @@ func uniformToolCalls(raw json.RawMessage, message bool, replyID string, choice 
 		}
 		kept++
 		w := objectWriter{out: &out}
-		for _, name := range [...]string{"index", "id", "type", "function"} {
+		for _, name := range toolCallFields {
 			v := c[name]
 			switch name {
 			case "index":
@@ -96,7 +102,7 @@ func uniformFunction(raw json.RawMessage, opens bool) (json.RawMessage, error) {
 	}
 	var out bytes.Buffer
 	w := objectWriter{out: &out}
-	for _, name := range [...]string{"name", "arguments"} {
+	for _, name := range functionFields {
 		v := fields[name]
 		if isNull(v) || !opens && string(v) == `""` {
 			if !opens {

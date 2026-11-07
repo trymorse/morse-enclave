@@ -195,6 +195,16 @@ func TestADecodeAtExactlyMaxDecodeRateCountsAndOneMicrosecondFasterDoesNot(t *te
 	}
 }
 
+func TestAHostReportingMoreTokensThanADurationCanHoldIsABurstAndLeftOut(t *testing.T) {
+	for _, tokens := range []int{9_223_372_037, 10_000_000_000} {
+		r := NewRecorder()
+		r.Meter(route).Observe(Observation{Path: PathStream, Outcome: OK, Duration: 2 * time.Second, TTFT: time.Second, OutputTokens: tokens})
+		if row := rowFor(t, r.Drain(), PathStream, OK); row.OutputTokens != 0 || row.GenerationMicros != 0 {
+			t.Errorf("%d tokens in one second recorded %d tokens over %dµs, want none: that is far above %d a second", tokens, row.OutputTokens, row.GenerationMicros, MaxDecodeRate)
+		}
+	}
+}
+
 func TestAReplyUnderMinDecodeTokensIsLeftOut(t *testing.T) {
 	r := NewRecorder()
 	r.Meter(route).Observe(Observation{Path: PathStream, Outcome: OK, Duration: 11 * time.Second, TTFT: time.Second, OutputTokens: 199})

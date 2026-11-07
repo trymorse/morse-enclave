@@ -27,27 +27,27 @@ func indexChats(models map[string]Model) map[string]chatName {
 	plaintext := map[catalog.ModelID][]chatRoute{}
 	sealedName := map[catalog.ModelID]string{}
 	for name, m := range models {
-		for _, vendor := range append([]Model{m}, m.Fallbacks...) {
+		for _, vendor := range append([]Model{m}, m.Beside...) {
 			c, chats := vendor.Serves.(Chat)
 			if !chats {
 				continue
 			}
 			r := c.route(m.ID, vendor)
-			r.aliased = name != string(m.ID)
-			named[name] = append(named[name], r)
-			if r.tier.Sealed() {
-				sealedName[m.ID] = name
-			} else {
+			switch vendor.Place {
+			case catalog.PlaceUnnamed:
 				plaintext[m.ID] = append(plaintext[m.ID], r)
+			case catalog.PlaceOnBehalf:
+				r.seals = true
+				plaintext[m.ID] = append(plaintext[m.ID], r)
+			default:
+				r.aliased = name != string(m.ID)
+				named[name] = append(named[name], r)
+				if r.tier.Sealed() {
+					sealedName[m.ID] = name
+				} else {
+					plaintext[m.ID] = append(plaintext[m.ID], r)
+				}
 			}
-		}
-		for _, vendor := range m.Unnamed {
-			plaintext[m.ID] = append(plaintext[m.ID], vendor.Serves.(Chat).route(m.ID, vendor))
-		}
-		for _, vendor := range m.OnBehalf {
-			r := vendor.Serves.(Chat).route(m.ID, vendor)
-			r.seals = true
-			plaintext[m.ID] = append(plaintext[m.ID], r)
 		}
 	}
 	for _, routes := range plaintext {

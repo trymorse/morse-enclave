@@ -67,7 +67,13 @@ type Replied struct {
 	// for a relay that can't read them (a reply sealed whole). The bill falls back on it without a usage.
 	Tokens        int
 	UnknownFields []string
-	Prove         func(context.Context) error
+	Prove         func(context.Context) (ProvenReceipt, error)
+}
+
+// A ProvenReceipt is the receipt that proved a reply, byte-exact as the vendor served it.
+type ProvenReceipt struct {
+	ID  string
+	Raw json.RawMessage
 }
 
 type Relayer interface {

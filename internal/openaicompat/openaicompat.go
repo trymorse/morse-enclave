@@ -21,7 +21,7 @@ import (
 )
 
 const (
-	chatCompletionsPath = "/v1/chat/completions"
+	ChatCompletionsPath = "/v1/chat/completions"
 	maxEvent            = 1 << 20
 	MaxCompletionBody   = 16 << 20
 )
@@ -67,20 +67,15 @@ type Provider struct {
 	LimitField      LimitField
 	KeepEnvelope    bool
 	ContinuousUsage bool
-	// OneThingPerChunk sends each field of a delta as a chunk of its own, and a finish_reason on a chunk with an empty
-	// delta, for a host that packs them together.
-	OneThingPerChunk bool
 	// AnswersInReasoning marks a model that can send a whole answer as reasoning and stop with no content, as Ling 3.0
 	// Flash does when it skips its thinking. That text reaches the client as content too: in a stream, before the stop.
 	AnswersInReasoning bool
-	NamesHost          bool
 	// Admit refuses a call before it is sent, or is nil to send every call.
 	Admit func(chat.Call) error
 	// Headers adds headers to the request that carries a call, or is nil to add none.
 	Headers func(chat.Call) http.Header
 	// ChargeFields are the usage fields that carry what the vendor charged the proxy, which the client is not shown.
 	ChargeFields []string
-	VendorCost   func(usage json.RawMessage) chat.VendorCost
 	Bill         func(usage json.RawMessage) (json.RawMessage, error)
 }
 
@@ -94,106 +89,127 @@ func (p *Provider) Stream(ctx context.Context, c chat.Call, emit func(chat.Chunk
 	if err != nil {
 		return chat.Usage{}, err
 	}
-	h := morseHead{id: chat.NewReplyID(), model: c.Model, object: "chat.completion.chunk", created: time.Now().Unix()}
-	var usage chat.Usage
-	// final is the last event that carried usage. Billing reads its usage, and so does the one usage chunk a client
-	// that asked gets at the end of the stream, so the two never differ. Hosts send usage on the finish chunk, on a
-	// choice-less chunk after it, on both with different counts, or on every chunk (Phala's continuous_usage_stats,
-	// Fireworks for some models); only the last is what the reply cost.
-	var final []byte
-	var answered bool
-	var thought strings.Builder
-	opened := opening{}
-	var spoken *reply
-	send := func(data []byte, r reply) error {
-		chunks := [][]byte{data}
-		if !p.KeepEnvelope {
-			if first := opened.firstOf(data); len(first) > 0 {
-				if err := emit(chat.NewChunk(p.opener(h, first)).WithHost(r.host)); err != nil {
-					return err
-				}
-			}
-			if bare(data) {
-				return nil
-			}
-			if pieces := apart(data); pieces != nil {
-				chunks = pieces
-			}
+	s := &stream{p: p, emit: emit, opened: opening{}, answer: reasoningAnswer{on: p.AnswersInReasoning},
+		head: morseHead{id: chat.NewReplyID(), model: c.Model, object: "chat.completion.chunk", created: time.Now().Unix()}}
+	if err := p.Sender.Stream(ctx, body, p.headers(c), s.event); err != nil {
+		return s.usage, err
+	}
+	if err := s.openSilentReply(); err != nil {
+		return s.usage, err
+	}
+	return s.usage, s.sendUsage(c.IncludeUsage)
+}
+
+type stream struct {
+	p    *Provider
+	head morseHead
+	emit func(chat.Chunk) error
+	// Hosts send usage on the finish chunk, on a choice-less chunk after it, on both with different counts, or on every
+	// chunk (Phala's continuous_usage_stats, Fireworks for some models); only the last is what the reply cost.
+	usage  chat.Usage
+	final  []byte
+	spoke  bool
+	opened opening
+	answer reasoningAnswer
+}
+
+func (s *stream) event(data []byte) (bool, error) {
+	if isDone(data) {
+		return true, nil
+	}
+	r, err := s.p.decodeReply(data)
+	if err != nil {
+		return false, err
+	}
+	if r.usage != nil {
+		s.usage, s.final = r.usage.Domain(), slices.Clone(data)
+	}
+	if errEvent, ok := r.value("error"); ok && string(errEvent) != "null" {
+		return false, chat.ErrorChunkOf(errEvent)
+	}
+	if r.usage != nil {
+		if r.choices == 0 {
+			return false, nil
 		}
-		for _, piece := range chunks {
-			parts := [][]byte{piece}
-			if p.OneThingPerChunk {
-				parts = splitChunk(piece)
-			}
-			for _, part := range parts {
-				if err := emit(chat.NewChunk(part).WithHost(r.host)); err != nil {
-					return err
-				}
-			}
+		r.drop("usage")
+	}
+	s.spoke = true
+	if text, ok := s.answer.answerFromReasoning(chat.NewChunk(data).Delta()); ok {
+		if err := s.send(r.withContent(text)); err != nil {
+			return false, err
 		}
+	}
+	return false, s.send(r)
+}
+
+func (s *stream) send(r reply) error {
+	data, err := s.p.disguise(r, s.head)
+	if err != nil {
+		return err
+	}
+	if s.p.KeepEnvelope {
+		return s.emit(chat.NewChunk(data))
+	}
+	if first := s.opened.firstOf(data); len(first) > 0 {
+		if err := s.emit(chat.NewChunk(s.head.opener(first))); err != nil {
+			return err
+		}
+	}
+	for _, chunk := range canonical(data) {
+		if err := s.emit(chat.NewChunk(chunk)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// openSilentReply opens choice 0 of a reply that spoke but sent no chunk that opened a choice.
+func (s *stream) openSilentReply() error {
+	if s.spoke && len(s.opened) == 0 && !s.p.KeepEnvelope {
+		return s.emit(chat.NewChunk(s.head.opener([]int{0})))
+	}
+	return nil
+}
+
+// sendUsage sends the host's usage chunk, without its choices, when the call asked for usage.
+func (s *stream) sendUsage(includeUsage bool) error {
+	if !includeUsage || s.final == nil {
 		return nil
 	}
-	err = p.Sender.Stream(ctx, body, p.headers(c), func(data []byte) (bool, error) {
-		if isDone(data) {
-			return true, nil
-		}
-		r, err := p.decodeReply(data)
-		if err != nil {
-			return false, err
-		}
-		if r.usage != nil {
-			usage = r.domainUsage()
-			final = slices.Clone(data)
-		}
-		if errEvent, ok := r.value("error"); ok && string(errEvent) != "null" {
-			return false, chat.ErrorChunkOf(errEvent)
-		}
-		if r.usage != nil {
-			if r.choices == 0 {
-				return false, nil
-			}
-			r.drop("usage")
-		}
-		spoken = &r
-		if p.AnswersInReasoning && !answered {
-			d := chat.NewChunk(data).Delta()
-			answered = d.Answers()
-			thought.WriteString(d.Reasoning)
-			if !answered && d.Finish == chat.FinishStop && strings.TrimSpace(thought.String()) != "" {
-				answer, err := p.disguise(r.withContent(thought.String()), h)
-				if err != nil {
-					return false, err
-				}
-				if err := send(answer, r); err != nil {
-					return false, err
-				}
-				answered = true
-			}
-		}
-		data, err = p.disguise(r, h)
-		if err != nil {
-			return false, err
-		}
-		return false, send(data, r)
-	})
-	if err == nil && spoken != nil && len(opened) == 0 && !p.KeepEnvelope {
-		err = emit(chat.NewChunk(p.opener(h, []int{0})).WithHost(spoken.host))
-	}
-	if err != nil || !c.IncludeUsage || final == nil {
-		return usage, err
-	}
-	r, err := p.decodeReply(final)
+	r, err := s.p.decodeReply(s.final)
 	if err != nil {
-		return usage, err
+		return err
 	}
 	if r.choices > 0 {
 		r.set("choices", json.RawMessage("[]"))
 	}
-	data, err := p.disguise(r, h)
+	data, err := s.p.disguise(r, s.head)
 	if err != nil {
-		return usage, err
+		return err
 	}
-	return usage, emit(chat.NewChunk(data).WithHost(r.host))
+	return s.emit(chat.NewChunk(data))
+}
+
+// reasoningAnswer is the rule for a model that can send a whole answer as reasoning and stop with no content, as Ling
+// 3.0 Flash does when it skips its thinking (AnswersInReasoning): a reply that stops having given only reasoning gives
+// that reasoning as its content too.
+type reasoningAnswer struct {
+	on, settled bool
+	thought     strings.Builder
+}
+
+// answerFromReasoning returns the reasoning to give as content when d stops a reply that has given only reasoning.
+func (a *reasoningAnswer) answerFromReasoning(d chat.Delta) (string, bool) {
+	if !a.on || a.settled {
+		return "", false
+	}
+	a.settled = d.Answers()
+	a.thought.WriteString(d.Reasoning)
+	if a.settled || d.Finish != chat.FinishStop || strings.TrimSpace(a.thought.String()) == "" {
+		return "", false
+	}
+	a.settled = true
+	return a.thought.String(), true
 }
 
 func (p *Provider) Complete(ctx context.Context, c chat.Call) (chat.Chunk, chat.Usage, error) {
@@ -212,20 +228,21 @@ func (p *Provider) Complete(ctx context.Context, c chat.Call) (chat.Chunk, chat.
 	if err != nil {
 		return chat.Chunk{}, chat.Usage{}, err
 	}
-	if d := chat.NewChunk(body).Delta(); p.AnswersInReasoning && !d.Answers() && d.Finish == chat.FinishStop && strings.TrimSpace(d.Reasoning) != "" {
-		if err := r.answer(d.Reasoning); err != nil {
+	answer := reasoningAnswer{on: p.AnswersInReasoning}
+	if text, ok := answer.answerFromReasoning(chat.NewChunk(body).Delta()); ok {
+		if err := r.answer(text); err != nil {
 			return chat.Chunk{}, chat.Usage{}, err
 		}
 	}
 	var usage chat.Usage
 	if r.usage != nil {
-		usage = r.domainUsage()
+		usage = r.usage.Domain()
 	}
 	body, err = p.disguise(r, morseHead{id: chat.NewReplyID(), model: c.Model, object: "chat.completion", created: time.Now().Unix()})
 	if err != nil {
 		return chat.Chunk{}, chat.Usage{}, err
 	}
-	return chat.NewChunk(body).WithHost(r.host), usage, nil
+	return chat.NewChunk(body), usage, nil
 }
 
 func (p *Provider) admit(c chat.Call) error {
@@ -294,7 +311,7 @@ func (o opening) firstOf(data []byte) []int {
 }
 
 // opener is the chunk that opens a reply for the given choices: role assistant and content "", the shape OpenAI sends.
-func (p *Provider) opener(h morseHead, indexes []int) []byte {
+func (h morseHead) opener(indexes []int) []byte {
 	var choices bytes.Buffer
 	choices.WriteByte('[')
 	for i, index := range indexes {
@@ -401,99 +418,6 @@ func uniformAnswer(raw json.RawMessage, message bool, replyID string, choice int
 
 var emptyDropped = map[string]bool{"content": true, "refusal": true}
 
-// bare reports whether a disguised chunk says nothing a client reads: choices whose deltas are empty, with no finish
-// reason, and no usage. A host's empty content delta is one, and Together sends none.
-func bare(data []byte) bool {
-	var c struct {
-		Choices []struct {
-			Delta        map[string]json.RawMessage `json:"delta"`
-			FinishReason json.RawMessage            `json:"finish_reason"`
-		} `json:"choices"`
-		Usage json.RawMessage `json:"usage"`
-	}
-	if json.Unmarshal(data, &c) != nil || len(c.Choices) == 0 || !isNull(c.Usage) {
-		return false
-	}
-	for _, ch := range c.Choices {
-		if len(ch.Delta) > 0 || !isNull(ch.FinishReason) {
-			return false
-		}
-	}
-	return true
-}
-
-// apart splits a disguised chunk into the chunks Together would have sent for it: for each choice, one delta of its
-// text, one delta per tool call, then its finish_reason with an empty delta. Morph sends the last text or every tool
-// call whole on the chunk that carries finish_reason. It returns nil when the chunk is already in that shape.
-func apart(data []byte) [][]byte {
-	var e envelope
-	var choices []struct {
-		Index        json.RawMessage            `json:"index"`
-		Delta        map[string]json.RawMessage `json:"delta"`
-		FinishReason json.RawMessage            `json:"finish_reason"`
-		Logprobs     json.RawMessage            `json:"logprobs"`
-	}
-	if json.Unmarshal(data, &e) != nil || json.Unmarshal(e.Choices, &choices) != nil {
-		return nil
-	}
-	type piece struct{ index, delta, finish, logprobs json.RawMessage }
-	var pieces []piece
-	for _, c := range choices {
-		var calls []json.RawMessage
-		json.Unmarshal(c.Delta["tool_calls"], &calls)
-		var text bytes.Buffer
-		w := objectWriter{out: &text}
-		for _, name := range answerFields {
-			if v, ok := c.Delta[name]; ok && name != "tool_calls" {
-				w.field(name, v)
-			}
-		}
-		w.close()
-		first := len(pieces)
-		if text.String() != "{}" {
-			pieces = append(pieces, piece{index: c.Index, delta: text.Bytes()})
-		}
-		for _, call := range calls {
-			pieces = append(pieces, piece{index: c.Index, delta: jsonx.Encode(map[string][]json.RawMessage{"tool_calls": {call}})})
-		}
-		if !isNull(c.FinishReason) || len(pieces) == first {
-			pieces = append(pieces, piece{index: c.Index, delta: json.RawMessage("{}"), finish: c.FinishReason})
-		}
-		if !isNull(c.Logprobs) {
-			pieces[first].logprobs = c.Logprobs
-		}
-	}
-	if len(pieces) <= len(choices) {
-		return nil
-	}
-	chunks := make([][]byte, len(pieces))
-	for i, p := range pieces {
-		if p.finish == nil {
-			p.finish = json.RawMessage("null")
-		}
-		var choice bytes.Buffer
-		choice.WriteByte('[')
-		w := objectWriter{out: &choice}
-		if p.index != nil {
-			w.field("index", p.index)
-		}
-		w.field("delta", p.delta)
-		w.field("finish_reason", p.finish)
-		if p.logprobs != nil {
-			w.field("logprobs", p.logprobs)
-		}
-		w.close()
-		choice.WriteByte(']')
-		one := e
-		one.Choices = choice.Bytes()
-		if i < len(pieces)-1 {
-			one.Usage = nil
-		}
-		chunks[i] = jsonx.Encode(one)
-	}
-	return chunks
-}
-
 func isNull(v json.RawMessage) bool { return v == nil || string(v) == "null" }
 
 type objectWriter struct {
@@ -569,7 +493,7 @@ type HTTPSender struct{ upstream.Endpoint }
 var _ Sender = HTTPSender{}
 
 func (s HTTPSender) Stream(ctx context.Context, body []byte, header http.Header, each func(data []byte) (bool, error)) error {
-	resp, err := s.Open(ctx, upstream.Request{Method: http.MethodPost, Path: chatCompletionsPath, Header: accepting(header, "text/event-stream"), Body: body})
+	resp, err := s.Open(ctx, upstream.Request{Method: http.MethodPost, Path: ChatCompletionsPath, Header: accepting(header, "text/event-stream"), Body: body})
 	if err != nil {
 		return err
 	}
@@ -578,7 +502,7 @@ func (s HTTPSender) Stream(ctx context.Context, body []byte, header http.Header,
 }
 
 func (s HTTPSender) Complete(ctx context.Context, body []byte, header http.Header) ([]byte, error) {
-	resp, err := s.Open(ctx, upstream.Request{Method: http.MethodPost, Path: chatCompletionsPath, Header: accepting(header, "application/json"), Body: body})
+	resp, err := s.Open(ctx, upstream.Request{Method: http.MethodPost, Path: ChatCompletionsPath, Header: accepting(header, "application/json"), Body: body})
 	if err != nil {
 		return nil, err
 	}

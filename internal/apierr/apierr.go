@@ -213,12 +213,9 @@ func readVendorReply(body []byte) (vendorReply, bool) {
 	}
 	var nested struct {
 		Code, Type, Message json.RawMessage
-		Metadata            struct {
-			ErrorType json.RawMessage `json:"error_type"`
-		}
 	}
 	json.Unmarshal(top.Error, &nested)
-	r := vendorReply{codes: []string{text(nested.Code), text(nested.Type), text(nested.Metadata.ErrorType)}, message: text(nested.Message)}
+	r := vendorReply{codes: []string{text(nested.Code), text(nested.Type)}, message: text(nested.Message)}
 	if r.message == "" {
 		r.message = text(top.Message)
 	}

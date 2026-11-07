@@ -80,7 +80,7 @@ func (s SealedSender) open(ctx context.Context, body []byte, header http.Header,
 		return nil, err
 	}
 	seal.Forward(header.Set)
-	resp, err := s.Endpoint.Open(ctx, upstream.Request{Method: http.MethodPost, Path: chatCompletionsPath, Header: header, Body: sealed})
+	resp, err := s.Endpoint.Open(ctx, upstream.Request{Method: http.MethodPost, Path: ChatCompletionsPath, Header: header, Body: sealed})
 	if err != nil {
 		return nil, err
 	}

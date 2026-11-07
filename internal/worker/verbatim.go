@@ -221,7 +221,7 @@ func relay(ctx context.Context, w http.ResponseWriter, rc *http.ResponseControll
 	}
 	s := served{reported: replied.Usage, reply: rw.reply(events), writeErr: rw.err, callErr: err}
 	if replied.Prove != nil {
-		s.reported = chat.Usage{VendorCost: replied.Usage.VendorCost}
+		s.reported = chat.Usage{}
 		s.unproven = &unproven{usage: replied.Usage, prove: replied.Prove}
 	}
 	return s, replied.UnknownFields
@@ -229,7 +229,7 @@ func relay(ctx context.Context, w http.ResponseWriter, rc *http.ResponseControll
 
 type unproven struct {
 	usage chat.Usage
-	prove func(context.Context) error
+	prove func(context.Context) (chat.ProvenReceipt, error)
 }
 
 func (rw *relayWriter) reply(events int) measure.Reply {

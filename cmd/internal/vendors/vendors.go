@@ -11,15 +11,12 @@ import (
 	"morse/backend/internal/catalog"
 	"morse/backend/internal/chat"
 	"morse/backend/internal/completions"
-	"morse/backend/internal/deepinfra"
 	"morse/backend/internal/fal"
 	"morse/backend/internal/fireworks"
 	"morse/backend/internal/gemini"
-	"morse/backend/internal/isoquant"
 	"morse/backend/internal/media"
-	"morse/backend/internal/morph"
-	"morse/backend/internal/novita"
 	"morse/backend/internal/openaicompat"
+	"morse/backend/internal/openaihosts"
 	"morse/backend/internal/openairesponses"
 	"morse/backend/internal/parallel"
 	"morse/backend/internal/phala"
@@ -29,7 +26,6 @@ import (
 	"morse/backend/internal/tokenizer"
 	"morse/backend/internal/upstream"
 	"morse/backend/internal/venice"
-	"morse/backend/internal/wafer"
 	"morse/backend/internal/worker"
 	"morse/backend/internal/xai"
 )
@@ -60,7 +56,7 @@ func erase[S routes.Serves](b builder[S]) build {
 	return func(rt routes.Route, key string, d Deps) (worker.Serving, error) { return b(rt, rt.Serves.(S), key, d) }
 }
 
-var chatProviders = map[routes.Provider]newChatProvider{
+var chatProviders = withOpenAIHosts(map[routes.Provider]newChatProvider{
 	routes.ProviderOpenAI:          openAIProvider,
 	routes.ProviderOpenAIResponses: translating(openairesponses.New),
 	routes.ProviderAnthropic:       translating(anthropic.New),
@@ -68,11 +64,25 @@ var chatProviders = map[routes.Provider]newChatProvider{
 	routes.ProviderXAI:             xaiProvider,
 	routes.ProviderVenice:          veniceProvider,
 	routes.ProviderFireworks:       fireworksProvider,
-	routes.ProviderIsoquant:        isoquantProvider,
-	routes.ProviderWafer:           waferProvider,
-	routes.ProviderNovita:          novitaProvider,
-	routes.ProviderMorph:           morphProvider,
-	routes.ProviderDeepInfra:       deepinfraProvider,
+})
+
+var openAIHosts = func() map[routes.Provider]openaihosts.Host {
+	m := map[routes.Provider]openaihosts.Host{}
+	for _, h := range openaihosts.Hosts() {
+		p, err := routes.ParseProvider(h.Name)
+		if err != nil {
+			panic(err)
+		}
+		m[p] = h
+	}
+	return m
+}()
+
+func withOpenAIHosts(m map[routes.Provider]newChatProvider) map[routes.Provider]newChatProvider {
+	for p := range openAIHosts {
+		m[p] = openAIHostProvider
+	}
+	return m
 }
 
 var builders = withChat(map[routes.Provider]map[catalog.Kind]build{
@@ -115,6 +125,16 @@ func ChatProvider(rt routes.Route, key string, client *http.Client) (chat.Provid
 		return nil, fmt.Errorf("route %q is no chat route a provider serves", rt.Model)
 	}
 	return newProvider(rt, c, key, Deps{Client: client}), nil
+}
+
+// Endpoint is rt's host as an OpenAI-compatible endpoint reached with key: its base URL and the credentials every
+// request to it carries, a host's ZDR header among them, for a tool that sends a host requests of its own.
+func Endpoint(rt routes.Route, key string, client *http.Client) upstream.Endpoint {
+	var p routes.Provider
+	if v, vendor := rt.Upstream.(routes.Vendor); vendor {
+		p = v.Provider
+	}
+	return openAIHosts[p].Endpoint(rt.BaseURL, key, client)
 }
 
 func Build(rt routes.Route, key string, d Deps) (worker.Serving, error) {
@@ -165,27 +185,13 @@ func model(rt routes.Route, keys Keys, d Deps) (worker.Model, error) {
 	if err != nil {
 		return worker.Model{}, err
 	}
-	m := worker.Model{ID: rt.ID, Endpoint: rt.Endpoint, Tier: rt.Tier, Retention: rt.Retention, Attester: Attester(rt), Order: rt.Order, Serves: serves}
-	for _, fb := range rt.Fallbacks {
-		f, err := model(fb, keys, d)
+	m := worker.Model{ID: rt.ID, Endpoint: rt.Endpoint, Tier: rt.Tier, Retention: rt.Retention, Attester: Attester(rt), Order: rt.Order, Place: rt.Place, Serves: serves}
+	for _, b := range rt.Beside {
+		beside, err := model(b, keys, d)
 		if err != nil {
 			return worker.Model{}, err
 		}
-		m.Fallbacks = append(m.Fallbacks, f)
-	}
-	for _, u := range rt.Unnamed {
-		f, err := model(u, keys, d)
-		if err != nil {
-			return worker.Model{}, err
-		}
-		m.Unnamed = append(m.Unnamed, f)
-	}
-	for _, b := range rt.OnBehalf {
-		f, err := model(b, keys, d)
-		if err != nil {
-			return worker.Model{}, err
-		}
-		m.OnBehalf = append(m.OnBehalf, f)
+		m.Beside = append(m.Beside, beside)
 	}
 	return m, nil
 }
@@ -250,24 +256,8 @@ func fireworksProvider(rt routes.Route, _ routes.Chat, key string, d Deps) chat.
 	return fireworks.NewChat(rt.BaseURL, key, rt.UpstreamModel, d.Client)
 }
 
-func isoquantProvider(rt routes.Route, _ routes.Chat, key string, d Deps) chat.Provider {
-	return isoquant.NewChat(rt.BaseURL, key, rt.UpstreamModel, d.Client)
-}
-
-func waferProvider(rt routes.Route, _ routes.Chat, key string, d Deps) chat.Provider {
-	return wafer.NewChat(rt.BaseURL, key, rt.UpstreamModel, d.Client)
-}
-
-func novitaProvider(rt routes.Route, c routes.Chat, key string, d Deps) chat.Provider {
-	return novita.NewChat(rt.BaseURL, key, rt.UpstreamModel, c.AnswersInReasoning, d.Client)
-}
-
-func morphProvider(rt routes.Route, _ routes.Chat, key string, d Deps) chat.Provider {
-	return morph.NewChat(rt.BaseURL, key, rt.UpstreamModel, d.Client)
-}
-
-func deepinfraProvider(rt routes.Route, c routes.Chat, key string, d Deps) chat.Provider {
-	return deepinfra.NewChat(rt.BaseURL, key, rt.UpstreamModel, c.AnswersInReasoning, d.Client)
+func openAIHostProvider(rt routes.Route, c routes.Chat, key string, d Deps) chat.Provider {
+	return openAIHosts[rt.Upstream.(routes.Vendor).Provider].NewChat(rt.BaseURL, key, rt.UpstreamModel, c.AnswersInReasoning, d.Client)
 }
 
 func attestedChat(rt routes.Route, attested routes.Attested, key string, d Deps) (worker.Serving, error) {

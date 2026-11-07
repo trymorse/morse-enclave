@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 
-	"morse/backend/internal/chat"
 	"morse/backend/internal/completions"
 	"morse/backend/internal/jsonx"
 )
@@ -21,8 +20,6 @@ type reply struct {
 	dropped map[string]bool
 	choices int
 	usage   *completions.Usage
-	cost    chat.VendorCost
-	host    chat.Host
 }
 
 func (p *Provider) decodeReply(object []byte) (reply, error) {
@@ -37,15 +34,9 @@ func (p *Provider) decodeReply(object []byte) (reply, error) {
 		}
 		r.choices = len(choices)
 	}
-	if p.NamesHost {
-		r.host = hostOf(r)
-	}
 	raw, ok := r.value("usage")
 	if !ok {
 		return r, nil
-	}
-	if p.VendorCost != nil && string(raw) != "null" {
-		r.cost = p.VendorCost(raw)
 	}
 	if len(p.ChargeFields) > 0 && string(raw) != "null" {
 		kept, err := without(raw, p.ChargeFields)
@@ -67,22 +58,6 @@ func (p *Provider) decodeReply(object []byte) (reply, error) {
 		return reply{}, err
 	}
 	return r, nil
-}
-
-func (r reply) domainUsage() chat.Usage {
-	u := r.usage.Domain()
-	u.VendorCost = r.cost
-	return u
-}
-
-func hostOf(r reply) chat.Host {
-	raw, _ := r.value("provider")
-	var name string
-	if json.Unmarshal(raw, &name) != nil {
-		return chat.Host{}
-	}
-	host, _ := chat.ParseHost(name)
-	return host
 }
 
 func parseReply(object []byte) (reply, bool) {

@@ -22,9 +22,11 @@ var (
 
 var ModelFields = []string{"label", "lab", "open_weights", "kind", "reasoning_efforts", "input_modalities", "hides_reasoning", "answers_in_reasoning", "markup", "app_only", "prices", "rebate_share_bps"}
 
-var fallbackFields = []string{"attester", "base_url", "api_key_env", "provider_name"}
+// FallbackFields are the fields in which a later e2ee endpoint of a model may differ from the first, whose fallback it
+// is.
+var FallbackFields = []string{"attester", "base_url", "api_key_env", "provider_name"}
 
-// RelayFields are the keys that live in relay.json, which routes.json refuses in either form.
+// RelayFields are the keys that live in relay.json, which routes.json refuses.
 var RelayFields = []string{"cost", "role", "spread_bps"}
 
 func relayField(f fields) (string, bool) {
@@ -104,33 +106,21 @@ type modelsFile struct {
 	Aliases []Alias           `json:"aliases"`
 }
 
-type Flat struct {
-	Route     json.RawMessage
-	Model     catalog.ModelID
-	Endpoints []catalog.EndpointID
-	// Order is the route's first endpoint's place in the file, counted across every model.
-	Order int
-	// Unnamed are the model's unnamed endpoints at this route's tier, each a route of one endpoint.
-	Unnamed []Flat
-	// OnBehalf are the on-behalf endpoints of this sealed route, each a route of one endpoint at tier tee.
-	OnBehalf []Flat
+type served struct {
+	named  flatEndpoint
+	beside []flatEndpoint
 }
 
-func Flatten(data []byte) ([]Flat, error) {
-	if !bytes.HasPrefix(bytes.TrimLeft(data, " \t\r\n"), []byte("{")) {
-		var rts []json.RawMessage
-		if err := json.Unmarshal(data, &rts); err != nil {
-			return nil, fmt.Errorf("routes must be a JSON array of routes or an object of models and aliases: %w", err)
-		}
-		flat := make([]Flat, len(rts))
-		for i, rt := range rts {
-			if err := arrayRouteOwnsNoRelayField(rt); err != nil {
-				return nil, fmt.Errorf("route %d %w", i, err)
-			}
-			flat[i].Route, flat[i].Order = rt, i
-		}
-		return flat, nil
-	}
+type flatEndpoint struct {
+	object fields
+	model  catalog.ModelID
+	id     catalog.EndpointID
+	// fileOrder is the endpoint's place among every endpoint of the routes file.
+	fileOrder int
+	place     catalog.Place
+}
+
+func flatten(data []byte) ([]served, error) {
 	var file modelsFile
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
@@ -155,35 +145,17 @@ func Flatten(data []byte) ([]Flat, error) {
 	if err != nil {
 		return nil, err
 	}
-	var rts []Flat
-	order := 0
+	var rts []served
+	fileOrder := 0
 	for _, m := range models {
-		flat, err := m.routes(names[m.id], order)
+		flat, err := m.endpointsServed(names[m.id], fileOrder)
 		if err != nil {
 			return nil, fmt.Errorf("model %q: %w", m.id, err)
 		}
 		rts = append(rts, flat...)
-		order += len(m.endpoints)
+		fileOrder += len(m.endpoints)
 	}
 	return rts, nil
-}
-
-func arrayRouteOwnsNoRelayField(raw json.RawMessage) error {
-	var rt fields
-	if json.Unmarshal(raw, &rt) != nil {
-		return nil
-	}
-	if k, ok := relayField(rt); ok {
-		return fmt.Errorf("sets %q, %s", k, relayFieldHome)
-	}
-	var fbs []fields
-	json.Unmarshal(rt["fallbacks"], &fbs)
-	for _, fb := range fbs {
-		if k, ok := relayField(fb); ok {
-			return fmt.Errorf("fallback sets %q, %s", k, relayFieldHome)
-		}
-	}
-	return nil
 }
 
 func parseModel(raw json.RawMessage) (model, error) {
@@ -333,13 +305,12 @@ func aliasNames(aliases []Alias, models []model) (map[catalog.ModelID]map[catalo
 	return names, nil
 }
 
-func (m model) routes(names map[catalog.EndpointID]string, first int) ([]Flat, error) {
-	var flat []fields
-	var served [][]catalog.EndpointID
-	var orders []int
-	var sealed fields
+// endpointsServed is m's endpoints as they serve, each named by names. m's first endpoint is at firstFileOrder among
+// the routes file's endpoints.
+func (m model) endpointsServed(names map[catalog.EndpointID]string, firstFileOrder int) ([]served, error) {
+	var out []served
 	var sealedBy endpoint
-	var sealedAt int
+	sealedAt := -1
 	var underID catalog.EndpointID
 	var unnamed, onBehalf []int
 	for i, e := range m.endpoints {
@@ -355,7 +326,8 @@ func (m model) routes(names map[catalog.EndpointID]string, first int) ([]Flat, e
 			continue
 		}
 		name, aliased := names[e.id]
-		if e.sealed() && sealed != nil {
+		if e.sealed() && sealedAt >= 0 {
+			sealed := &out[sealedAt]
 			if aliased {
 				return nil, fmt.Errorf("alias %q names endpoint %q, which serves as a fallback of e2ee endpoint %q under its name", name, e.id, sealedBy.id)
 			}
@@ -365,19 +337,18 @@ func (m model) routes(names map[catalog.EndpointID]string, first int) ([]Flat, e
 			if err := sameSeal(e, sealedBy); err != nil {
 				return nil, err
 			}
-			if err := sealsAs(m, e, sealed); err != nil {
+			if err := sealsAs(m, e, sealed.named.object); err != nil {
 				return nil, err
 			}
-			var fbs []fields
-			json.Unmarshal(sealed["fallbacks"], &fbs)
-			fb := fields{}
-			for _, k := range fallbackFields {
-				if v, ok := e.fields[k]; ok {
-					fb[k] = v
-				}
+			if err := oneAttesterEach(e, sealed); err != nil {
+				return nil, err
 			}
-			sealed["fallbacks"] = marshal(append(fbs, fb))
-			served[sealedAt] = append(served[sealedAt], e.id)
+			rt, err := m.route(e)
+			if err != nil {
+				return nil, err
+			}
+			rt["model"] = sealed.named.object["model"]
+			sealed.beside = append(sealed.beside, flatEndpoint{object: rt, model: m.id, id: e.id, fileOrder: firstFileOrder + i, place: catalog.PlaceFallback})
 			continue
 		}
 		if !aliased {
@@ -398,19 +369,13 @@ func (m model) routes(names map[catalog.EndpointID]string, first int) ([]Flat, e
 			if err := sealsAs(m, e, rt); err != nil {
 				return nil, err
 			}
-			sealed, sealedBy, sealedAt = rt, e, len(flat)
+			sealedBy, sealedAt = e, len(out)
 		}
-		flat = append(flat, rt)
-		served = append(served, []catalog.EndpointID{e.id})
-		orders = append(orders, first+i)
-	}
-	out := make([]Flat, len(flat))
-	for i, rt := range flat {
-		out[i] = Flat{Route: marshal(rt), Model: m.id, Endpoints: served[i], Order: orders[i]}
+		out = append(out, served{named: flatEndpoint{object: rt, model: m.id, id: e.id, fileOrder: firstFileOrder + i}})
 	}
 	for _, i := range unnamed {
 		e := m.endpoints[i]
-		at := slices.IndexFunc(flat, func(rt fields) bool { return sameJSON(rt["tier"], e.fields["tier"]) })
+		at := slices.IndexFunc(out, func(s served) bool { return sameJSON(s.named.object["tier"], e.fields["tier"]) })
 		if at < 0 {
 			return nil, fmt.Errorf("endpoint %q is unnamed, but no named endpoint of the model serves tier %s for it to serve beside", e.id, e.tier())
 		}
@@ -418,18 +383,31 @@ func (m model) routes(names map[catalog.EndpointID]string, first int) ([]Flat, e
 		if err != nil {
 			return nil, err
 		}
-		rt["model"] = flat[at]["model"]
-		out[at].Unnamed = append(out[at].Unnamed, Flat{Route: marshal(rt), Model: m.id, Endpoints: []catalog.EndpointID{e.id}, Order: first + i})
+		rt["model"] = out[at].named.object["model"]
+		out[at].beside = append(out[at].beside, flatEndpoint{object: rt, model: m.id, id: e.id, fileOrder: firstFileOrder + i, place: catalog.PlaceUnnamed})
 	}
 	for _, i := range onBehalf {
 		e := m.endpoints[i]
-		rt, at, err := m.onBehalfRoute(e, flat, served)
+		rt, at, err := m.onBehalfRoute(e, out)
 		if err != nil {
 			return nil, err
 		}
-		out[at].OnBehalf = append(out[at].OnBehalf, Flat{Route: marshal(rt), Model: m.id, Endpoints: []catalog.EndpointID{e.id}, Order: first + i})
+		out[at].beside = append(out[at].beside, flatEndpoint{object: rt, model: m.id, id: e.id, fileOrder: firstFileOrder + i, place: catalog.PlaceOnBehalf})
 	}
 	return out, nil
+}
+
+func oneAttesterEach(e endpoint, sealed *served) error {
+	var name string
+	json.Unmarshal(e.fields["attester"], &name)
+	for _, o := range append([]flatEndpoint{sealed.named}, sealed.beside...) {
+		var other string
+		json.Unmarshal(o.object["attester"], &other)
+		if other == name {
+			return fmt.Errorf("endpoints %q and %q are e2ee and both name attester %s; a sealed request names its vendor by the protocol the attester speaks, so each e2ee endpoint of a model names its own", o.id, e.id, name)
+		}
+	}
+	return nil
 }
 
 // OnBehalfFields are the only fields an on-behalf endpoint sets besides its id: everything else it takes from the
@@ -453,7 +431,7 @@ func (e endpoint) checkOnBehalf(model catalog.ModelID) error {
 
 // onBehalfRoute builds the object an on-behalf endpoint loads as: the sealed endpoint's fields, with the endpoint's own
 // terms and defaults over them, at the model's tee price. The int is the route that serves the sealed endpoint.
-func (m model) onBehalfRoute(e endpoint, flat []fields, served [][]catalog.EndpointID) (fields, int, error) {
+func (m model) onBehalfRoute(e endpoint, out []served) (fields, int, error) {
 	i := slices.IndexFunc(m.endpoints, func(o endpoint) bool { return o.id == e.onBehalfOf })
 	if i < 0 {
 		return nil, 0, fmt.Errorf("endpoint %q is on behalf of endpoint %q, which model %q does not list", e.id, e.onBehalfOf, m.id)
@@ -467,7 +445,9 @@ func (m model) onBehalfRoute(e endpoint, flat []fields, served [][]catalog.Endpo
 	if v, err := attester.Parse(name); err != nil || v.SealsBody() {
 		return nil, 0, fmt.Errorf("endpoint %q is on behalf of endpoint %q, whose attester %s seals a request whole, so it has no seal for a plaintext chat", e.id, sealed.id, name)
 	}
-	at := slices.IndexFunc(served, func(ids []catalog.EndpointID) bool { return slices.Contains(ids, sealed.id) })
+	at := slices.IndexFunc(out, func(s served) bool {
+		return s.named.id == sealed.id || slices.ContainsFunc(s.beside, func(b flatEndpoint) bool { return b.id == sealed.id })
+	})
 	if at < 0 {
 		return nil, 0, fmt.Errorf("endpoint %q is on behalf of endpoint %q, which serves no route", e.id, sealed.id)
 	}
@@ -482,7 +462,7 @@ func (m model) onBehalfRoute(e endpoint, flat []fields, served [][]catalog.Endpo
 		return nil, 0, fmt.Errorf("endpoint %q serves tier %s, which the model's prices do not list", e.id, e.tier())
 	}
 	rt["price"] = price
-	rt["model"] = flat[at]["model"]
+	rt["model"] = out[at].named.object["model"]
 	return rt, at, nil
 }
 
@@ -513,8 +493,8 @@ func sameTerms(e, first endpoint) error {
 	keys := append(slices.Collect(maps.Keys(e.fields)), slices.Collect(maps.Keys(first.fields))...)
 	slices.Sort(keys)
 	for _, k := range slices.Compact(keys) {
-		if !slices.Contains(fallbackFields, k) && !sameJSON(e.fields[k], first.fields[k]) {
-			return fmt.Errorf("endpoint %q differs from e2ee endpoint %q in %s; a later e2ee endpoint is a fallback of the first and serves on its terms, so only %s may differ", e.id, first.id, k, strings.Join(fallbackFields, ", "))
+		if !slices.Contains(FallbackFields, k) && !sameJSON(e.fields[k], first.fields[k]) {
+			return fmt.Errorf("endpoint %q differs from e2ee endpoint %q in %s; a later e2ee endpoint is a fallback of the first and serves on its terms, so only %s may differ", e.id, first.id, k, strings.Join(FallbackFields, ", "))
 		}
 	}
 	return nil

@@ -224,7 +224,6 @@ type Measured struct {
 	Unsampled         bool                `json:"-"`
 	Refusal           measure.RefusalCode `json:",omitempty"`
 	Endpoint          catalog.EndpointID  `json:",omitempty"`
-	VendorCost        chat.VendorCost     `json:",omitzero"`
 	FailedOver        []Try               `json:",omitempty"`
 	Counted           <-chan Count        `json:"-"`
 }
@@ -266,4 +265,5 @@ type Count struct {
 	measure.Measurement
 	Counted bool
 	Samples []measure.Sample
+	Receipt chat.ProvenReceipt `json:",omitzero"`
 }

@@ -19,7 +19,7 @@ func (c common) upstream(tier catalog.Tier) (Upstream, error) {
 		return nil, err
 	}
 	if vendor == nil {
-		provider, err := parseProvider(c.Provider)
+		provider, err := ParseProvider(c.Provider)
 		if err != nil {
 			return nil, err
 		}

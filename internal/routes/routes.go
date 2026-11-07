@@ -1,7 +1,6 @@
 package routes
 
 import (
-	"cmp"
 	"fmt"
 	"slices"
 
@@ -53,7 +52,7 @@ var providerNames = enum.Names[Provider]{
 
 func (p Provider) String() string { return providerNames.String(p) }
 
-func parseProvider(raw string) (Provider, error) {
+func ParseProvider(raw string) (Provider, error) {
 	if raw == "" {
 		return ProviderOpenAI, nil
 	}
@@ -83,14 +82,15 @@ type Route struct {
 	Serves        Serves
 	Included      *Included
 	RequiresPlan  plankind.Kind
-	Fallbacks     []Route
-	// Unnamed are the endpoints of the model at this route's tier that have no name of their own. A chat on the route
-	// may be served by any of them, on the route's terms: no list, price row, or request name shows them.
-	Unnamed []Route
-	// OnBehalf are the model's on-behalf endpoints of this sealed route: tee endpoints through which the worker seals a
-	// plaintext chat to this route's vendor for its client. They are no route of their own and take their
-	// host, upstream model, key, and window from the sealed endpoint they name.
-	OnBehalf []Route `json:",omitempty"`
+	// Place is how the endpoint serves under the route's name: a named route is the endpoint its name is given to,
+	// and each route in its Beside is a fallback, an unnamed endpoint, or an on-behalf endpoint of that one.
+	Place catalog.Place
+	// Beside are the model's other endpoints that serve under this route's name, each placed. A sealed fallback
+	// is a later e2ee endpoint a sealed client reseals to. An unnamed endpoint serves the tier's chats on the
+	// route's terms, and no list, price row, or request name shows it. An on-behalf endpoint is the tee endpoint
+	// through which the worker seals a plaintext chat to this sealed route's vendor for its client; it takes its
+	// host, upstream model, key, and window from this route. A route beside another has none beside it.
+	Beside []Route `json:",omitempty"`
 	// OnBehalfOf is the sealed endpoint an on-behalf route seals to, and empty on every other route.
 	OnBehalfOf catalog.EndpointID `json:",omitempty"`
 	// Order is the endpoint's place in the routes file, the order a tier's endpoints are tried in.
@@ -101,27 +101,21 @@ type Route struct {
 	RebateShare money.RebateShare
 }
 
-// Upstreams is the route, its fallbacks, and its unnamed endpoints: every endpoint that serves under its name.
+// Upstreams is the route and each endpoint beside it that is a host of its own: its fallbacks and its unnamed
+// endpoints. An on-behalf endpoint reaches the route's own host, so it is left out.
 func (rt Route) Upstreams() []Route {
-	return slices.Concat([]Route{rt}, rt.Fallbacks, rt.Unnamed)
+	return append([]Route{rt}, rt.At(catalog.PlaceFallback, catalog.PlaceUnnamed)...)
 }
 
-func (rt *Route) identify(f Flat) {
-	rt.ID, rt.Order = cmp.Or(f.Model, catalog.ModelID(rt.Model)), f.Order
-	for i, vendor := range append([]Route{*rt}, rt.Fallbacks...) {
-		id := catalog.EndpointID(rt.Tier.String())
-		if a, attested := vendor.Upstream.(Attested); attested {
-			id = catalog.EndpointID(a.Attester.Name)
-		}
-		if i < len(f.Endpoints) {
-			id = f.Endpoints[i]
-		}
-		if i == 0 {
-			rt.Endpoint = id
-		} else {
-			rt.Fallbacks[i-1].ID, rt.Fallbacks[i-1].Endpoint, rt.Fallbacks[i-1].Order = rt.ID, id, rt.Order
+// At is the routes beside rt at any of the places, in file order.
+func (rt Route) At(places ...catalog.Place) []Route {
+	var at []Route
+	for _, b := range rt.Beside {
+		if slices.Contains(places, b.Place) {
+			at = append(at, b)
 		}
 	}
+	return at
 }
 
 // KeyEnvs is every api_key_env that rts or their fallbacks name, sorted, each once.

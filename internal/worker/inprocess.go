@@ -105,7 +105,7 @@ func NewInProcess(cfg Config) (*InProcess, error) {
 }
 
 func (w *InProcess) indexNonChat(name string, m Model) {
-	for _, vendor := range append([]Model{m}, m.Fallbacks...) {
+	for _, vendor := range append([]Model{m}, m.at(catalog.PlaceFallback)...) {
 		if _, chats := vendor.Serves.(Chat); chats {
 			continue
 		}

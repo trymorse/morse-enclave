@@ -47,6 +47,7 @@ func TestAToolCallLooksTheSameFromEveryHost(t *testing.T) {
 	var ids []string
 	for _, h := range hosts() {
 		var opened int
+		var arguments string
 		_, err := h.serve(t, h.stream["kimi"]).Stream(context.Background(), call(t, `{"model":"m","stream":true,"messages":[{"role":"user","content":"hi"}]}`), func(c chat.Chunk) error {
 			var b bytes.Buffer
 			c.WriteTo(&b)
@@ -54,9 +55,16 @@ func TestAToolCallLooksTheSameFromEveryHost(t *testing.T) {
 				return nil
 			}
 			for _, tc := range toolCallsOf(t, b.Bytes(), "delta") {
+				if tc.ID == "" {
+					if tc.Index == nil || *tc.Index != 0 || tc.Type != "" || len(tc.Function) != 1 || tc.Function["arguments"] == nil {
+						t.Errorf("%s: streamed continuation %+v, want index 0 and arguments only", h.name, tc)
+					}
+					arguments += tc.Function["arguments"].(string)
+					continue
+				}
 				opened++
-				if tc.Index == nil || *tc.Index != 0 || !morseCallID.MatchString(tc.ID) || tc.Type != "function" || tc.Function["name"] != "get_time" {
-					t.Errorf("%s: streamed call %+v, want index 0, a Morse id, type, and name", h.name, tc)
+				if tc.Index == nil || *tc.Index != 0 || !morseCallID.MatchString(tc.ID) || tc.Type != "function" || tc.Function["name"] != "get_time" || tc.Function["arguments"] != "" {
+					t.Errorf("%s: streamed call %+v, want index 0, a Morse id, type, name, and arguments \"\"", h.name, tc)
 				}
 				ids = append(ids, tc.ID)
 			}
@@ -65,8 +73,8 @@ func TestAToolCallLooksTheSameFromEveryHost(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if opened != 1 {
-			t.Errorf("%s: %d streamed calls, want 1", h.name, opened)
+		if opened != 1 || !strings.Contains(arguments, "Paris") {
+			t.Errorf("%s: %d streamed calls with arguments %q, want 1 with the host's arguments", h.name, opened, arguments)
 		}
 		c, _, err := h.serve(t, h.whole["kimi"]).Complete(context.Background(), call(t, `{"model":"m","messages":[{"role":"user","content":"hi"}]}`))
 		if err != nil {

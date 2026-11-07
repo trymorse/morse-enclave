@@ -29,7 +29,7 @@ type Relay struct {
 	Proves  Prover
 }
 
-type Prover func(ctx context.Context, read Read) error
+type Prover func(ctx context.Context, read Read) (json.RawMessage, error)
 
 type Read struct {
 	ReceiptID, ReplyID string
@@ -113,7 +113,7 @@ func (r *Relay) Relay(ctx context.Context, c chat.Call, sealed chat.E2EE, begin 
 	}
 	header := http.Header{"Accept": {accept}}
 	sealed.Forward(header.Set)
-	resp, err := r.Open(ctx, upstream.Request{Method: http.MethodPost, Path: chatCompletionsPath, Header: header, Body: c.Verbatim()})
+	resp, err := r.Open(ctx, upstream.Request{Method: http.MethodPost, Path: ChatCompletionsPath, Header: header, Body: c.Verbatim()})
 	if err != nil {
 		return chat.Replied{}, err
 	}
@@ -167,12 +167,15 @@ func (r *Relay) Relay(ctx context.Context, c chat.Call, sealed chat.E2EE, begin 
 	return chat.Replied{Usage: tap.last, Events: tap.events, UnknownFields: g.unknown, Prove: r.proof(resp.Header, tap.id, read)}, err
 }
 
-func (r *Relay) proof(header http.Header, replyID string, body hash.Hash) func(context.Context) error {
+func (r *Relay) proof(header http.Header, replyID string, body hash.Hash) func(context.Context) (chat.ProvenReceipt, error) {
 	if r.Proves == nil {
 		return nil
 	}
 	read := Read{ReceiptID: header.Get(chat.HeaderReceiptID), ReplyID: replyID, Hash: aci.Hash(body.Sum(nil))}
-	return func(ctx context.Context) error { return r.Proves(ctx, read) }
+	return func(ctx context.Context) (chat.ProvenReceipt, error) {
+		raw, err := r.Proves(ctx, read)
+		return chat.ProvenReceipt{ID: read.ReceiptID, Raw: raw}, err
+	}
 }
 
 func replyID(event []byte) string {

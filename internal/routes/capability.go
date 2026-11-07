@@ -26,13 +26,14 @@ type capability struct {
 	// route lists stops it. Anthropic's models think only at an effort the request names.
 	reasonsUnasked bool
 	// Gemini returns thought parts only to a request that sets includeThoughts, so the first chunk waits out the
-	// reasoning.
+	// reasoning. A late first chunk is then not a stall to hedge, and only answer tokens follow it.
 	silentWhileReasoning bool
 	// A slow first chunk is the vendor slowing every request at once, so a second call is as late as the first and
 	// only adds to the bill. Anthropic's slow windows held a hedge's call as long as the first: it won 0 of 36.
 	slowsTogether bool
 	// The provider shows a reply that is all reasoning as the answer for a model that sets answers_in_reasoning.
 	answersFromReasoning bool
+	refusesDryAccount    bool
 }
 
 var (
@@ -42,9 +43,15 @@ var (
 )
 
 var capabilities = map[Provider]capability{
-	ProviderOpenAI:          {kinds: servedAt{catalog.KindChat: anonAndPrivate, catalog.KindTranscription: anonAndPrivate}},
+	ProviderOpenAI: {kinds: servedAt{catalog.KindChat: anonAndPrivate, catalog.KindTranscription: anonAndPrivate}},
+	// OpenAI's status for an account out of credit is not documented, and none has been captured, so a dry account is
+	// no account refusal.
 	ProviderOpenAIResponses: {kinds: servedAt{catalog.KindChat: anonOnly}, needsKey: true, hides: true, reasonsUnasked: true},
-	ProviderAnthropic:       {kinds: servedAt{catalog.KindChat: anonOnly}, needsKey: true, lacks: []string{chat.NoEffort}, hides: true, slowsTogether: true},
+	// An empty Anthropic prepaid balance has a documented message and no documented status, and a spend limit we set
+	// is a 400 that stands as a bad request, so a dry account is no account refusal.
+	ProviderAnthropic: {kinds: servedAt{catalog.KindChat: anonOnly}, needsKey: true, lacks: []string{chat.NoEffort}, hides: true, slowsTogether: true},
+	// Gemini's docs name no status for a dry billing account, and its 403 PERMISSION_DENIED maps to upstream_refused,
+	// so a dry account is no account refusal.
 	ProviderGemini: {
 		kinds:                servedAt{catalog.KindChat: anonOnly, catalog.KindImage: anonOnly},
 		needsKey:             true,
@@ -53,6 +60,8 @@ var capabilities = map[Provider]capability{
 		reasonsUnasked:       true,
 		silentWhileReasoning: true,
 	},
+	// xAI's docs say only that requests are rejected once prepaid credit runs out. The status is unknown until a
+	// depleted key answers, so a dry account is no account refusal.
 	ProviderXAI: {
 		kinds:          servedAt{catalog.KindChat: anonAndPrivate, catalog.KindImage: privateOnly, catalog.KindVideo: privateOnly},
 		zdrAt:          privateOnly,
@@ -63,56 +72,80 @@ var capabilities = map[Provider]capability{
 		reasonsUnasked: true,
 	},
 	// Venice keeps nothing only for the models it serves in its Private mode, under contract with their hosts. Its
-	// image models carry no such contract, so they serve Anonymous.
+	// image models carry no such contract, so they serve Anonymous. Venice documents 402 INSUFFICIENT_BALANCE and the
+	// two spend-limit codes for a dry account, and its chat path takes apierr.SanitizedUpstreamError's default mapping
+	// of a 402 to upstream_unavailable. No dry account has answered a request yet.
 	ProviderVenice: {
-		kinds:    servedAt{catalog.KindChat: privateOnly, catalog.KindImage: anonOnly},
-		zdrAt:    privateOnly,
-		zdrWhy:   "because Venice keeps no prompt or reply only for the models it serves in its Private mode",
-		needsKey: true,
+		kinds:             servedAt{catalog.KindChat: privateOnly, catalog.KindImage: anonOnly},
+		zdrAt:             privateOnly,
+		zdrWhy:            "because Venice keeps no prompt or reply only for the models it serves in its Private mode",
+		needsKey:          true,
+		refusesDryAccount: true,
 	},
+	// Fireworks documents 402 for usage limits, and its chat path takes apierr.SanitizedUpstreamError's default mapping
+	// of a 402 to upstream_unavailable. Its 412 for a suspended account maps to invalid_request. No dry account has
+	// answered a request yet.
 	ProviderFireworks: {
-		kinds:    servedAt{catalog.KindChat: privateOnly},
-		zdrAt:    privateOnly,
-		zdrWhy:   "because Fireworks keeps no prompt or reply of an open model on /chat/completions",
-		needsKey: true,
+		kinds:             servedAt{catalog.KindChat: privateOnly},
+		zdrAt:             privateOnly,
+		zdrWhy:            "because Fireworks keeps no prompt or reply of an open model on /chat/completions",
+		needsKey:          true,
+		refusesDryAccount: true,
 	},
+	// Isoquant answers 402 when the balance cannot cover a request's max_tokens (the scout's report of 2026-11-05, not a
+	// captured reply), and its chat path takes apierr.SanitizedUpstreamError's default mapping of a 402 to
+	// upstream_unavailable. A model the key may not use answers 403 model_forbidden (captured 2026-11-05), which apierr
+	// maps to the same account refusal. No dry account has answered a request yet.
 	ProviderIsoquant: {
-		kinds:    servedAt{catalog.KindChat: privateOnly},
-		zdrAt:    privateOnly,
-		zdrWhy:   "because Isoquant keeps nothing only for a request that carries the Isoquant-ZDR header, and has no account setting for it",
-		needsKey: true,
+		kinds:             servedAt{catalog.KindChat: privateOnly},
+		zdrAt:             privateOnly,
+		zdrWhy:            "because Isoquant keeps nothing only for a request that carries the Isoquant-ZDR header, and has no account setting for it",
+		needsKey:          true,
+		refusesDryAccount: true,
 	},
+	// Wafer documents no status for a dry account; its chat path takes apierr.SanitizedUpstreamError's default mapping
+	// of a 401 or 402 to upstream_unavailable. No dry account has answered a request yet.
 	ProviderWafer: {
-		kinds:    servedAt{catalog.KindChat: privateOnly},
-		zdrAt:    privateOnly,
-		zdrWhy:   "because Wafer keeps nothing of a request that carries Wafer-ZDR: required, which this provider sends on every request whatever the account's default",
-		needsKey: true,
+		kinds:             servedAt{catalog.KindChat: privateOnly},
+		zdrAt:             privateOnly,
+		zdrWhy:            "because Wafer keeps nothing of a request that carries Wafer-ZDR: required, which this provider sends on every request whatever the account's default",
+		needsKey:          true,
+		refusesDryAccount: true,
 	},
 	// Novita has no per-request retention header, so a route stands on its Terms of Service, section 10.2, which Daniel
-	// accepted as zero data retention for Ling 3.0 Flash on 2026-11-05.
+	// accepted as zero data retention for Ling 3.0 Flash on 2026-11-05. Novita documents 402 for an insufficient
+	// balance; its chat path takes apierr.SanitizedUpstreamError's default mapping of a 401 or 402 to
+	// upstream_unavailable.
 	ProviderNovita: {
 		kinds:                servedAt{catalog.KindChat: privateOnly},
 		zdrAt:                privateOnly,
 		zdrWhy:               "because Novita's Terms of Service, section 10.2 (https://novita.ai/legal/terms-of-service), keep nothing beyond generating and delivering the output and train on nothing, with carve-outs for law, support and automated safety screening, accepted by Daniel on 2026-11-05 for Ling; no per-request header",
 		needsKey:             true,
 		answersFromReasoning: true,
+		refusesDryAccount:    true,
 	},
 	// Morph documents no zero retention header or setting, so a Morph route stands on the ZDR addendum Morph signed with
-	// us, which covers the account that owns the route's key.
+	// us, which covers the account that owns the route's key. Morph documents no status for a dry account; its chat
+	// path takes apierr.SanitizedUpstreamError's default mapping of a 401 or 402 to upstream_unavailable. No dry
+	// account has answered a request yet.
 	ProviderMorph: {
-		kinds:    servedAt{catalog.KindChat: privateOnly},
-		zdrAt:    privateOnly,
-		zdrWhy:   "because Morph documents no zero retention header or setting, so a Morph route stands on the ZDR addendum signed with Morph, which Daniel confirmed covers our account on 2026-11-05",
-		needsKey: true,
+		kinds:             servedAt{catalog.KindChat: privateOnly},
+		zdrAt:             privateOnly,
+		zdrWhy:            "because Morph documents no zero retention header or setting, so a Morph route stands on the ZDR addendum signed with Morph, which Daniel confirmed covers our account on 2026-11-05",
+		needsKey:          true,
+		refusesDryAccount: true,
 	},
 	// DeepInfra has no per-request retention header, so a route stands on its published data policy alone, which Daniel
-	// accepted as zero data retention on 2026-11-05 without a written agreement.
+	// accepted as zero data retention on 2026-11-05 without a written agreement. DeepInfra documents no status for a
+	// dry account; its chat path takes apierr.SanitizedUpstreamError's default mapping of a 401 or 402 to
+	// upstream_unavailable. No dry account has answered a request yet.
 	ProviderDeepInfra: {
 		kinds:                servedAt{catalog.KindChat: privateOnly},
 		zdrAt:                privateOnly,
 		zdrWhy:               "because DeepInfra's published data policy (https://docs.deepinfra.com/account/data-privacy) keeps inputs in memory only, logs no content and trains on nothing, which Daniel accepted on 2026-11-05 without a written agreement, since DeepInfra offers no per-request header",
 		needsKey:             true,
 		answersFromReasoning: true,
+		refusesDryAccount:    true,
 	},
 	ProviderRunware: {kinds: servedAt{catalog.KindImage: anonOnly, catalog.KindVideo: anonOnly}, needsKey: true},
 	ProviderFal:     {kinds: servedAt{catalog.KindImage: anonOnly, catalog.KindVideo: anonOnly}, needsKey: true},
@@ -135,7 +168,30 @@ func attestedCapability(v *attester.Vendor) capability {
 			}
 		}
 	}
-	return capability{kinds: kinds}
+	// A zero-balance Phala account answered a plaintext chat 402 insufficient_quota on 2026-11-04, which
+	// apierr.SanitizedUpstreamError maps to upstream_unavailable, and phala's refuseSealed maps the documented "Balance
+	// is too low" 403 the same way. internal/phala/phalatest/testdata/dry-account-402.http replays the capture.
+	return capability{kinds: kinds, refusesDryAccount: v == attester.Phala}
+}
+
+// openAIHostsRefusingDryAccount is, for the hosts reached through the generic OpenAI provider, whether a dry account
+// at each is an account refusal. Together documents a 402 when the balance reaches its cut-off
+// (https://docs.together.ai/docs/error-codes, read 2026-11-04), which apierr.SanitizedUpstreamError maps to
+// upstream_unavailable; no dry Together account has answered yet. OpenAI's own status is undocumented.
+var openAIHostsRefusingDryAccount = map[string]bool{"together": true, "openai": false}
+
+// RefusesDryAccount is whether rt's provider maps a dry account at the vendor to an account refusal.
+func (rt Route) RefusesDryAccount() bool {
+	switch up := rt.Upstream.(type) {
+	case Attested:
+		return attestedCapability(up.Attester).refusesDryAccount
+	case Vendor:
+		if up.Provider == ProviderOpenAI {
+			return openAIHostsRefusingDryAccount[rt.ProviderName]
+		}
+		return capabilities[up.Provider].refusesDryAccount
+	}
+	return false
 }
 
 func vendorServes(v *attester.Vendor, k catalog.Kind, t catalog.Tier) bool {

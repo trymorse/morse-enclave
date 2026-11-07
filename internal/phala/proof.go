@@ -2,6 +2,7 @@ package phala
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"expvar"
 	"time"
@@ -48,41 +49,43 @@ func unverifiedReason(err error) string {
 }
 
 func (g Gateway) prover(model string, keys Keys) openaicompat.Prover {
-	return func(ctx context.Context, read openaicompat.Read) error {
-		err := g.prove(ctx, model, keys, read)
+	return func(ctx context.Context, read openaicompat.Read) (json.RawMessage, error) {
+		raw, err := g.prove(ctx, model, keys, read)
 		if err != nil {
 			receiptUnverified.Add(unverifiedReason(err), 1)
 		}
-		return err
+		return raw, err
 	}
 }
 
-func (g Gateway) prove(ctx context.Context, model string, keys Keys, read openaicompat.Read) error {
+func (g Gateway) prove(ctx context.Context, model string, keys Keys, read openaicompat.Read) (json.RawMessage, error) {
 	switch {
 	case keys == nil:
-		return receipt.ErrKeysetDigest
+		return nil, receipt.ErrKeysetDigest
 	case read.ReceiptID == "":
-		return errNoReceiptID
+		return nil, errNoReceiptID
 	}
 	raw, err := g.awaitReceipt(ctx, read.ReceiptID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	r, err := receipt.Parse(raw)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	kept.put(read.ReceiptID, raw)
 	ks, verified := keys.Keyset(r.Digest)
 	if !verified {
-		return receipt.ErrKeysetDigest
+		return nil, receipt.ErrKeysetDigest
 	}
-	return r.VerifyResponse(ks, receipt.Response{Model: model, ID: read.ReplyID, Hash: read.Hash}, time.Now())
+	if err := r.VerifyResponse(ks, receipt.Response{Model: model, ID: read.ReplyID, Hash: read.Hash}, time.Now()); err != nil {
+		return nil, err
+	}
+	return raw, nil
 }
 
 func (g Gateway) awaitReceipt(ctx context.Context, id string) ([]byte, error) {
 	for {
-		raw, err := g.fetchReceipt(ctx, id)
+		raw, err := g.Receipt(ctx, id)
 		if err == nil {
 			return raw, nil
 		}

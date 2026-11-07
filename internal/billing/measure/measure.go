@@ -37,7 +37,6 @@ type Evidence struct {
 	Budgeted           bool
 	Reply              Reply
 	Finish             chat.Finish
-	ServedBy           chat.Host
 	Unanswered         bool
 	ReasoningRequested bool
 	HidesReasoning     bool
@@ -192,7 +191,6 @@ type Measurement struct {
 	Sides      Sides
 	Thinking   Thinking
 	Finish     chat.Finish
-	ServedBy   chat.Host `json:",omitzero"`
 	Unanswered bool
 	Unsent     bool `json:",omitzero"`
 }
@@ -219,7 +217,7 @@ func (e Evidence) Measure() Measurement {
 		sides.Hidden = MethodThinkingTime
 	}
 	m := measured(e.Outcome, u, sides)
-	m.Thinking, m.Finish, m.Unanswered, m.ServedBy = hidden, e.Finish, e.Unanswered, e.ServedBy
+	m.Thinking, m.Finish, m.Unanswered = hidden, e.Finish, e.Unanswered
 	return m
 }
 

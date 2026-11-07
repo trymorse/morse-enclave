@@ -244,15 +244,6 @@ func (g Gateway) Report(ctx context.Context, nonce string) ([]byte, error) {
 }
 
 func (g Gateway) Receipt(ctx context.Context, id string) (json.RawMessage, error) {
-	if raw, ok := kept.get(id); ok {
-		receiptsKept.Add("hits", 1)
-		return raw, nil
-	}
-	receiptsKept.Add("misses", 1)
-	return g.fetchReceipt(ctx, id)
-}
-
-func (g Gateway) fetchReceipt(ctx context.Context, id string) (json.RawMessage, error) {
 	if !receiptID.MatchString(id) {
 		return nil, errInvalidReceipt
 	}

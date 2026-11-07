@@ -506,17 +506,9 @@ func NewReplyID() string { return "chatcmpl-" + rand.Text() }
 
 type Chunk struct {
 	object []byte
-	host   Host
 }
 
 func NewChunk(object []byte) Chunk { return Chunk{object: bytes.Clone(object)} }
-
-func (c Chunk) WithHost(h Host) Chunk {
-	c.host = h
-	return c
-}
-
-func (c Chunk) Host() Host { return c.host }
 
 func (c Chunk) WriteTo(w io.Writer) (int64, error) {
 	n, err := w.Write(c.object)
@@ -651,31 +643,7 @@ type Usage struct {
 	CachedPromptTokens     int
 	CacheWritePromptTokens int
 	ReasoningTokens        int
-	VendorCost             VendorCost `json:",omitzero"`
 }
-
-type VendorCost struct {
-	Read   CostRead `json:",omitzero"`
-	Micros int64    `json:",omitzero"`
-	BYOK   bool     `json:",omitzero"`
-}
-
-type CostRead uint8
-
-const (
-	CostUnreported CostRead = iota
-	CostReported
-	CostUnreadable
-	CostBYOKUpstreamMissing
-)
-
-var costReads = enum.Names[CostRead]{CostUnreported: "unreported", CostReported: "reported", CostUnreadable: "not_a_number", CostBYOKUpstreamMissing: "upstream_missing"}
-
-func (r CostRead) String() string { return costReads.String(r) }
-
-func (r CostRead) MarshalText() ([]byte, error) { return costReads.MarshalText(r) }
-
-func (r *CostRead) UnmarshalText(text []byte) error { return costReads.UnmarshalText(r, text) }
 
 func (u Usage) Normalized() Usage {
 	u.PromptTokens = max(u.PromptTokens, 0)

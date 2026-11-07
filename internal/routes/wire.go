@@ -63,14 +63,6 @@ type chatRoute struct {
 	AnswersInReasoning     bool        `json:"answers_in_reasoning"`
 	HiddenReasoningTPS     int         `json:"hidden_reasoning_tps"`
 	DecodeMaxTPS           int         `json:"decode_max_tps"`
-	Fallbacks              []fallback  `json:"fallbacks"`
-}
-
-type fallback struct {
-	Attester     string `json:"attester"`
-	BaseURL      string `json:"base_url"`
-	APIKeyEnv    string `json:"api_key_env"`
-	ProviderName string `json:"provider_name"`
 }
 
 type imageRoute struct {

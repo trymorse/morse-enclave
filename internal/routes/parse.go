@@ -45,7 +45,7 @@ func Read(path string, defaultMarkup money.Markup) (rts []Route, digest string, 
 }
 
 func Parse(data []byte, defaultMarkup money.Markup) ([]Route, error) {
-	flat, err := Flatten(data)
+	flat, err := flatten(data)
 	if err != nil {
 		return nil, err
 	}
@@ -54,38 +54,26 @@ func Parse(data []byte, defaultMarkup money.Markup) ([]Route, error) {
 	}
 	seen := map[string]bool{}
 	routes := make([]Route, 0, len(flat))
-	for i, f := range flat {
-		parsed, err := parseRoute(f.Route, defaultMarkup)
+	for _, s := range flat {
+		rt, err := parseRoute(s.named, defaultMarkup)
 		if err != nil {
-			if len(f.Endpoints) > 0 {
-				return nil, fmt.Errorf("route %d endpoint %s: %w", i, f.Endpoints[0], err)
-			}
-			return nil, fmt.Errorf("route %d: %w", i, err)
+			return nil, err
 		}
-		for j := range parsed {
-			parsed[j].identify(f)
-		}
-		for _, u := range f.Unnamed {
-			rt, err := unnamedRoute(u, defaultMarkup)
+		for _, b := range s.beside {
+			beside, err := parseRoute(b, defaultMarkup)
 			if err != nil {
-				return nil, fmt.Errorf("route %d endpoint %s: %w", i, u.Endpoints[0], err)
+				return nil, err
 			}
-			parsed[0].Unnamed = append(parsed[0].Unnamed, rt)
-		}
-		for _, u := range f.OnBehalf {
-			rt, err := onBehalfRoute(u, defaultMarkup)
-			if err != nil {
-				return nil, fmt.Errorf("route %d endpoint %s: %w", i, u.Endpoints[0], err)
+			if _, chats := ChatOf(beside.Serves); b.place == catalog.PlaceUnnamed && !chats {
+				return nil, fmt.Errorf("model %s endpoint %s: is unnamed and serves %s; only a chat fails over to an unnamed endpoint", b.model, b.id, beside.Serves.Kind())
 			}
-			parsed[0].OnBehalf = append(parsed[0].OnBehalf, rt)
+			rt.Beside = append(rt.Beside, beside)
 		}
-		for _, rt := range parsed {
-			if seen[rt.Model] {
-				return nil, fmt.Errorf("route %d repeats model %q", i, rt.Model)
-			}
-			seen[rt.Model] = true
+		if seen[rt.Model] {
+			return nil, fmt.Errorf("model %s endpoint %s repeats model %q", s.named.model, s.named.id, rt.Model)
 		}
-		routes = append(routes, parsed...)
+		seen[rt.Model] = true
+		routes = append(routes, rt)
 	}
 	if err := oneAttesterPerHost(routes); err != nil {
 		return nil, err
@@ -111,8 +99,10 @@ func oneOutputCapPerTier(routes []Route) error {
 	var members []*Route
 	for i := range routes {
 		members = append(members, &routes[i])
-		for j := range routes[i].Unnamed {
-			members = append(members, &routes[i].Unnamed[j])
+		for j := range routes[i].Beside {
+			if routes[i].Beside[j].Place == catalog.PlaceUnnamed {
+				members = append(members, &routes[i].Beside[j])
+			}
 		}
 	}
 	least := map[at]int{}
@@ -137,74 +127,31 @@ func oneOutputCapPerTier(routes []Route) error {
 	return nil
 }
 
-func unnamedRoute(f Flat, defaultMarkup money.Markup) (Route, error) {
-	parsed, err := parseRoute(f.Route, defaultMarkup)
-	if err != nil {
-		return Route{}, err
-	}
-	rt := parsed[0]
-	if _, chats := ChatOf(rt.Serves); !chats {
-		return Route{}, fmt.Errorf("is unnamed and serves %s; only a chat fails over to an unnamed endpoint", rt.Serves.Kind())
-	}
-	rt.identify(f)
-	return rt, nil
-}
-
-func onBehalfRoute(f Flat, defaultMarkup money.Markup) (Route, error) {
-	parsed, err := parseRoute(f.Route, defaultMarkup)
-	if err != nil {
-		return Route{}, err
-	}
-	rt := parsed[0]
-	rt.identify(f)
-	return rt, nil
-}
-
-func parseRoute(object json.RawMessage, defaultMarkup money.Markup) ([]Route, error) {
+func parseRoute(f flatEndpoint, defaultMarkup money.Markup) (Route, error) {
+	object := marshal(f.object)
 	var peek struct {
 		Kind catalog.Kind `json:"kind"`
 	}
 	if err := json.Unmarshal(object, &peek); err != nil {
-		return nil, err
+		return Route{}, err
 	}
+	var rt Route
+	var err error
 	switch peek.Kind {
 	case catalog.KindImage:
-		return one[imageRoute](object, defaultMarkup)
+		rt, err = one[imageRoute](object, defaultMarkup)
 	case catalog.KindVideo:
-		return one[videoRoute](object, defaultMarkup)
+		rt, err = one[videoRoute](object, defaultMarkup)
 	case catalog.KindSearch, catalog.KindFetch, catalog.KindResearch, catalog.KindTranscription:
-		return one[callRoute](object, defaultMarkup)
+		rt, err = one[callRoute](object, defaultMarkup)
+	default:
+		rt, err = one[chatRoute](object, defaultMarkup)
 	}
-	return chatRoutes(object, defaultMarkup)
-}
-
-func chatRoutes(object json.RawMessage, defaultMarkup money.Markup) ([]Route, error) {
-	r, err := decode[chatRoute](object)
 	if err != nil {
-		return nil, err
+		return Route{}, fmt.Errorf("model %s endpoint %s: %w", f.model, f.id, err)
 	}
-	rt, err := build(r, defaultMarkup)
-	if err != nil {
-		return nil, err
-	}
-	if len(r.Fallbacks) > 0 && !rt.Tier.Sealed() {
-		return nil, fmt.Errorf("route %q is tier %s and takes no fallbacks: only a sealed route's client can reseal a request for another attester", rt.Model, rt.Tier)
-	}
-	named := map[string]bool{r.Attester: true}
-	for _, fb := range r.Fallbacks {
-		if named[fb.Attester] {
-			return nil, fmt.Errorf("route %q names attester %s twice; the proxy tells a route's vendors apart by the protocol each attester speaks", rt.Model, fb.Attester)
-		}
-		named[fb.Attester] = true
-		vendor := r
-		vendor.Attester, vendor.BaseURL, vendor.APIKeyEnv, vendor.ProviderName, vendor.Fallbacks = fb.Attester, fb.BaseURL, fb.APIKeyEnv, fb.ProviderName, nil
-		f, err := build(vendor, defaultMarkup)
-		if err != nil {
-			return nil, fmt.Errorf("fallback %q: %w", fb.Attester, err)
-		}
-		rt.Fallbacks = append(rt.Fallbacks, f)
-	}
-	return []Route{rt}, nil
+	rt.ID, rt.Endpoint, rt.Order, rt.Place = f.model, f.id, f.fileOrder, f.place
+	return rt, nil
 }
 
 type kindRoute interface {
@@ -224,16 +171,12 @@ func decode[R kindRoute](object json.RawMessage) (R, error) {
 	return r, nil
 }
 
-func one[R kindRoute](object json.RawMessage, defaultMarkup money.Markup) ([]Route, error) {
+func one[R kindRoute](object json.RawMessage, defaultMarkup money.Markup) (Route, error) {
 	r, err := decode[R](object)
 	if err != nil {
-		return nil, err
+		return Route{}, err
 	}
-	rt, err := build(r, defaultMarkup)
-	if err != nil {
-		return nil, err
-	}
-	return []Route{rt}, nil
+	return build(r, defaultMarkup)
 }
 
 func build(r kindRoute, defaultMarkup money.Markup) (Route, error) {
@@ -364,8 +307,8 @@ func FailoverOnOneTerm(routes []Route, includedWindows []int, refusesDryAccount 
 	var served []Route
 	unnamed := map[endpointOf]bool{}
 	for _, rt := range routes {
-		served = append(append(append(served, rt), rt.Unnamed...), rt.OnBehalf...)
-		for _, u := range rt.Unnamed {
+		served = append(append(served, rt), rt.Beside...)
+		for _, u := range rt.At(catalog.PlaceUnnamed) {
 			unnamed[endpointOf{u.ID, u.Endpoint}] = true
 		}
 	}

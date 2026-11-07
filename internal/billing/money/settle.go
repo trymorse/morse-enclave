@@ -18,7 +18,6 @@ type Settlement struct {
 	Thinking     measure.Thinking
 	Refusal      measure.RefusalCode
 	Finish       chat.Finish
-	ServedBy     chat.Host
 	Unanswered   bool
 	Endpoint     catalog.EndpointID
 	Tier         catalog.Tier
@@ -44,5 +43,5 @@ func (p Price) Bill(m measure.Measurement) Settlement {
 	if m.Unanswered {
 		charged.CompletionTokens = 0
 	}
-	return Settlement{Outcome: m.Outcome, Tokens: m.Tokens, Cost: p.Cost(charged), Source: m.Source(), Sides: m.Sides, Thinking: m.Thinking, Finish: m.Finish, Unanswered: m.Unanswered, ServedBy: m.ServedBy}
+	return Settlement{Outcome: m.Outcome, Tokens: m.Tokens, Cost: p.Cost(charged), Source: m.Source(), Sides: m.Sides, Thinking: m.Thinking, Finish: m.Finish, Unanswered: m.Unanswered}
 }

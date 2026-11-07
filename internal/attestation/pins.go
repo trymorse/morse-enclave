@@ -327,7 +327,11 @@ func readPins[P any](path string, parse func([]byte) (P, error)) (P, error) {
 		var zero P
 		return zero, err
 	}
-	return parse(raw)
+	p, err := parse(raw)
+	if err != nil {
+		err = fmt.Errorf("%s: %w", path, err)
+	}
+	return p, err
 }
 
 func EncodePins[P any](pins P, parse func([]byte) (P, error)) ([]byte, error) {

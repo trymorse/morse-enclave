@@ -26,7 +26,7 @@ func (r *reply) uniformUsage() json.RawMessage {
 	if raw, ok := r.value("usage"); !ok || isNull(raw) || r.usage == nil {
 		return nil
 	}
-	u := r.domainUsage()
+	u := r.usage.Domain()
 	out := clientUsage{PromptTokens: r.usage.PromptTokens, CompletionTokens: r.usage.CompletionTokens, TotalTokens: r.usage.TotalTokens}
 	if out.TotalTokens == 0 {
 		out.TotalTokens = out.PromptTokens + out.CompletionTokens
