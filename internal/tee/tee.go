@@ -331,12 +331,12 @@ func (v tinfoilVendor) NewGate(up attester.Upstream, d Deps) Gate {
 	}, up.Host, d.Base)}
 }
 
-// tinfoilVerifier serves the bundle it verified, so a client checks the report whose keys the gate pinned. The
-// v2 bundle carries no provenance, so when its release is unpinned the verifier fetches the router's v3
-// document for the gate's nonce and judges the Sigstore bundle it carries: the proof binds to the report by
-// the measurement it names, so the document needs no verification of its own. A fetch that fails leaves the
-// report unjudged (an Outage), so the gate keeps its anchor and tries again, rather than refusing the scope
-// over a transient error. It reads the active pins on each verification, so a runtime swap reaches the gate.
+// tinfoilVerifier judges the router's v2 bundle, whose TLS and HPKE keys the gate pins. The bundle carries no
+// provenance, so when its release is unpinned the verifier fetches the router's v3 document for the gate's
+// nonce and judges the Sigstore bundle it carries: the proof binds to the report by the measurement it names,
+// so the document needs no verification of its own. A fetch that fails leaves the report unjudged (an
+// Outage), so the gate keeps its anchor and tries again, rather than refusing the scope over a transient
+// error. It reads the active pins on each verification, so a runtime swap reaches the gate.
 func tinfoilVerifier(policy attestation.Policy, host string, gateway tinfoil.Gateway, active func() attestation.RouterPins) attested.Verifier[aci.SPKI] {
 	return func(ctx context.Context, bundle []byte, nonce attestation.Nonce) (attestation.Verdicts[aci.SPKI], error) {
 		pins := active()
@@ -375,10 +375,3 @@ func (g tinfoilGate) Route(up attester.Upstream) chat.VerbatimRoute {
 }
 
 func (tinfoilGate) Plain(attester.Upstream) (Plain, bool) { return nil, false }
-
-func (g tinfoilGate) Report() json.RawMessage {
-	if a := g.Anchor(); a != nil {
-		return a.Report
-	}
-	return nil
-}

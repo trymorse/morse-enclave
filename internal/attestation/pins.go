@@ -90,9 +90,8 @@ type Pinset[V Verified] interface {
 
 type IdentityPins struct {
 	GatewayAnchors
-	Releases         []Release `json:"releases,omitempty"`
-	Images           []OSImage `json:"images,omitempty"`
-	RetiredInstances []string  `json:"instances,omitempty"`
+	Releases []Release `json:"releases,omitempty"`
+	Images   []OSImage `json:"images,omitempty"`
 }
 
 type OSImage struct {

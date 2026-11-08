@@ -46,11 +46,11 @@ type Worker interface {
 	Sessions(ctx context.Context, v Vendor) ([]chat.ListedSession, error)
 }
 
-// Format is the attestation document a client asked for. Only a Tinfoil route tells them apart.
+// Format is the attestation document a client asked for. Only a Tinfoil route reads it, and it serves its v3
+// document for each, keeping the router's sigstore-code collateral only for FormatV3Code.
 type Format uint8
 
 const (
-	// FormatReport is the gate's own report, which for Tinfoil is the v2 bundle that binds no nonce.
 	FormatReport Format = iota
 	// FormatV3 is Tinfoil's v3 document for the nonce, with AMD's collateral.
 	FormatV3

@@ -14,12 +14,11 @@ import (
 // measurement its Sigstore provenance publishes (checked with gh attestation verify before it is
 // pinned), and the platform a release must boot on.
 type RouterPins struct {
-	Hosts        []string        `json:"hosts"`
-	Releases     []RouterRelease `json:"releases"`
-	Policy       string          `json:"policy"`
-	VMPL         uint32          `json:"vmpl"`
-	MinTCB       SNPTCB          `json:"min_tcb"`
-	RetiredChips []string        `json:"chips,omitempty"`
+	Hosts    []string        `json:"hosts"`
+	Releases []RouterRelease `json:"releases"`
+	Policy   string          `json:"policy"`
+	VMPL     uint32          `json:"vmpl"`
+	MinTCB   SNPTCB          `json:"min_tcb"`
 }
 
 type RouterRelease struct {

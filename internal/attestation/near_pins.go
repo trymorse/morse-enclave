@@ -14,13 +14,12 @@ type GatewayModelPins struct {
 }
 
 type WorkloadPins struct {
-	TDAttributes     string      `json:"td_attributes"`
-	AppID            string      `json:"app_id"`
-	KeyProviderIDs   []string    `json:"key_provider_ids"`
-	TCBStatuses      []TCBStatus `json:"tcb_statuses"`
-	Composes         []Compose   `json:"composes"`
-	Images           []OSImage   `json:"images"`
-	RetiredInstances []string    `json:"instances,omitempty"`
+	TDAttributes   string      `json:"td_attributes"`
+	AppID          string      `json:"app_id"`
+	KeyProviderIDs []string    `json:"key_provider_ids"`
+	TCBStatuses    []TCBStatus `json:"tcb_statuses"`
+	Composes       []Compose   `json:"composes"`
+	Images         []OSImage   `json:"images"`
 }
 
 type Compose struct {

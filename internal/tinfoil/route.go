@@ -30,19 +30,17 @@ const (
 )
 
 var (
-	errKeyStale       = fmt.Errorf("%w: the Tinfoil router no longer holds the key the request was sealed to", apierr.ErrUnattested)
-	errNoPrompt       = errors.New("tinfoil: a request sealed whole takes no prompt from the proxy")
-	errInvalidNonce   = &chat.InvalidNonce{Form: "64 lowercase hexadecimal characters; Tinfoil's report binds no nonce, so it is not sent on"}
-	errInvalidNonceV3 = &chat.InvalidNonce{Form: "64 lowercase hexadecimal characters, the 32 bytes Tinfoil's v3 document binds"}
+	errKeyStale     = fmt.Errorf("%w: the Tinfoil router no longer holds the key the request was sealed to", apierr.ErrUnattested)
+	errNoPrompt     = errors.New("tinfoil: a request sealed whole takes no prompt from the proxy")
+	errInvalidNonce = &chat.InvalidNonce{Form: "64 lowercase hexadecimal characters, the 32 bytes Tinfoil's v3 document binds"}
 )
 
-// Gate is the attestation gate the route's client is pinned through: whether it holds a verified report, the
-// bundle it verified, and a way to ask it to verify the router again, at most once a minute, keeping the report
-// it holds until another verifies. A key-config refusal is no reason to drop the report: the router answers
-// any body whose first frame doesn't open under its key so, a stale client's or a forged one alike.
+// Gate is the attestation gate the route's client is pinned through: whether it holds a verified report, and a
+// way to ask it to verify the router again, at most once a minute, keeping the report it holds until another
+// verifies. A key-config refusal is no reason to drop the report: the router answers any body whose first frame
+// doesn't open under its key so, a stale client's or a forged one alike.
 type Gate interface {
 	Ready() bool
-	Report() json.RawMessage
 	Wake()
 }
 
@@ -168,17 +166,8 @@ func (r *Route) SealPrompt(chat.E2EE, string) (string, error) { return "", errNo
 // worker doesn't, so a plaintext chat on a Tinfoil model's id runs on its plaintext routes.
 func (*Route) OnBehalf() chat.Provider { return nil }
 
-// Attest serves the v2 bundle the gate verified. The bundle binds no nonce, so the nonce is only checked for its
-// form, and the bundle is the one whose TLS key the client is pinned to and whose HPKE key the router holds.
-func (r *Route) Attest(_ context.Context, nonce string) (chat.Attestation, error) {
-	if _, ok := ehbp.LowerHex(nonce, ehbp.NonceLen); !ok {
-		return chat.Attestation{}, errInvalidNonce
-	}
-	report := r.gate.Report()
-	if !r.gate.Ready() || report == nil {
-		return chat.Attestation{}, apierr.ErrUnattested
-	}
-	return chat.Attestation{Report: report, BindModel: r.model}, nil
+func (r *Route) Attest(ctx context.Context, nonce string) (chat.Attestation, error) {
+	return r.AttestV3(ctx, nonce, false)
 }
 
 // AttestV3 fetches the router's v3 document for nonce over the gate's pinned client, again once if the router
@@ -188,7 +177,7 @@ func (r *Route) Attest(_ context.Context, nonce string) (chat.Attestation, error
 // was relayed refuses a collateral item it does not know.
 func (r *Route) AttestV3(ctx context.Context, nonce string, code bool) (chat.Attestation, error) {
 	if _, ok := ehbp.LowerHex(nonce, ehbp.NonceLen); !ok {
-		return chat.Attestation{}, errInvalidNonceV3
+		return chat.Attestation{}, errInvalidNonce
 	}
 	if !r.gate.Ready() {
 		return chat.Attestation{}, apierr.ErrUnattested

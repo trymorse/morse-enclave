@@ -72,7 +72,7 @@ Only the enclave can read a request and its reply, so the enclave counts the tok
 
 ## Rebuild the image
 
-You need an arm64 Linux machine with Docker, `jq`, and `sha256sum`. The Nitro CLI step takes its kernel from the machine's own architecture, so an x86 machine cannot build the image.
+You need an arm64 or x86_64 Linux machine with Docker and `jq`. The image is arm64. The Nitro CLI step takes its kernel from its own architecture, so on x86_64 `build.sh` takes the arm64 kernel from the arm64 package of the same Nitro CLI release, checks that package's SHA-256, and builds for arm64. Either machine builds the same PCRs. An older release's `deploy/enclave/build.sh` has no `amazonlinux_amd64=` line and builds only on arm64, or on x86_64 after you turn on arm64 emulation with `docker run --privileged --rm tonistiigi/binfmt --install arm64`, which makes the build slower.
 
 1. Check out the tag of the release you want to compare.
 2. Make a tar of the source. It must be this repo's files and nothing else:
