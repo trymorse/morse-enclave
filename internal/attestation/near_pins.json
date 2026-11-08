@@ -137,6 +137,14 @@
       {
         "name": "dstack-nvidia-0.5.12-c5e7bd5f",
         "compose_hash": "c5e7bd5f9e1d5f8480d2bd57b9e601fab0650dd46e6a120b809a279be73436c0"
+      },
+      {
+        "name": "dstack-nvidia-0.5.12-a7de0bba",
+        "compose_hash": "a7de0bba194b6466c5c7b8dcfb907b6b60404ab2ba6de8b5d0cf63c2145d6868"
+      },
+      {
+        "name": "dstack-nvidia-0.5.12-c53e254e",
+        "compose_hash": "c53e254e8b70aa14b45ba3043730a0736ca2afb1df7fa3db9c61578845e470fe"
       }
     ],
     "images": [
