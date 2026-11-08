@@ -90,9 +90,9 @@ type Pinset[V Verified] interface {
 
 type IdentityPins struct {
 	GatewayAnchors
-	Releases  []Release `json:"releases,omitempty"`
-	Images    []OSImage `json:"images,omitempty"`
-	Instances []string  `json:"instances,omitempty"`
+	Releases         []Release `json:"releases,omitempty"`
+	Images           []OSImage `json:"images,omitempty"`
+	RetiredInstances []string  `json:"instances,omitempty"`
 }
 
 type OSImage struct {
@@ -139,13 +139,6 @@ func imageDrift(images []OSImage, observed OSMeasurement) []Drift {
 	return []Drift{{Kind: DriftRelease, Field: osImageHashField, Pinned: strings.Join(hashes, ", "), Observed: observed.OSImageHash}}
 }
 
-func instanceDrift(instances []string, observed string) []Drift {
-	if slices.Contains(instances, observed) {
-		return nil
-	}
-	return []Drift{{Kind: DriftNewInstance, Field: instancesField, Observed: observed}}
-}
-
 func checkImages(images []OSImage) error {
 	if len(images) == 0 {
 		return fmt.Errorf("%s is missing", ImagesField)
@@ -169,14 +162,12 @@ func checkImages(images []OSImage) error {
 type DriftKind string
 
 const (
-	DriftAnchor      DriftKind = "anchor"
-	DriftRelease     DriftKind = "release"
-	DriftNewInstance DriftKind = "new_instance"
-	DriftStaleTCB    DriftKind = "stale_tcb"
+	DriftAnchor   DriftKind = "anchor"
+	DriftRelease  DriftKind = "release"
+	DriftStaleTCB DriftKind = "stale_tcb"
 )
 
 const (
-	instancesField    = "instances"
 	ReleasesField     = "releases"
 	osImageHashField  = "os_image_hash"
 	tdAttributesField = "td_attributes"
@@ -209,7 +200,7 @@ func (a GatewayAnchors) fields() []anchorField {
 }
 
 func ObservedIdentity(v PhalaReport) IdentityPins {
-	return IdentityPins{GatewayAnchors: v.GatewayAnchors, Releases: []Release{v.Release}, Images: []OSImage{{OSMeasurement: v.OSMeasurement}}, Instances: []string{v.InstanceID}}
+	return IdentityPins{GatewayAnchors: v.GatewayAnchors, Releases: []Release{v.Release}, Images: []OSImage{{OSMeasurement: v.OSMeasurement}}}
 }
 
 func (a GatewayAnchors) drift(observed GatewayAnchors) []Drift {
@@ -228,7 +219,7 @@ func (p IdentityPins) Pinned(m OSMeasurement) (OSImage, bool) {
 }
 
 func (p IdentityPins) Check(v PhalaReport) []Drift {
-	return slices.Concat(imageDrift(p.Images, v.OSMeasurement), p.gatewayDrift(v), instanceDrift(p.Instances, v.InstanceID))
+	return slices.Concat(imageDrift(p.Images, v.OSMeasurement), p.gatewayDrift(v))
 }
 
 func (p IdentityPins) gatewayDrift(v PhalaReport) []Drift {
@@ -369,12 +360,6 @@ func ParseIdentityPins(raw []byte) (IdentityPins, error) {
 	}
 	if err := checkImages(p.Images); err != nil {
 		return IdentityPins{}, fmt.Errorf("%w: %w", ErrPins, err)
-	}
-	if len(p.Instances) == 0 {
-		return IdentityPins{}, fmt.Errorf("%w: %s is missing", ErrPins, instancesField)
-	}
-	if slices.Contains(p.Instances, "") {
-		return IdentityPins{}, fmt.Errorf("%w: every %s entry needs an id", ErrPins, instancesField)
 	}
 	return p, nil
 }

@@ -57,8 +57,10 @@ type Request interface {
 // Relay sends checked requests to their servers. It keeps, for ten minutes, the write ids it ran and the token
 // requests it answered, so neither runs twice on this instance, and nothing else.
 type Relay struct {
-	servers     map[string]Server
-	secrets     map[string]string
+	servers map[string]Server
+	secrets map[string]string
+	// unset holds the servers whose secret the host didn't supply, which are off.
+	unset       map[string]bool
 	environment string
 	client      *http.Client
 	now         func() time.Time
@@ -74,7 +76,7 @@ func New(servers []Server, getenv func(string) string, environment string, clien
 		return nil, errors.New("plugins: environment must be dev or prod")
 	}
 	r := &Relay{
-		servers: map[string]Server{}, secrets: map[string]string{}, environment: environment, client: client, now: now,
+		servers: map[string]Server{}, secrets: map[string]string{}, unset: map[string]bool{}, environment: environment, client: client, now: now,
 		writes: newSeen(now), requests: newSeen(now), buckets: map[string]*bucket{},
 	}
 	for _, s := range servers {
@@ -85,8 +87,9 @@ func New(servers []Server, getenv func(string) string, environment string, clien
 			return nil, errors.New("plugins: two servers are " + s.ID)
 		}
 		if s.SecretEnv != "" {
+			// One plugin's missing secret switches it off, and leaves the worker and every other plugin serving.
 			if r.secrets[s.ID] = getenv(s.SecretEnv); r.secrets[s.ID] == "" {
-				return nil, errors.New("plugins: " + s.SecretEnv + " is required for " + s.ID)
+				r.unset[s.ID] = true
 			}
 		}
 		r.servers[s.ID] = s
@@ -135,7 +138,7 @@ func (r *Relay) Open(kind Kind, body io.Reader) (Request, error) {
 // relay switched off. A revocation goes even to a server that is off.
 func (r *Relay) Run(ctx context.Context, req Request, off []string) ([]byte, error) {
 	s := r.servers[req.serverID()]
-	if _, revoking := req.(*RevokeRequest); !revoking && slices.Contains(off, s.ID) {
+	if _, revoking := req.(*RevokeRequest); !revoking && (slices.Contains(off, s.ID) || r.unset[s.ID]) {
 		return nil, ErrOff
 	}
 	return req.run(ctx, r, s)
@@ -379,7 +382,7 @@ func (t *TokenRequest) run(ctx context.Context, r *Relay, s Server) ([]byte, err
 		r.requests.forget(t.request)
 		return nil, ErrBusy
 	}
-	form := url.Values{"client_id": {s.Clients[r.environment]}, "resource": {s.MCP}}
+	form := url.Values{"client_id": {s.Clients[r.environment]}, "resource": {s.TokenResource()}}
 	switch t.grant {
 	case "authorization_code":
 		form.Set("grant_type", "authorization_code")

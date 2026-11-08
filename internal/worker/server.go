@@ -58,7 +58,7 @@ func NewServer(inner *InProcess, routesDigest string) *Server {
 	s.mux.HandleFunc("GET /attestation", s.attestation)
 	s.mux.HandleFunc("POST /attest", s.evidence(func(ctx context.Context, req evidenceRequest) (any, error) {
 		att, err := s.inner.Attest(ctx, req.Vendor, req.Nonce, req.format())
-		return attestationWire{Report: att.Report, BindModel: att.BindModel, GPUVerdicts: att.GPUVerdicts}, err
+		return attestationWire{Report: att.Report, BindModel: att.BindModel, GPUVerdicts: att.GPUVerdicts, VendorPins: att.VendorPins}, err
 	}))
 	s.mux.HandleFunc("POST /receipt", s.evidence(func(ctx context.Context, req evidenceRequest) (any, error) {
 		return s.inner.Receipt(ctx, req.Vendor, req.ID)

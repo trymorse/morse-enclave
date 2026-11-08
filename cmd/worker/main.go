@@ -21,6 +21,7 @@ import (
 	"morse/backend/internal/nitro"
 	"morse/backend/internal/plugins"
 	"morse/backend/internal/routes"
+	"morse/backend/internal/vendorpins"
 	"morse/backend/internal/worker"
 )
 
@@ -35,6 +36,7 @@ type built struct {
 	server *http.Server
 	inner  *worker.InProcess
 	gates  *vendors.Gates
+	pins   *vendorpins.Loader
 	routes int
 }
 
@@ -71,12 +73,30 @@ func build(getenv func(string) string, log *logger) (built, error) {
 	if err != nil {
 		return built{}, err
 	}
-	gate, err := door.New(environment, nitro.Self{Attester: attester, Identity: identity, Environment: environment}, trust, floor)
+	self := nitro.Self{Attester: attester, Identity: identity, Environment: environment}
+	gate, err := door.New(environment, self, trust, floor)
 	if err != nil {
 		return built{}, err
 	}
+	mode, err := vendorpins.ParseMode(getenv("PROXY_VENDOR_PINS"))
+	if err != nil {
+		return built{}, fmt.Errorf("PROXY_VENDOR_PINS: %w", err)
+	}
 	transport, client := vendors.NewClient()
 	gates := vendors.NewGates(transport, client, attestation.NVIDIAPolicy(), log.attestation)
+	// The trusted time is the NSM attestation document's, which the host cannot move, as in the door's handoff.
+	pins := vendorpins.New(vendorpins.Config{
+		Mode: mode, Client: client, Root: trust.Root, Identity: trust.Identity, MaxAge: door.PinsMaxAge, Floor: floor,
+		Now: func(ctx context.Context) (time.Time, error) {
+			document, err := gate.Attest(ctx)
+			if err != nil {
+				return time.Time{}, err
+			}
+			return self.Time(document)
+		},
+		Observe: log.vendorPins,
+		OnSwap:  gates.Wake,
+	})
 	unwrapped := func(string) { log.log(researchUnwrapped, fields{}) }
 	keys, err := vendors.ReadKeys(rts, getenv)
 	if err != nil {
@@ -109,7 +129,7 @@ func build(getenv func(string) string, log *logger) (built, error) {
 	mux.Handle("/", worker.NewServer(inner, digest))
 	gate.Register(mux)
 	srv := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: readHeaderTimeout, ErrorLog: discarded()}
-	return built{server: srv, inner: inner, gates: gates, routes: len(models)}, nil
+	return built{server: srv, inner: inner, gates: gates, pins: pins, routes: len(models)}, nil
 }
 
 func doorFloor(value, environment string) (uint64, error) {
@@ -152,6 +172,7 @@ func main() {
 	gatesCtx, stopGates := context.WithCancel(context.Background())
 	defer stopGates()
 	w.gates.Run(gatesCtx)
+	go w.pins.Run(gatesCtx)
 	drained := make(chan struct{})
 	go func() {
 		defer close(drained)

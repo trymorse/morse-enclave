@@ -48,21 +48,43 @@ func exactFields(raw []byte, keys ...string) (map[string]json.RawMessage, error)
 	return fields, nil
 }
 
+// canonicalFields is the object raw holds, when raw is its own JCS and its keys are exactly keys.
+func canonicalFields(raw []byte, keys ...string) (map[string]json.RawMessage, error) {
+	canonical, err := jcs.Canonicalize(raw)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrStatement, err)
+	}
+	if !bytes.Equal(canonical, raw) {
+		return nil, fmt.Errorf("%w: not JCS canonical bytes", ErrStatement)
+	}
+	fields, err := exactFields(raw, keys...)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrStatement, err)
+	}
+	return fields, nil
+}
+
+// checkHeader holds the two fields every statement type shares.
+func checkHeader(commit, at string, into *time.Time) error {
+	if _, err := hex.DecodeString(commit); err != nil || len(commit) != 40 {
+		return fmt.Errorf("%w: pins_commit is not 40 hex digits", ErrStatement)
+	}
+	t, err := time.Parse(time.RFC3339, at)
+	if err != nil {
+		return fmt.Errorf("%w: time: %v", ErrStatement, err)
+	}
+	*into = t
+	return nil
+}
+
 // ParseStatement decodes the JCS bytes of a statement. It refuses bytes that
 // are not canonical, a key set other than the statement's own, a null, another
 // type, an empty image list, and an image whose PCRs are all zero, which is
 // what a debug-mode enclave measures.
 func ParseStatement(raw []byte) (Statement, error) {
-	canonical, err := jcs.Canonicalize(raw)
+	fields, err := canonicalFields(raw, "environment", "images", "pins_commit", "sequence", "time", "type")
 	if err != nil {
-		return Statement{}, fmt.Errorf("%w: %v", ErrStatement, err)
-	}
-	if !bytes.Equal(canonical, raw) {
-		return Statement{}, fmt.Errorf("%w: not JCS canonical bytes", ErrStatement)
-	}
-	fields, err := exactFields(raw, "environment", "images", "pins_commit", "sequence", "time", "type")
-	if err != nil {
-		return Statement{}, fmt.Errorf("%w: %v", ErrStatement, err)
+		return Statement{}, err
 	}
 	var (
 		typ, at string
@@ -83,11 +105,8 @@ func ParseStatement(raw []byte) (Statement, error) {
 	if st.Environment == "" {
 		return Statement{}, fmt.Errorf("%w: no environment", ErrStatement)
 	}
-	if _, err := hex.DecodeString(st.PinsCommit); err != nil || len(st.PinsCommit) != 40 {
-		return Statement{}, fmt.Errorf("%w: pins_commit is not 40 hex digits", ErrStatement)
-	}
-	if st.Time, err = time.Parse(time.RFC3339, at); err != nil {
-		return Statement{}, fmt.Errorf("%w: time: %v", ErrStatement, err)
+	if err := checkHeader(st.PinsCommit, at, &st.Time); err != nil {
+		return Statement{}, err
 	}
 	if len(images) == 0 {
 		return Statement{}, fmt.Errorf("%w: no images", ErrStatement)
@@ -127,13 +146,18 @@ func ParseStatement(raw []byte) (Statement, error) {
 // the timestamp of a fresh NSM attestation document: a host clock set back
 // would admit a statement Rekor logged years ago.
 func Admit(st Statement, env string, floor uint64, integrated, now time.Time, maxAge time.Duration) error {
+	if st.Environment != env {
+		return fmt.Errorf("%w: statement is for %s, not %s", ErrAdmit, st.Environment, env)
+	}
+	return admitWindow(st.Sequence, floor, integrated, now, maxAge)
+}
+
+func admitWindow(sequence, floor uint64, integrated, now time.Time, maxAge time.Duration) error {
 	switch {
 	case now.IsZero():
 		return fmt.Errorf("%w: no trusted time", ErrAdmit)
-	case st.Environment != env:
-		return fmt.Errorf("%w: statement is for %s, not %s", ErrAdmit, st.Environment, env)
-	case st.Sequence < floor:
-		return fmt.Errorf("%w: sequence %d is below the floor %d", ErrAdmit, st.Sequence, floor)
+	case sequence < floor:
+		return fmt.Errorf("%w: sequence %d is below the floor %d", ErrAdmit, sequence, floor)
 	case integrated.After(now):
 		return fmt.Errorf("%w: logged at %s, after now %s", ErrAdmit, integrated.Format(time.RFC3339), now.Format(time.RFC3339))
 	case now.Sub(integrated) > maxAge:

@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"morse/backend/internal/apierr"
+	"morse/backend/internal/attestation"
 	"morse/backend/internal/chat"
 )
 
@@ -48,6 +49,11 @@ func (w *InProcess) Attest(ctx context.Context, v Vendor, nonce string, f Format
 		att, err = bound.AttestV3(ctx, nonce, f == FormatV3Code)
 	} else {
 		att, err = by.Attest(ctx, nonce)
+	}
+	source := attestation.Vendors().Source
+	att.VendorPins = &chat.VendorPins{Sequence: source.Sequence, StatementSHA256: source.StatementSHA256}
+	if source.Embedded() {
+		att.VendorPins.StatementSHA256 = "embedded"
 	}
 	return att, evidenceRefusal(err)
 }

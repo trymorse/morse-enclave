@@ -60,3 +60,13 @@ func (gs *Gates) Scopes() []tee.Scope {
 	}
 	return scopes
 }
+
+// Wake has every gate verify again soon: the vendor pins changed, so an endpoint refused on an anchor may now pass.
+func (gs *Gates) Wake() {
+	if gs == nil {
+		return
+	}
+	for _, g := range gs.gates {
+		g.gate.Wake()
+	}
+}

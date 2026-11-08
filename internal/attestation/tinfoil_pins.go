@@ -14,12 +14,12 @@ import (
 // measurement its Sigstore provenance publishes (checked with gh attestation verify before it is
 // pinned), and the platform a release must boot on.
 type RouterPins struct {
-	Hosts    []string        `json:"hosts"`
-	Releases []RouterRelease `json:"releases"`
-	Policy   string          `json:"policy"`
-	VMPL     uint32          `json:"vmpl"`
-	MinTCB   SNPTCB          `json:"min_tcb"`
-	Chips    []string        `json:"chips"`
+	Hosts        []string        `json:"hosts"`
+	Releases     []RouterRelease `json:"releases"`
+	Policy       string          `json:"policy"`
+	VMPL         uint32          `json:"vmpl"`
+	MinTCB       SNPTCB          `json:"min_tcb"`
+	RetiredChips []string        `json:"chips,omitempty"`
 }
 
 type RouterRelease struct {
@@ -36,12 +36,11 @@ const (
 	policyField      = "policy"
 	vmplField        = "vmpl"
 	minTCBField      = "min_tcb"
-	chipsField       = "chips"
 	measurementLen   = 48
 )
 
 // Check judges a verified report: a host, release, policy, VMPL or TCB the pins don't name is an
-// anchor; a chip they don't list is a new instance.
+// anchor.
 func (p RouterPins) Check(r TinfoilReport) []Drift {
 	var drifts []Drift
 	if !slices.Contains(p.Hosts, r.Host) {
@@ -58,10 +57,6 @@ func (p RouterPins) Check(r TinfoilReport) []Drift {
 	}
 	if r.TCB.below(p.MinTCB) {
 		drifts = append(drifts, Drift{Kind: DriftAnchor, Field: minTCBField, Pinned: p.MinTCB.String(), Observed: r.TCB.String()})
-	}
-	for _, d := range instanceDrift(p.Chips, r.ChipID) {
-		d.Field = chipsField
-		drifts = append(drifts, d)
 	}
 	return drifts
 }
@@ -180,7 +175,7 @@ func (p RouterPins) check() error {
 	if err != nil || policyText(policy) != p.Policy {
 		return fmt.Errorf("%s %q is not a guest policy in 0x-prefixed lowercase hex", policyField, p.Policy)
 	}
-	return distinctNonEmpty(chipsField, p.Chips)
+	return nil
 }
 
 // ObservedTinfoil is the pins a verified report would match, for attest-watch to propose.
@@ -191,6 +186,5 @@ func ObservedTinfoil(r TinfoilReport) RouterPins {
 		Policy:   policyText(r.Policy),
 		VMPL:     r.VMPL,
 		MinTCB:   r.TCB,
-		Chips:    []string{r.ChipID},
 	}
 }

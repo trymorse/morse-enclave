@@ -14,6 +14,7 @@ import (
 	"morse/backend/internal/attested"
 	"morse/backend/internal/chat"
 	"morse/backend/internal/health"
+	"morse/backend/internal/vendorpins"
 )
 
 type message uint8
@@ -35,6 +36,9 @@ const (
 	upstreamRefused
 	upstreamUnpinned
 	upstreamRefreshFailed
+	vendorPinsFailed
+	vendorPinsWouldSwap
+	vendorPinsSwapped
 )
 
 var messages = [...]struct {
@@ -57,6 +61,9 @@ var messages = [...]struct {
 	upstreamRefused:       {"upstream refused", slog.LevelWarn},
 	upstreamUnpinned:      {"upstream unpinned", slog.LevelError},
 	upstreamRefreshFailed: {"upstream attestation refresh failed", slog.LevelWarn},
+	vendorPinsFailed:      {"vendor pins release refused, active set kept", slog.LevelWarn},
+	vendorPinsWouldSwap:   {"vendor pins would swap (log mode, nothing swapped)", slog.LevelInfo},
+	vendorPinsSwapped:     {"vendor pins swapped", slog.LevelInfo},
 }
 
 type fields struct {
@@ -71,6 +78,7 @@ type fields struct {
 	Generation uint64
 	Reason     string
 	Drift      string
+	Pins       []slog.Attr
 }
 
 const unlisted = "unlisted"
@@ -126,7 +134,26 @@ func (l *logger) log(m message, f fields) {
 	if f.Drift != "" {
 		attrs = append(attrs, slog.String("drift", f.Drift))
 	}
+	attrs = append(attrs, f.Pins...)
 	l.out.LogAttrs(context.Background(), messages[m].level, messages[m].text, attrs...)
+}
+
+// vendorPins logs a loader event. A release's sequence, statement hash and pin counts are public, so they may
+// leave the enclave as they are.
+func (l *logger) vendorPins(e vendorpins.Event) {
+	pins := []slog.Attr{slog.String("active", e.From.String())}
+	m := vendorPinsFailed
+	switch e.Kind {
+	case vendorpins.WouldSwap, vendorpins.Swapped:
+		m = vendorPinsWouldSwap
+		if e.Kind == vendorpins.Swapped {
+			m = vendorPinsSwapped
+		}
+		pins = append(pins, slog.String("release", e.To.String()), slog.String("diff", e.Diff))
+	default:
+		pins = append(pins, slog.String("err", e.Err.Error()))
+	}
+	l.log(m, fields{Pins: pins})
 }
 
 func (l *logger) configFailed(err error) {

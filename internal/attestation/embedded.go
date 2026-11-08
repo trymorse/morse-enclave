@@ -2,7 +2,9 @@ package attestation
 
 import (
 	_ "embed"
+	"fmt"
 	"sync"
+	"sync/atomic"
 )
 
 //go:embed phala_pins.json
@@ -14,17 +16,98 @@ var nearPinsJSON []byte
 //go:embed tinfoil_pins.json
 var tinfoilPinsJSON []byte
 
-var (
-	phalaPins   = sync.OnceValue(func() IdentityPins { return mustParse("phala_pins.json", phalaPinsJSON, ParseIdentityPins) })
-	nearPins    = sync.OnceValue(func() GatewayModelPins { return mustParse("near_pins.json", nearPinsJSON, ParseNearPins) })
-	tinfoilPins = sync.OnceValue(func() RouterPins { return mustParse("tinfoil_pins.json", tinfoilPinsJSON, ParseTinfoilPins) })
-)
+// VendorSource says where a VendorSet came from: the files compiled into the binary, or a signed release of
+// the pins repository, which StatementSHA256 names by the hash of its vendor statement.
+type VendorSource struct {
+	Sequence        uint64
+	StatementSHA256 string
+}
 
-func PhalaPins() IdentityPins { return phalaPins() }
+// Embedded is the source of the boot set.
+func (s VendorSource) Embedded() bool { return s.StatementSHA256 == "" }
 
-func NearPins() GatewayModelPins { return nearPins() }
+func (s VendorSource) String() string {
+	if s.Embedded() {
+		return "embedded"
+	}
+	return fmt.Sprintf("sequence %d, statement sha256 %s", s.Sequence, s.StatementSHA256)
+}
 
-func TinfoilPins() RouterPins { return tinfoilPins() }
+// VendorSet is every vendor pin the enclave judges an upstream by. The three files travel together: a signed
+// release replaces all of them, never one.
+type VendorSet struct {
+	Phala   IdentityPins
+	Near    GatewayModelPins
+	Tinfoil RouterPins
+	Source  VendorSource
+}
+
+// VendorCounts is how many pins a set holds, so a log can say what a swap would add or drop.
+type VendorCounts struct {
+	PhalaReleases   int
+	PhalaImages     int
+	NearComposes    int
+	NearImages      int
+	TinfoilReleases int
+}
+
+func (s VendorSet) Counts() VendorCounts {
+	return VendorCounts{
+		PhalaReleases:   len(s.Phala.Releases),
+		PhalaImages:     len(s.Phala.Images),
+		NearComposes:    len(s.Near.Gateway.Composes) + len(s.Near.Model.Composes),
+		NearImages:      len(s.Near.Gateway.Images) + len(s.Near.Model.Images),
+		TinfoilReleases: len(s.Tinfoil.Releases),
+	}
+}
+
+// ParseVendorSet parses the three files, which must be valid pins.
+func ParseVendorSet(phala, near, tinfoil []byte, source VendorSource) (VendorSet, error) {
+	set := VendorSet{Source: source}
+	var err error
+	if set.Phala, err = ParseIdentityPins(phala); err != nil {
+		return VendorSet{}, fmt.Errorf("phala_pins.json: %w", err)
+	}
+	if set.Near, err = ParseNearPins(near); err != nil {
+		return VendorSet{}, fmt.Errorf("near_pins.json: %w", err)
+	}
+	if set.Tinfoil, err = ParseTinfoilPins(tinfoil); err != nil {
+		return VendorSet{}, fmt.Errorf("tinfoil_pins.json: %w", err)
+	}
+	return set, nil
+}
+
+var embedded = sync.OnceValue(func() *VendorSet {
+	set, err := ParseVendorSet(phalaPinsJSON, nearPinsJSON, tinfoilPinsJSON, VendorSource{})
+	if err != nil {
+		panic("attestation: embedded pins: " + err.Error())
+	}
+	return &set
+})
+
+// active is the set callers judge by. It is nil until a swap, which leaves the embedded set in force.
+var active atomic.Pointer[VendorSet]
+
+// Vendors is the active set. Read it once per judgment, so the three files of one judgment come from one set.
+func Vendors() VendorSet {
+	if set := active.Load(); set != nil {
+		return *set
+	}
+	return *embedded()
+}
+
+// SwapVendors makes set the active one, all three files at once, and returns the set it replaces.
+func SwapVendors(set VendorSet) VendorSet {
+	prev := Vendors()
+	active.Store(&set)
+	return prev
+}
+
+func PhalaPins() IdentityPins { return Vendors().Phala }
+
+func NearPins() GatewayModelPins { return Vendors().Near }
+
+func TinfoilPins() RouterPins { return Vendors().Tinfoil }
 
 func LoadPhalaPins(path string) (IdentityPins, error) {
 	if path == "" {
@@ -45,12 +128,4 @@ func LoadTinfoilPins(path string) (RouterPins, error) {
 		return TinfoilPins(), nil
 	}
 	return readPins(path, ParseTinfoilPins)
-}
-
-func mustParse[P any](name string, raw []byte, parse func([]byte) (P, error)) P {
-	p, err := parse(raw)
-	if err != nil {
-		panic("attestation: embedded " + name + ": " + err.Error())
-	}
-	return p
 }

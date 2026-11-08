@@ -663,6 +663,16 @@ type Attestation struct {
 	Report      json.RawMessage
 	BindModel   string
 	GPUVerdicts json.RawMessage
+	// VendorPins names the vendor pin set the attesting enclave judged the report by. Nil when the attester is not an enclave worker.
+	VendorPins *VendorPins
+}
+
+// VendorPins says which vendor pin set is active: the one compiled in, or a signed release of the pins repository.
+type VendorPins struct {
+	// Sequence is the release's, and 0 for the compiled-in set.
+	Sequence uint64 `json:"sequence,omitempty"`
+	// StatementSHA256 is the hex sha256 of the release's vendor statement, or "embedded".
+	StatementSHA256 string `json:"statement_sha256"`
 }
 
 type Attester interface {

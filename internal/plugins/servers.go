@@ -40,12 +40,20 @@ const (
 // clients, and the device builds the sign-in from it; the worker sends to nothing but these addresses.
 type Server struct {
 	ID string
-	// MCP is the only address the server's calls go to, and the resource its tokens are asked for (RFC 8707).
-	MCP      string
+	// MCP is the only address the server's calls go to, and the resource its tokens are asked for (RFC 8707) unless
+	// Resource names another.
+	MCP string
+	// Resource is the resource its tokens are asked for, where the server publishes one other than MCP, such as its
+	// whole origin.
+	Resource string
 	Protocol Revision
 	Token    string
 	// Revoke is the server's RFC 7009 revocation endpoint, or empty where it has none.
 	Revoke string
+	// Issuer and Authorize are the authorization server's name and where a sign-in starts, which only the device
+	// uses. They're pinned here so the hourly watch sees either move, which would refuse or break every sign-in.
+	Issuer    string
+	Authorize string
 	// Clients holds Morse's client id at the server for each environment, each registered with that
 	// environment's callback alone.
 	Clients map[string]string
@@ -54,24 +62,32 @@ type Server struct {
 	SecretEnv string
 	// RPM is how many calls a minute one worker sends the server, across every user.
 	RPM int
+	// OlderDiscovery is a server on MCP's older discovery, which publishes no protected resource metadata and keeps
+	// its authorization server at its own origin. The hourly watch goes by that for it, and for no other.
+	OlderDiscovery bool
+	// NoRefresh is a server that never granted refresh tokens, so a user signs in again when a token expires. The
+	// hourly watch alerts on any other server that stops granting them.
+	NoRefresh bool
 }
 
-// Servers are the plugins Morse offers. A server is added only once its vendor is probed and Morse's client is
-// registered there, as the web app's design lists under Prerequisites. cmd/pluginwatch checks every hour that each
-// vendor still publishes the endpoints pinned here.
+// Servers are the plugins Morse offers. `make plugin-add` adds one, once `make plugin-probe` says its vendor is ready,
+// as the web app's design says under Adding a plugin. cmd/pluginwatch checks every hour that each vendor still publishes
+// the endpoints pinned here.
 var Servers = []Server{
 	{
 		// Notion's authorization server publishes its revocation endpoint at the token endpoint's address, and takes
 		// a client metadata document's URL as a client id, so Morse's client at Notion is the document the web app
 		// serves for each environment, a public client with PKCE.
-		ID:       "notion",
-		MCP:      "https://mcp.notion.com/mcp",
-		Protocol: June2025,
-		Token:    "https://mcp.notion.com/token",
-		Revoke:   "https://mcp.notion.com/token",
-		Clients:  ClientDocuments("notion"),
-		Auth:     PublicClient,
-		RPM:      600,
+		ID:        "notion",
+		MCP:       "https://mcp.notion.com/mcp",
+		Protocol:  June2025,
+		Token:     "https://mcp.notion.com/token",
+		Issuer:    "https://mcp.notion.com",
+		Authorize: "https://mcp.notion.com/authorize",
+		Revoke:    "https://mcp.notion.com/token",
+		Clients:   ClientDocuments("notion"),
+		Auth:      PublicClient,
+		RPM:       600,
 	},
 }
 
@@ -86,6 +102,14 @@ func ClientDocuments(id string) map[string]string {
 }
 
 const clientDocumentPath = "/plugins/clients/"
+
+// TokenResource is the resource (RFC 8707) the server's tokens are asked for.
+func (s Server) TokenResource() string {
+	if s.Resource != "" {
+		return s.Resource
+	}
+	return s.MCP
+}
 
 // Callback is where a server sends a sign-in's code back in environment.
 func (s Server) Callback(environment string) string { return s.callback(environment) }
@@ -110,8 +134,8 @@ func (s Server) Validate() error {
 	if !idPattern.MatchString(s.ID) {
 		return fmt.Errorf("plugins: server id %q", s.ID)
 	}
-	for name, raw := range map[string]string{"MCP": s.MCP, "Token": s.Token, "Revoke": s.Revoke} {
-		if raw == "" && name == "Revoke" {
+	for name, raw := range map[string]string{"MCP": s.MCP, "Resource": s.Resource, "Token": s.Token, "Revoke": s.Revoke} {
+		if raw == "" && (name == "Revoke" || name == "Resource") {
 			continue
 		}
 		if err := pinned(raw); err != nil {

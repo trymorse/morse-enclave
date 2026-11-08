@@ -14,13 +14,13 @@ type GatewayModelPins struct {
 }
 
 type WorkloadPins struct {
-	TDAttributes   string      `json:"td_attributes"`
-	AppID          string      `json:"app_id"`
-	KeyProviderIDs []string    `json:"key_provider_ids"`
-	TCBStatuses    []TCBStatus `json:"tcb_statuses"`
-	Composes       []Compose   `json:"composes"`
-	Images         []OSImage   `json:"images"`
-	Instances      []string    `json:"instances"`
+	TDAttributes     string      `json:"td_attributes"`
+	AppID            string      `json:"app_id"`
+	KeyProviderIDs   []string    `json:"key_provider_ids"`
+	TCBStatuses      []TCBStatus `json:"tcb_statuses"`
+	Composes         []Compose   `json:"composes"`
+	Images           []OSImage   `json:"images"`
+	RetiredInstances []string    `json:"instances,omitempty"`
 }
 
 type Compose struct {
@@ -66,7 +66,7 @@ func (p WorkloadPins) Check(w Workload) []Drift {
 		}
 		drifts = append(drifts, Drift{Kind: DriftRelease, Field: composeHashField, Pinned: strings.Join(pinned, ", "), Observed: w.ComposeHash})
 	}
-	return append(drifts, instanceDrift(p.Instances, w.InstanceID)...)
+	return drifts
 }
 
 func (p GatewayModelPins) Judge(r NearReport) Verdicts[aci.SPKI] {
@@ -124,9 +124,6 @@ func (p WorkloadPins) check() error {
 		return fmt.Errorf("%s is missing", appIDField)
 	}
 	if err := distinctNonEmpty(keyProviderIDsField, p.KeyProviderIDs); err != nil {
-		return err
-	}
-	if err := distinctNonEmpty(instancesField, p.Instances); err != nil {
 		return err
 	}
 	if len(p.TCBStatuses) == 0 {
@@ -211,7 +208,6 @@ func (p *WorkloadPins) observe(w Workload) {
 	p.TCBStatuses = appendNew(p.TCBStatuses, w.TCB.Status)
 	p.Composes = appendNew(p.Composes, Compose{ComposeHash: w.ComposeHash})
 	p.Images = appendNew(p.Images, OSImage{OSMeasurement: w.OSMeasurement})
-	p.Instances = appendNew(p.Instances, w.InstanceID)
 }
 
 func appendNew[T comparable](s []T, v T) []T {

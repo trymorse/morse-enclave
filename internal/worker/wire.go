@@ -205,9 +205,10 @@ func attestRequest(v Vendor, nonce string, f Format) evidenceRequest {
 
 // A report crosses as bytes, not as JSON, so the client gets the gateway's exact bytes back.
 type attestationWire struct {
-	Report      []byte `json:"report"`
-	BindModel   string `json:"bind_model"`
-	GPUVerdicts []byte `json:"gpu_verdicts,omitempty"`
+	Report      []byte           `json:"report"`
+	BindModel   string           `json:"bind_model"`
+	GPUVerdicts []byte           `json:"gpu_verdicts,omitempty"`
+	VendorPins  *chat.VendorPins `json:"vendor_pins,omitempty"`
 }
 
 type sessionsWire struct {

@@ -41,6 +41,8 @@ type Transcriber interface {
 
 type Gate interface {
 	Run(context.Context)
+	// Wake asks for a verification soon, as new pins may now admit an endpoint the old ones refused.
+	Wake()
 	Route(attester.Upstream) chat.VerbatimRoute
 	Plain(attester.Upstream) (Plain, bool) // false for a vendor that serves only sealed chats
 }
@@ -115,7 +117,7 @@ func (v phalaVendor) NewGate(up attester.Upstream, d Deps) Gate {
 	keys := &e2eeKeys{now: time.Now}
 	return phalaGate{TLSGate: attested.NewTLSGate(attested.Config[aci.SPKI]{
 		Scope:    v.Scope(up).String(),
-		Verifier: phalaVerifier(d.Policy, attestation.PhalaPins(), up.Host, keys),
+		Verifier: phalaVerifier(d.Policy, attestation.PhalaPins, up.Host, keys),
 		Fetch: func(ctx context.Context, nonce attestation.Nonce) ([]byte, error) {
 			return gateway.Report(ctx, nonce.String())
 		},
@@ -124,14 +126,14 @@ func (v phalaVendor) NewGate(up attester.Upstream, d Deps) Gate {
 	}, up.Host, d.Base), keys: keys}
 }
 
-func phalaVerifier(policy attestation.Policy, pins attestation.IdentityPins, host string, keys *e2eeKeys) attested.Verifier[aci.SPKI] {
+func phalaVerifier(policy attestation.Policy, pins func() attestation.IdentityPins, host string, keys *e2eeKeys) attested.Verifier[aci.SPKI] {
 	return func(ctx context.Context, report []byte, nonce attestation.Nonce) (attestation.Verdicts[aci.SPKI], error) {
 		r, err := policy.VerifyPhala(ctx, report, nonce, host)
 		if err != nil {
 			return attestation.Verdicts[aci.SPKI]{}, err
 		}
 		keys.keep(r)
-		return pins.Judge(r)
+		return pins().Judge(r)
 	}
 }
 
@@ -321,7 +323,7 @@ func (v tinfoilVendor) NewGate(up attester.Upstream, d Deps) Gate {
 	gateway := tinfoil.NewGateway(up.BaseURL, up.Host, d.Unpinned)
 	return tinfoilGate{TLSGate: attested.NewTLSGate(attested.Config[aci.SPKI]{
 		Scope:    v.Scope(up).String(),
-		Verifier: tinfoilVerifier(d.Policy, up.Host, gateway, attestation.TinfoilPins()),
+		Verifier: tinfoilVerifier(d.Policy, up.Host, gateway, attestation.TinfoilPins),
 		Fetch: func(ctx context.Context, _ attestation.Nonce) ([]byte, error) {
 			return gateway.Bundle(ctx)
 		},
@@ -334,9 +336,10 @@ func (v tinfoilVendor) NewGate(up attester.Upstream, d Deps) Gate {
 // document for the gate's nonce and judges the Sigstore bundle it carries: the proof binds to the report by
 // the measurement it names, so the document needs no verification of its own. A fetch that fails leaves the
 // report unjudged (an Outage), so the gate keeps its anchor and tries again, rather than refusing the scope
-// over a transient error.
-func tinfoilVerifier(policy attestation.Policy, host string, gateway tinfoil.Gateway, pins attestation.RouterPins) attested.Verifier[aci.SPKI] {
+// over a transient error. It reads the active pins on each verification, so a runtime swap reaches the gate.
+func tinfoilVerifier(policy attestation.Policy, host string, gateway tinfoil.Gateway, active func() attestation.RouterPins) attested.Verifier[aci.SPKI] {
 	return func(ctx context.Context, bundle []byte, nonce attestation.Nonce) (attestation.Verdicts[aci.SPKI], error) {
+		pins := active()
 		r, err := policy.VerifyTinfoil(ctx, bundle, host)
 		if err != nil {
 			return attestation.Verdicts[aci.SPKI]{}, err

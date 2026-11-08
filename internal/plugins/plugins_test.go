@@ -489,14 +489,73 @@ func TestAServerIsRefusedThatTheWorkerCouldNotCallSafely(t *testing.T) {
 			t.Errorf("%s: valid", name)
 		}
 	}
-	if _, err := New([]Server{v.server(func(s *Server) { s.Auth, s.SecretEnv = SecretPost, "MISSING" })}, func(string) string { return "" }, "dev", nil, time.Now); err == nil {
-		t.Error("built without the secret")
+}
+
+func TestAServerWithoutItsSecretIsOffAndLeavesTheOthersServing(t *testing.T) {
+	v := newVendor(t)
+	v.token = func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"access_token":"at-1","token_type":"Bearer"}`))
+	}
+	other := v.server(func(s *Server) { s.ID = "other" })
+	relay, err := New([]Server{v.server(func(s *Server) { s.Auth, s.SecretEnv = SecretPost, "MISSING" }), other}, func(string) string { return "" }, "dev", v.srv.Client(), time.Now)
+	if err != nil {
+		t.Fatalf("one missing secret stopped the relay: %v", err)
+	}
+	ask := func(server, id string) ([]byte, error) {
+		req, err := relay.Open(KindToken, strings.NewReader(`{"server":"`+server+`","request":"`+id+`","grant":"refresh_token","refresh_token":"rt-1"}`))
+		if err != nil {
+			t.Fatalf("%s: %v", server, err)
+		}
+		return relay.Run(context.Background(), req, nil)
+	}
+	if _, err := ask("notes", strings.Repeat("a", 32)); !errors.Is(err, ErrOff) {
+		t.Errorf("without its secret: %v", err)
+	}
+	if _, err := ask("other", strings.Repeat("b", 32)); err != nil {
+		t.Errorf("the other server: %v", err)
+	}
+}
+
+func TestATokenRequestAsksForTheResourceTheServerNames(t *testing.T) {
+	v := newVendor(t)
+	var got string
+	s := v.server(func(s *Server) { s.Resource = "https://tokens.example" })
+	if s.TokenResource() != "https://tokens.example" {
+		t.Fatalf("%q", s.TokenResource())
+	}
+	v.token = func(w http.ResponseWriter, r *http.Request) {
+		r.ParseForm()
+		got = r.PostForm.Get("resource")
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"access_token":"at-1","token_type":"Bearer"}`))
+	}
+	relay, err := New([]Server{s}, func(string) string { return "" }, "dev", v.srv.Client(), time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, err := relay.Open(KindToken, strings.NewReader(`{"server":"notes","request":"`+strings.Repeat("b", 32)+`","grant":"refresh_token","refresh_token":"rt-1"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := relay.Run(context.Background(), req, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got != "https://tokens.example" {
+		t.Errorf("asked for %q", got)
+	}
+	bad := v.server(func(s *Server) { s.Resource = "http://plain.example" })
+	if bad.Validate() == nil {
+		t.Error("a plain resource passed")
 	}
 }
 
 func TestEveryServerMorseOffersIsSafeToCall(t *testing.T) {
 	ids := map[string]bool{}
 	for _, s := range Servers {
+		if !strings.HasPrefix(s.Issuer, "https://") || !strings.HasPrefix(s.Authorize, "https://") {
+			t.Errorf("%s pins no issuer or authorization endpoint for the watch to hold it to", s.ID)
+		}
 		if err := s.Validate(); err != nil {
 			t.Error(err)
 		}
