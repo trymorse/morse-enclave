@@ -221,8 +221,12 @@ func (LookupGrant) kind() grantKind { return grantsLookup }
 
 // Measured is one run's outcome. Endpoint is the endpoint that served or was tried last, and Health is that try's,
 // with Retries counting every extra call of the whole walk, each try's own plus one per move, and Hedges summed.
-// FailedOver lists each endpoint the walk left before it, in order: every one failed before the client saw a byte
-// with an outcome that FailsOver.
+// FailedOver lists each other endpoint the walk tried that failed before it began the client's reply, with an
+// outcome that FailsOver, in the order they ended. VendorWait is the vendors' time before a streamed reply's first
+// byte: from the walk's first call to the serving call's first byte. It is zero for a reply that did not stream, whose
+// first byte the relay sees only once the vendor has finished. Lingers says the walk ended with another endpoint's
+// try still running, and Late, when not nil, yields each such try that fails over as it ends and is closed once all
+// have ended.
 type Measured struct {
 	measure.Measurement
 	Cut               measure.Cut
@@ -236,27 +240,21 @@ type Measured struct {
 	Unsampled         bool                `json:"-"`
 	Refusal           measure.RefusalCode `json:",omitempty"`
 	Endpoint          catalog.EndpointID  `json:",omitempty"`
-	FailedOver        []Try               `json:",omitempty"`
-	Counted           <-chan Count        `json:"-"`
+	// Unserved is a chat that no host served or began to reply to: the last endpoint tried failed before the client
+	// saw a status, with an outcome that fails over and is not its own refusal to attest, and no cut ended it. A host's
+	// refusal of the request, an unattested endpoint, and a cut before the first byte are not unserved. Endpoint then
+	// names only the last one tried, which its health and breaker still count.
+	Unserved   bool          `json:",omitempty"`
+	FailedOver []Try         `json:",omitempty"`
+	VendorWait time.Duration `json:",omitempty"`
+	Late       <-chan Try    `json:"-"`
+	Lingers    bool          `json:",omitempty"`
+	Counted    <-chan Count  `json:"-"`
 }
 
 type Try struct {
 	Endpoint catalog.EndpointID
 	Health   health.Observation
-}
-
-// VendorWait is the vendors' time before a streamed reply's first byte: every failed try's whole call and the
-// serving try's wait for its first byte. It is zero for a reply that did not stream, whose first byte the relay sees
-// only once the vendor has finished.
-func (m Measured) VendorWait() time.Duration {
-	if m.Health.TTFT <= 0 {
-		return 0
-	}
-	wait := m.Health.TTFT
-	for _, try := range m.FailedOver {
-		wait += try.Health.Duration
-	}
-	return wait
 }
 
 type Follow uint8

@@ -63,10 +63,12 @@ type ChatUpstream interface {
 	serve(ctx context.Context, w *InProcess, o *openedChat, a attempt, reply http.ResponseWriter) served
 	count(a attempt, e measure.Evidence, got served) *pendingCount
 	busyWaits() []time.Duration
+	hedge() chat.Hedge
 }
 
-// Plain streams a chat in the clear. Hedge races a stalled stream with a second call; the zero Hedge never does, as
-// on a route whose first chunk waits for reasoning the client never sees.
+// Plain streams a chat in the clear. Hedge races a silent stream with a second call, to the next endpoint of the grant
+// or else to this one, and gives a stalled one up; the zero Hedge does neither, as on a route whose first chunk waits
+// for reasoning the client never sees.
 type Plain struct {
 	chat.Provider
 	Attester  chat.Attester
@@ -92,6 +94,8 @@ func (u Plain) attester() chat.Attester { return u.Attester }
 
 func (u Plain) busyWaits() []time.Duration { return u.BusyWaits }
 
+func (u Plain) hedge() chat.Hedge { return u.Hedge }
+
 func (u Verbatim) Validate(tier catalog.Tier) error {
 	if u.Route == nil {
 		return errors.New("relays verbatim through no route")
@@ -104,6 +108,8 @@ func (u Verbatim) Speaks() *chat.Scheme { return u.Route.Speaks() }
 func (u Verbatim) attester() chat.Attester { return u.Route }
 
 func (Verbatim) busyWaits() []time.Duration { return nil }
+
+func (Verbatim) hedge() chat.Hedge { return chat.Hedge{} }
 
 type Images struct{ media.ImageGenerator }
 

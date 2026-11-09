@@ -23,6 +23,8 @@ type Server struct {
 	routesDigest string
 	mux          *http.ServeMux
 	casts        lastCast
+	// lingering holds each run's Late until the relay asks for it, for OpenedFor at most.
+	lingering sync.Map
 }
 
 type lastCast struct {
@@ -52,6 +54,7 @@ func NewServer(inner *InProcess, routesDigest string) *Server {
 	s.mux.HandleFunc("POST /submit", s.submit)
 	s.mux.HandleFunc("POST /ack", s.ack)
 	s.mux.HandleFunc("POST /count", s.count)
+	s.mux.HandleFunc("POST /late", s.late)
 	s.mux.HandleFunc("POST /cut", s.cut)
 	s.mux.HandleFunc("POST /poll", s.poll)
 	s.mux.HandleFunc("GET /routes", s.serveRoutes)
@@ -201,6 +204,10 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, h Handle, run fun
 	w.Header().Set("Trailer", headerMeasured)
 	defer context.AfterFunc(r.Context(), func() { s.inner.Cut(h, measure.CutByProxy) })()
 	m := run(&chunkedReply{ResponseWriter: w})
+	if late := m.Late; late != nil {
+		s.lingering.Store(h, late)
+		time.AfterFunc(OpenedFor, func() { s.lingering.CompareAndDelete(h, late) })
+	}
 	measured, _ := json.Marshal(m)
 	w.Header().Set(headerMeasured, string(measured))
 }
@@ -250,6 +257,31 @@ func (s *Server) count(w http.ResponseWriter, r *http.Request) {
 		}
 		apierr.WriteJSON(w, http.StatusOK, c)
 	case <-r.Context().Done():
+	}
+}
+
+func (s *Server) late(w http.ResponseWriter, r *http.Request) {
+	var req handleRequest
+	if !decodeWire(w, r, &req) {
+		return
+	}
+	held, ok := s.lingering.LoadAndDelete(req.Handle)
+	if !ok {
+		apierr.WriteError(w, apierr.ErrUnavailable)
+		return
+	}
+	tries := []Try{}
+	for late := held.(<-chan Try); ; {
+		select {
+		case try, open := <-late:
+			if !open {
+				apierr.WriteJSON(w, http.StatusOK, tries)
+				return
+			}
+			tries = append(tries, try)
+		case <-r.Context().Done():
+			return
+		}
 	}
 }
 

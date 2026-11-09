@@ -122,6 +122,8 @@ func TestClassifyRanksWhatTheProviderDidAboveWhoHungUp(t *testing.T) {
 		"a request that was never sent":                                       {Evidence{Err: apierr.ErrUpstreamUnavailable}, UpstreamUnavailable},
 		"a connect failure":                                                   {Evidence{Err: upstream.ErrUnreachable}, Unreachable},
 		"a connect failure as the client disconnects":                         {Evidence{Err: upstream.ErrUnreachable, Cut: CutByCaller}, Unreachable},
+		"a stream given up before its first chunk":                            {Evidence{Err: upstream.ErrStalled}, Stalled},
+		"a stream given up before its headers were written":                   {Evidence{Err: upstream.Stalled(fmt.Errorf("%w: %w", upstream.ErrNotSent, context.Canceled))}, Stalled},
 		"the proxy's deadline before the first byte":                          {Evidence{Err: context.DeadlineExceeded, Cut: CutByDeadline}, Deadline},
 		"the proxy's deadline mid-stream":                                     {Evidence{Err: truncated, Cut: CutByDeadline, Began: true}, Deadline},
 		"an inner time limit with the request still alive":                    {Evidence{Err: fmt.Errorf("submit: %w", context.DeadlineExceeded)}, Deadline},
@@ -140,8 +142,8 @@ func TestClassifyRanksWhatTheProviderDidAboveWhoHungUp(t *testing.T) {
 	}
 }
 
-func TestOnlyBusyAVendorErrorUnreachableAVendorRefusalOfOurAccountAndAnUnattestedVendorFailOver(t *testing.T) {
-	want := map[Outcome]bool{UpstreamBusy: true, UpstreamError: true, Unreachable: true, UpstreamUnavailable: true, Unattested: true}
+func TestOnlyBusyAVendorErrorUnreachableAStallAVendorRefusalOfOurAccountAndAnUnattestedVendorFailOver(t *testing.T) {
+	want := map[Outcome]bool{UpstreamBusy: true, UpstreamError: true, Unreachable: true, Stalled: true, UpstreamUnavailable: true, Unattested: true}
 	for _, o := range Outcomes() {
 		if o.FailsOver() != want[o] {
 			t.Errorf("%s fails over: %t, want %t", o, o.FailsOver(), want[o])
@@ -149,12 +151,25 @@ func TestOnlyBusyAVendorErrorUnreachableAVendorRefusalOfOurAccountAndAnUnatteste
 	}
 }
 
-func TestOnlyBusyAVendorErrorUnreachableAVendorRefusalOfOurAccountAndAnUnattestedVendorTripTheBreaker(t *testing.T) {
-	want := map[Outcome]bool{UpstreamBusy: true, UpstreamError: true, Unreachable: true, UpstreamUnavailable: true, Unattested: true}
+func TestOnlyBusyAVendorErrorUnreachableAStallAVendorRefusalOfOurAccountAMidstreamBreakAndAnUnattestedVendorTripTheBreaker(t *testing.T) {
+	want := map[Outcome]bool{UpstreamBusy: true, UpstreamError: true, Unreachable: true, Stalled: true, UpstreamUnavailable: true, MidstreamBreak: true, Unattested: true}
 	for _, o := range Outcomes() {
 		if o.TripsBreaker() != want[o] {
 			t.Errorf("%s trips the breaker: %t, want %t", o, o.TripsBreaker(), want[o])
 		}
+	}
+}
+
+func TestAMalformedReplyTripsTheBreakerOnlyWhenItEndedOKOrItsOutcomeTripsItAlready(t *testing.T) {
+	want := map[Outcome]bool{OK: true, UpstreamBusy: true, UpstreamError: true, Unreachable: true, Stalled: true, UpstreamUnavailable: true, MidstreamBreak: true, Unattested: true}
+	for _, o := range Outcomes() {
+		seen := Observation{Outcome: o, Malformed: true}
+		if seen.TripsBreaker() != want[o] || seen.Healthy() {
+			t.Errorf("a malformed %s trips the breaker %t and is healthy %t, want %t and false", o, seen.TripsBreaker(), seen.Healthy(), want[o])
+		}
+	}
+	if ok := (Observation{Outcome: OK}); !ok.Healthy() || ok.TripsBreaker() {
+		t.Errorf("a well-formed ok is healthy %t and trips the breaker %t, want true and false", ok.Healthy(), ok.TripsBreaker())
 	}
 }
 
@@ -163,6 +178,15 @@ func TestABareVendor403Or404IsUpstreamRefusedWhichNeitherFailsOverNorTripsTheBre
 		o := Classify(Evidence{Err: apierr.SanitizedUpstreamError(status, nil)})
 		if o != UpstreamRefused || o.FailsOver() || o.TripsBreaker() {
 			t.Errorf("a bare %d is %s, fails over %t, trips the breaker %t; want upstream_refused, false, false", status, o, o.FailsOver(), o.TripsBreaker())
+		}
+	}
+}
+
+func TestABareVendor403Or404AfterTheFirstByteIsStillUpstreamRefusedAndTripsNoBreaker(t *testing.T) {
+	for _, status := range []int{403, 404} {
+		o := Classify(Evidence{Err: apierr.SanitizedUpstreamError(status, nil), Began: true})
+		if o != UpstreamRefused || o.FailsOver() || o.TripsBreaker() {
+			t.Errorf("a bare %d after the first byte is %s, fails over %t, trips the breaker %t; want upstream_refused, false, false", status, o, o.FailsOver(), o.TripsBreaker())
 		}
 	}
 }

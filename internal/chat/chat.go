@@ -203,6 +203,21 @@ func (r *Request) Field(name string) (json.RawMessage, bool) {
 
 func (r *Request) Decode(name string, into any) error { return unmarshalField(r.fields, name, into) }
 
+// Stops is whether the request sets a stop string.
+func (r *Request) Stops() bool {
+	var stop any
+	if r.Decode("stop", &stop) != nil {
+		return false
+	}
+	switch s := stop.(type) {
+	case string:
+		return s != ""
+	case []any:
+		return len(s) > 0
+	}
+	return false
+}
+
 func (r *Request) EncodeOnly(keep []string, set map[string]json.RawMessage) []byte {
 	fields := map[string]json.RawMessage{}
 	for _, name := range keep {

@@ -89,7 +89,7 @@ func (p *Provider) Stream(ctx context.Context, c chat.Call, emit func(chat.Chunk
 	if err != nil {
 		return chat.Usage{}, err
 	}
-	s := &stream{p: p, emit: emit, opened: opening{}, answer: reasoningAnswer{on: p.AnswersInReasoning},
+	s := &stream{p: p, emit: emit, opened: opening{}, calls: openedCalls{}, answer: reasoningAnswer{on: p.AnswersInReasoning},
 		head: morseHead{id: chat.NewReplyID(), model: c.Model, object: "chat.completion.chunk", created: time.Now().Unix()}}
 	if err := p.Sender.Stream(ctx, body, p.headers(c), s.event); err != nil {
 		return s.usage, err
@@ -110,6 +110,7 @@ type stream struct {
 	final  []byte
 	spoke  bool
 	opened opening
+	calls  openedCalls
 	answer reasoningAnswer
 }
 
@@ -143,7 +144,7 @@ func (s *stream) event(data []byte) (bool, error) {
 }
 
 func (s *stream) send(r reply) error {
-	data, err := s.p.disguise(r, s.head)
+	data, err := s.p.disguise(r, s.head, s.calls)
 	if err != nil {
 		return err
 	}
@@ -183,7 +184,7 @@ func (s *stream) sendUsage(includeUsage bool) error {
 	if r.choices > 0 {
 		r.set("choices", json.RawMessage("[]"))
 	}
-	data, err := s.p.disguise(r, s.head)
+	data, err := s.p.disguise(r, s.head, s.calls)
 	if err != nil {
 		return err
 	}
@@ -238,7 +239,7 @@ func (p *Provider) Complete(ctx context.Context, c chat.Call) (chat.Chunk, chat.
 	if r.usage != nil {
 		usage = r.usage.Domain()
 	}
-	body, err = p.disguise(r, morseHead{id: chat.NewReplyID(), model: c.Model, object: "chat.completion", created: time.Now().Unix()})
+	body, err = p.disguise(r, morseHead{id: chat.NewReplyID(), model: c.Model, object: "chat.completion", created: time.Now().Unix()}, nil)
 	if err != nil {
 		return chat.Chunk{}, chat.Usage{}, err
 	}
@@ -266,7 +267,9 @@ type envelope struct {
 	Usage   json.RawMessage `json:"usage,omitempty"`
 }
 
-func (p *Provider) disguise(r reply, h morseHead) ([]byte, error) {
+// disguise gives a reply one shape whichever host sent it. calls records the tool calls a stream has opened, and is
+// nil for a whole reply.
+func (p *Provider) disguise(r reply, h morseHead, calls openedCalls) ([]byte, error) {
 	if p.KeepEnvelope {
 		return r.kept(), nil
 	}
@@ -274,7 +277,7 @@ func (p *Provider) disguise(r reply, h morseHead) ([]byte, error) {
 	if !ok {
 		return nil, errNotAnObject
 	}
-	choices, err := uniformChoices(choices, h.id)
+	choices, err := uniformChoices(choices, h.id, calls)
 	if err != nil {
 		return nil, err
 	}
@@ -332,7 +335,7 @@ var answerFields = []string{"role", "content", "reasoning", "reasoning_content",
 // uniformChoices gives every choice one shape whichever host sent it: index, its delta or message, finish_reason, and
 // logprobs when there are any, which no request asks for. A choice's other fields (raw_output, matched_stop,
 // stop_reason, token_ids, native_finish_reason, a per-choice usage) are the host's own.
-func uniformChoices(raw json.RawMessage, replyID string) (json.RawMessage, error) {
+func uniformChoices(raw json.RawMessage, replyID string, calls openedCalls) (json.RawMessage, error) {
 	if string(raw) == "null" {
 		return raw, nil
 	}
@@ -355,7 +358,7 @@ func uniformChoices(raw json.RawMessage, replyID string) (json.RawMessage, error
 			case !ok || name == "logprobs" && isNull(v):
 				continue
 			case name == "delta" || name == "message":
-				answer, err := uniformAnswer(v, name == "message", replyID, i)
+				answer, err := uniformAnswer(v, name == "message", replyID, i, calls)
 				if err != nil {
 					return nil, err
 				}
@@ -374,7 +377,7 @@ func uniformChoices(raw json.RawMessage, replyID string) (json.RawMessage, error
 // way the host opened or whether it repeated role on every chunk. A message with tool_calls and no text has content
 // null. A host that sends its reasoning twice, as reasoning and reasoning_content, or with one of them empty, sends it
 // once, as reasoning_content: the first of reasoning_content and reasoning that has text.
-func uniformAnswer(raw json.RawMessage, message bool, replyID string, choice int) (json.RawMessage, error) {
+func uniformAnswer(raw json.RawMessage, message bool, replyID string, choice int, opened openedCalls) (json.RawMessage, error) {
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &fields); err != nil {
 		return nil, err
@@ -393,7 +396,7 @@ func uniformAnswer(raw json.RawMessage, message bool, replyID string, choice int
 		switch v := fields[name]; {
 		case name == "role" && !message:
 		case !isNull(v) && name == "tool_calls":
-			calls, err := uniformToolCalls(v, message, replyID, choice)
+			calls, err := uniformToolCalls(v, message, replyID, choice, opened)
 			if err != nil {
 				return nil, err
 			}

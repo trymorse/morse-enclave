@@ -23,6 +23,18 @@ var ErrNotSent = errors.New("upstream: the request was never sent")
 
 func notSent(cause error) error { return fmt.Errorf("%w: %w", ErrNotSent, cause) }
 
+// ErrStalled is a stream the proxy gave up before its first chunk: the vendor sent no headers, or headers and then
+// nothing, for longer than a healthy host takes. It joins ErrNotSent when the request's headers were never written.
+var ErrStalled = errors.New("upstream: the vendor sent no first chunk in time")
+
+// Stalled is ErrStalled for a call that ended with err once the proxy gave it up, keeping whether it was sent.
+func Stalled(err error) error {
+	if errors.Is(err, ErrNotSent) {
+		return notSent(ErrStalled)
+	}
+	return ErrStalled
+}
+
 func Do(client *http.Client, req *http.Request) (*http.Response, error) {
 	if _, set := req.Header["User-Agent"]; !set {
 		req.Header["User-Agent"] = []string{""}

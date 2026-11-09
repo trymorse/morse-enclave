@@ -22,11 +22,13 @@ type Reroutable interface {
 // max(len(Waits), 1), so a call reaches the vendor at most 1+len(Waits)+max(len(Waits), 1) times, twice that when
 // each is hedged. A refusal after a chunk went out stands. A Stream call that has emitted nothing by HedgeAfter is
 // raced by a second identical call: the first to emit serves the client and the other is cut, and when both fail
-// before emitting the first call's error stands. Zero never races.
+// before emitting the first call's error stands. Zero never races. A Stream call that has emitted nothing by
+// StallAfter, hedge and all, is cut and ends upstream.ErrStalled, which no busy wait retries. Zero waits on.
 type BusyRetry struct {
 	Provider
 	Waits      []time.Duration
 	HedgeAfter time.Duration
+	StallAfter time.Duration
 }
 
 // Attempts is what the retries left behind. Hedges counts the second calls the hedge made. Refused is set when the
@@ -72,10 +74,10 @@ type tries struct {
 }
 
 func (t *tries) stream(ctx context.Context, p Provider, c Call, emit func(Chunk) error) (Usage, error) {
-	if t.HedgeAfter == 0 {
+	if t.HedgeAfter == 0 && t.StallAfter == 0 {
 		return p.Stream(ctx, c, emit)
 	}
-	u, hedged, err := hedged(ctx, p, c, emit, t.HedgeAfter)
+	u, hedged, err := hedged(ctx, p, c, emit, t.HedgeAfter, t.StallAfter)
 	if hedged {
 		t.hedges++
 	}

@@ -42,11 +42,14 @@ var byCode = map[string]Outcome{
 	apierr.ErrUnavailable.Code:           Shutdown,
 }
 
-var breaksMidstream = map[Outcome]bool{UpstreamBusy: true, UpstreamError: true, UpstreamUnavailable: true, UpstreamRefused: true}
+var breaksMidstream = map[Outcome]bool{UpstreamBusy: true, UpstreamError: true, UpstreamUnavailable: true}
 
-var failsOver = map[Outcome]bool{UpstreamBusy: true, UpstreamError: true, Unreachable: true, UpstreamUnavailable: true, Unattested: true}
+var failsOver = map[Outcome]bool{UpstreamBusy: true, UpstreamError: true, Unreachable: true, Stalled: true, UpstreamUnavailable: true, Unattested: true}
 
-var tripsBreaker = map[Outcome]bool{UpstreamBusy: true, UpstreamError: true, Unreachable: true, UpstreamUnavailable: true, Unattested: true}
+// tripsBreaker holds MidstreamBreak although it never fails over: the reply that broke stays with its client, but a host
+// that breaks every stream after its first chunk is as broken as one that fails before it, and only an open circuit
+// keeps the next turns, its home's among them, off it.
+var tripsBreaker = map[Outcome]bool{UpstreamBusy: true, UpstreamError: true, Unreachable: true, Stalled: true, UpstreamUnavailable: true, MidstreamBreak: true, Unattested: true}
 
 func (o Outcome) FailsOver() bool { return failsOver[o] }
 
@@ -62,6 +65,8 @@ func Classify(e Evidence) Outcome {
 		return cutOutcomes[e.Cut]
 	case errors.Is(e.Err, upstream.ErrUnreachable):
 		return Unreachable
+	case errors.Is(e.Err, upstream.ErrStalled):
+		return Stalled
 	case errors.Is(e.Err, context.DeadlineExceeded):
 		return Deadline
 	case cut && errors.Is(e.Err, context.Canceled):

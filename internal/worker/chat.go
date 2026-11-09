@@ -234,17 +234,38 @@ type attempt struct {
 	call        chat.Call
 	waits       []time.Duration
 	promptBound int
+	// hedgeAfter is how long the call may stay silent before a second call to the same endpoint races it, and
+	// stallAfter before it is given up as stalled. Zero is never.
+	hedgeAfter, stallAfter time.Duration
 }
 
-func (o *openedChat) attempt(r chatRoute, g ChatGrant, last bool) attempt {
+// attempt is the call on r. Only the last endpoint waits out a busy refusal, and only one whose hedge has no next
+// endpoint to go to hedges in place.
+func (o *openedChat) attempt(r chatRoute, g ChatGrant, last, hedgesInPlace bool) attempt {
 	c := o.call
 	c.RouteEffort, c.Efforts, c.OutputLimit = r.DefaultReasoningEffort, r.ReasoningEfforts, r.clamp(g.OutputLimit, o.asked)
 	a := attempt{route: r, call: c, promptBound: g.PromptBound}
 	if last {
 		a.waits = r.Upstream.busyWaits()
 	}
+	h := r.hedge(c)
+	a.stallAfter = h.Stall(o.promptTokens())
+	if hedgesInPlace {
+		a.hedgeAfter = h.Wait(o.promptTokens())
+	}
 	return a
 }
+
+// hedge is the route's Hedge for c. Only a stream hedges.
+func (r chatRoute) hedge(c chat.Call) chat.Hedge {
+	if !c.Stream {
+		return chat.Hedge{}
+	}
+	return r.Upstream.hedge()
+}
+
+// promptTokens is the prompt's size in tokens at the bytes a token the included window counts.
+func (o *openedChat) promptTokens() int { return o.promptBytes / limits.IncludedWindowBytesPerToken }
 
 func (o *openedChat) run(_ context.Context, w *InProcess, h Handle, g Grant, reply http.ResponseWriter) Measured {
 	cg, ok := g.(ChatGrant)
@@ -262,27 +283,11 @@ func (o *openedChat) run(_ context.Context, w *InProcess, h Handle, g Grant, rep
 		ctx = o.afterCut.ctx
 	}
 	rw := newReplyWriter(reply)
-	var a attempt
-	var got served
-	var e measure.Evidence
-	var m Measured
-	var failedOver []Try
-	retries, hedges := 0, 0
-	for i, r := range granted {
-		last := i == len(granted)-1
-		a = o.attempt(r, cg, last)
-		rw.Header().Set(HeaderTier, r.tier.String())
-		got, e, m = o.try(ctx, w, a, cg, rw)
-		retries, hedges = retries+m.Health.Retries, hedges+m.Health.Hedges
-		if last || rw.status != 0 || !m.Health.Outcome.FailsOver() || brokeSeal(got.callErr) {
-			break
-		}
-		failedOver = append(failedOver, Try{Endpoint: r.endpoint, Health: m.Health})
-		retries++
-	}
-	m.FailedOver, m.Health.Retries, m.Health.Hedges = failedOver, retries, hedges
-	if got.callErr != nil && rw.status == 0 {
-		rw.Header().Del(HeaderTier)
+	end := o.walk(ctx, w, granted, cg, rw)
+	a, got, e, m := end.a, end.got, end.e, end.m
+	unsent := got.callErr != nil && rw.status == 0
+	m.Unserved = unsent && m.Cut == measure.NotCut && m.Health.Outcome.FailsOver() && m.Health.Outcome != health.Unattested
+	if unsent {
 		refuse(ctx, rw, got.callErr)
 	}
 	p := a.route.Upstream.count(a, e, got)
@@ -310,6 +315,7 @@ func (o *openedChat) try(ctx context.Context, w *InProcess, a attempt, g ChatGra
 	e := got.evidence(end, a, g)
 	m := Measured{Measurement: e.Measure(), Cut: end.cut(), Served: got.callErr == nil, Refusal: end.refusal(got.callErr), Endpoint: a.route.endpoint}
 	m.Health = rw.observed(ctx, got.callErr, false, opened, returned)
+	m.Health.Malformed = got.malformed && m.Health.Outcome == health.OK
 	m.Health.Retries, m.Health.Hedges, m.Health.OutputTokens = got.attempts.Retries, got.attempts.Hedges, a.route.tokensAfterFirstByte(got.reported)
 	if refused, ok := errors.AsType[upstream.Refused](got.callErr); ok && vendorFaults[m.Health.Outcome] {
 		w.reports.VendorRefused(a.call.Model, refused.Status)
@@ -448,7 +454,7 @@ func (u Plain) serve(ctx context.Context, w *InProcess, o *openedChat, a attempt
 		clock = &thinkingClock{now: w.now}
 	}
 	var got served
-	retry := chat.BusyRetry{Provider: u.Provider, Waits: a.waits, HedgeAfter: u.Hedge.Wait(o.promptBytes / limits.IncludedWindowBytesPerToken)}
+	retry := chat.BusyRetry{Provider: u.Provider, Waits: a.waits, HedgeAfter: a.hedgeAfter, StallAfter: a.stallAfter}
 	if a.call.Stream {
 		got = stream(ctx, reply, http.NewResponseController(reply), retry, a.call, transcript, clock, w.keepaliveEvery)
 	} else {
@@ -472,6 +478,7 @@ type served struct {
 	reply             measure.Reply
 	finish            chat.Finish
 	unanswered        bool
+	malformed         bool
 	writeErr, callErr error
 	thought           thought
 	transcript        *chat.Transcript
@@ -571,7 +578,7 @@ func stream(ctx context.Context, w http.ResponseWriter, rc *http.ResponseControl
 	case sw.started && ctx.Err() == nil && sw.err == nil:
 		sw.errorEvent()
 	}
-	return served{reported: reported, attempts: attempts, reply: measure.Streamed{Events: sw.delivered, VisibleBytes: sw.visible}, finish: sw.finish, unanswered: unanswered(sw.finish, sw.sent), writeErr: sw.err, callErr: err, thought: clock.thought()}
+	return served{reported: reported, attempts: attempts, reply: measure.Streamed{Events: sw.delivered, VisibleBytes: sw.visible}, finish: sw.finish, unanswered: unanswered(sw.finish, sw.sent), malformed: sw.calls.Malformed(sw.finish, c.Stops()), writeErr: sw.err, callErr: err, thought: clock.thought()}
 }
 
 func complete(ctx context.Context, w http.ResponseWriter, prov chat.BusyRetry, c chat.Call, transcript *chat.Transcript, clock *thinkingClock) served {
@@ -589,5 +596,9 @@ func complete(ctx context.Context, w http.ResponseWriter, prov chat.BusyRetry, c
 	if written > 0 {
 		transcript.Add(d)
 	}
-	return served{reported: tokens, attempts: attempts, reply: measure.Buffered{Bytes: int(written)}, finish: d.Finish, unanswered: unanswered(d.Finish, d.Delivered()), writeErr: writeErr}
+	var calls chat.ToolCalls
+	if d.ToolCalled {
+		calls.Add(body)
+	}
+	return served{reported: tokens, attempts: attempts, reply: measure.Buffered{Bytes: int(written)}, finish: d.Finish, unanswered: unanswered(d.Finish, d.Delivered()), malformed: calls.Malformed(d.Finish, c.Stops()), writeErr: writeErr}
 }

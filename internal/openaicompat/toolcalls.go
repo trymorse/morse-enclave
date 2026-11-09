@@ -29,12 +29,17 @@ func toolCallID(replyID string, choice, index int) string {
 	return string(id)
 }
 
+// openedCalls records the tool calls a stream has opened, by choice and call index.
+type openedCalls map[[2]int]bool
+
 // uniformToolCalls gives every tool call one shape whichever host sent it. In a stream the delta that opens a call
 // carries index, id, type, and function.name and arguments, with an empty string for what the host left out, and a
-// continuation carries only index and function.arguments, since hosts differ on repeating type. A continuation that
+// continuation carries only index and function.arguments, since hosts differ on repeating type. A delta opens a call
+// when it carries an id or is the first for its index to say something, since some hosts open a call with no id; the
+// client still sees the id, type, and name it would from any host. A continuation that
 // carries no arguments is dropped, because it says nothing a client reads. In a whole message a call drops its index
 // and always carries id, type, and function.name and arguments.
-func uniformToolCalls(raw json.RawMessage, message bool, replyID string, choice int) (json.RawMessage, error) {
+func uniformToolCalls(raw json.RawMessage, message bool, replyID string, choice int, opened openedCalls) (json.RawMessage, error) {
 	var calls []map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &calls); err != nil {
 		return nil, err
@@ -47,7 +52,18 @@ func uniformToolCalls(raw json.RawMessage, message bool, replyID string, choice 
 		if v, ok := c["index"]; ok && !message {
 			json.Unmarshal(v, &index)
 		}
+		key := [2]int{choice, index}
 		opens := message || !isNull(c["id"])
+		if !opens && !opened[key] {
+			said, err := uniformFunction(c["function"], false)
+			if err != nil {
+				return nil, err
+			}
+			opens = said != nil
+		}
+		if opens && !message {
+			opened[key] = true
+		}
 		fn, err := uniformFunction(c["function"], opens)
 		if err != nil {
 			return nil, err
@@ -69,7 +85,7 @@ func uniformToolCalls(raw json.RawMessage, message bool, replyID string, choice 
 				}
 				v = json.RawMessage(strconv.Itoa(index))
 			case "id":
-				if isNull(v) && !message {
+				if !opens {
 					continue
 				}
 				v = jsonString(toolCallID(replyID, choice, index))

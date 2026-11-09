@@ -132,9 +132,16 @@ func (w *InProcess) OpenSealed(ctx context.Context, o SealedOpening) (SealedAdmi
 	return SealedAdmission{Pattern: pattern, Admission: admitted}, nil
 }
 
+// tidyPath says a path has nothing to clean. A slash at its end isn't noise: a lookup's path is the
+// service's own, and Photon's is /api/.
+func tidyPath(p string) bool {
+	clean := path.Clean(p)
+	return p == clean || (clean != "/" && p == clean+"/")
+}
+
 func sealedRoute(method, target string) (string, *url.URL, bool) {
 	u, err := url.ParseRequestURI(target)
-	if err != nil || u.Host != "" || u.Path != path.Clean(u.Path) || !slices.Contains(sealedMethods, method) {
+	if err != nil || u.Host != "" || !tidyPath(u.Path) || !slices.Contains(sealedMethods, method) {
 		return "", nil, false
 	}
 	_, pattern := mux.Handler(&http.Request{Method: method, URL: u})

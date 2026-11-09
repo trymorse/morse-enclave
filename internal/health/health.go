@@ -62,6 +62,7 @@ const (
 	Shutdown
 	ContentFilter
 	UpstreamRefused
+	Stalled
 	outcomeCount
 )
 
@@ -70,6 +71,7 @@ var outcomeNames = enum.Names[Outcome]{
 	UpstreamUnavailable: "upstream_unavailable", Unreachable: "unreachable", MidstreamBreak: "midstream_break",
 	Unattested: "unattested", Retention: "retention", Deadline: "deadline", ClientCancel: "client_cancel",
 	Throttled: "throttled", Shutdown: "shutdown", ContentFilter: "content_filter", UpstreamRefused: "upstream_refused",
+	Stalled: "stalled",
 }
 
 func (o Outcome) String() string { return outcomeNames.String(o) }
@@ -94,6 +96,19 @@ type Observation struct {
 	OutputTokens int
 	Retries      int
 	Hedges       int
+	// Malformed marks a reply that ended ok but gave its client a tool call it cannot use: one with no function name,
+	// or arguments that are not JSON in a reply that did not stop at its length limit or a content filter to a request
+	// that set no stop string, since some hosts cut a call's arguments at the client's stop string.
+	// provider_health does not record it; the breaker counts it as a failure of the endpoint.
+	Malformed bool `json:",omitempty"`
+}
+
+// Healthy is whether the observation closes its endpoint's streak of failures.
+func (o Observation) Healthy() bool { return o.Outcome == OK && !o.Malformed }
+
+// TripsBreaker is whether the observation counts as a failure of its endpoint.
+func (o Observation) TripsBreaker() bool {
+	return o.Outcome.TripsBreaker() || o.Outcome == OK && o.Malformed
 }
 
 type Recorder struct {

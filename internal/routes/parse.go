@@ -78,53 +78,7 @@ func Parse(data []byte, defaultMarkup money.Markup) ([]Route, error) {
 	if err := oneAttesterPerHost(routes); err != nil {
 		return nil, err
 	}
-	if err := oneOutputCapPerTier(routes); err != nil {
-		return nil, err
-	}
 	return routes, nil
-}
-
-// oneOutputCapPerTier lowers the max_output_tokens of every chat endpoint of a model at one tier outside e2ee to the
-// smallest among them, so the cap a caller meets, in the plan, the hold, and GET /v1/models, does not tell which host
-// bound or served. A default_max_tokens above that cap is refused.
-func oneOutputCapPerTier(routes []Route) error {
-	type at struct {
-		id   catalog.ModelID
-		tier catalog.Tier
-	}
-	chatOf := func(rt *Route) (Chat, bool) {
-		c, chats := ChatOf(rt.Serves)
-		return c, chats && !rt.Tier.Sealed()
-	}
-	var members []*Route
-	for i := range routes {
-		members = append(members, &routes[i])
-		for j := range routes[i].Beside {
-			if routes[i].Beside[j].Place == catalog.PlaceUnnamed {
-				members = append(members, &routes[i].Beside[j])
-			}
-		}
-	}
-	least := map[at]int{}
-	for _, rt := range members {
-		if c, ok := chatOf(rt); ok {
-			k := at{rt.ID, rt.Tier}
-			least[k] = min(cmp.Or(least[k], c.MaxOutputTokens), c.MaxOutputTokens)
-		}
-	}
-	for _, rt := range members {
-		c, ok := chatOf(rt)
-		if !ok {
-			continue
-		}
-		cap := least[at{rt.ID, rt.Tier}]
-		if c.DefaultMaxTokens > cap {
-			return fmt.Errorf("endpoint %q serves model %q at tier %s with default_max_tokens %d above the tier's smallest max_output_tokens %d", rt.Endpoint, rt.ID, rt.Tier, c.DefaultMaxTokens, cap)
-		}
-		c.MaxOutputTokens = cap
-		rt.Serves = c
-	}
-	return nil
 }
 
 func parseRoute(f flatEndpoint, defaultMarkup money.Markup) (Route, error) {

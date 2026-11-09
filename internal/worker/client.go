@@ -39,6 +39,8 @@ type Client struct {
 const (
 	cutTimeout  = 10 * time.Second
 	pollTimeout = 30 * time.Second
+	// lateTimeout bounds the wait for a try a run left running, which ends by its stall deadline.
+	lateTimeout = 30 * time.Minute
 )
 
 // An enclave that dies leaves no one to close its end of the tun, so only keepalive probes
@@ -212,17 +214,40 @@ func (c *Client) relay(ctx context.Context, path string, body any, h Handle, rep
 	if m.Follow != FollowNone {
 		m.Counted = c.count(h)
 	}
+	if m.Lingers {
+		m.Late = c.late(h)
+	}
 	return m
+}
+
+// late asks the worker for the tries a run left running, once they have all ended.
+func (c *Client) late(h Handle) <-chan Try {
+	out := make(chan Try)
+	go func() {
+		defer close(out)
+		ctx, cancel := context.WithTimeout(context.Background(), lateTimeout)
+		defer cancel()
+		resp, err := c.post(ctx, "/late", handleRequest{Handle: h})
+		if err != nil {
+			return
+		}
+		defer resp.Body.Close()
+		var tries []wireTry
+		if json.NewDecoder(io.LimitReader(resp.Body, maxWireBody)).Decode(&tries) != nil {
+			return
+		}
+		for _, try := range knownTries(tries) {
+			out <- try
+		}
+	}()
+	return out
 }
 
 func measuredUnsamplingUnknownHealth(trailer string) (Measured, error) {
 	var t struct {
 		Measured
 		Health     wireObservation
-		FailedOver []struct {
-			Endpoint catalog.EndpointID
-			Health   wireObservation
-		}
+		FailedOver []wireTry
 	}
 	if err := json.Unmarshal([]byte(trailer), &t); err != nil {
 		return Measured{}, err
@@ -232,12 +257,23 @@ func measuredUnsamplingUnknownHealth(trailer string) (Measured, error) {
 	if m.Health, known = t.Health.known(); !known {
 		m.Health, m.Unsampled = health.Observation{}, true
 	}
-	for _, try := range t.FailedOver {
+	m.FailedOver = knownTries(t.FailedOver)
+	return m, nil
+}
+
+type wireTry struct {
+	Endpoint catalog.EndpointID
+	Health   wireObservation
+}
+
+func knownTries(wire []wireTry) []Try {
+	var tries []Try
+	for _, try := range wire {
 		if o, known := try.Health.known(); known {
-			m.FailedOver = append(m.FailedOver, Try{Endpoint: try.Endpoint, Health: o})
+			tries = append(tries, Try{Endpoint: try.Endpoint, Health: o})
 		}
 	}
-	return m, nil
+	return tries
 }
 
 type wireObservation struct {
