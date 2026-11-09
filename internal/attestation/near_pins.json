@@ -149,6 +149,10 @@
       {
         "name": "dstack-nvidia-0.5.12-e8416a02",
         "compose_hash": "e8416a02d6f7ce47baaa52e3925b934fd30834b04fc9086b363db9b1d12c729d"
+      },
+      {
+        "name": "dstack-nvidia-0.5.12-448683dd",
+        "compose_hash": "448683dd83e50727b9c5f6cdc84bd9d93fcf2c888001a85b1ba32f76b3612e3e"
       }
     ],
     "images": [
