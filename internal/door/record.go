@@ -1,7 +1,10 @@
 package door
 
 import (
+	"encoding/json"
+
 	"fmt"
+	"morse/backend/internal/sigstore/tuf"
 
 	"github.com/fxamacker/cbor/v2"
 
@@ -17,10 +20,6 @@ type Record struct {
 	Document    []byte       `json:"document"`
 	SPKISHA256  string       `json:"spki_sha256"`
 	Origin      AnswerOrigin `json:"origin"`
-}
-
-func (a Answer) Record() Record {
-	return Record{Type: RecordType, Environment: a.Environment, Document: a.Document, SPKISHA256: a.SPKISHA256, Origin: a.Origin}
 }
 
 func (r Record) Boot() (seal.KeyID, error) {
@@ -45,4 +44,25 @@ func (r Record) Boot() (seal.KeyID, error) {
 		return seal.KeyID{}, err
 	}
 	return seal.KeyIDOf(key), nil
+}
+
+// Logged names one entry in a Rekor v2 shard: a receipt on the wire.
+type Logged struct {
+	Log   string `json:"log"`
+	Index uint64 `json:"index"`
+}
+
+// Entry is what POST /door/entry answers, the parts of a hashedrekord
+// v0.0.2 request: the record certificate, H, and a fresh signature over H.
+type Entry struct {
+	Certificate []byte `json:"certificate"`
+	Digest      []byte `json:"digest"`
+	Signature   []byte `json:"signature"`
+}
+
+// Proof is the body of PUT /door/record: Rekor v2's TransparencyLogEntry
+// for this custody's entry, and the TUF metadata that names the shard.
+type Proof struct {
+	Entry json.RawMessage `json:"entry"`
+	TUF   tuf.Set         `json:"tuf"`
 }

@@ -100,40 +100,6 @@ func billableTokens(n int) int64 { return int64(min(max(n, 0), maxBillableTokens
 
 func billableRate(r Micros) Micros { return min(max(r, 0), MaxMicrosPerMTok) }
 
-// Dearest is the price that is at least a and b at every prompt size. Its long-context price starts at the lowest
-// from_prompt_tokens either sets, and each rate takes the larger of the two prices' rates there.
-func Dearest(a, b Price) Price {
-	base := maxRates(a, b)
-	from := 0
-	for _, p := range []Price{a, b} {
-		if long := p.LongContext; long != nil && (from == 0 || long.FromPromptTokens < from) {
-			from = long.FromPromptTokens
-		}
-	}
-	if from == 0 {
-		return base
-	}
-	base.LongContext = &LongContext{FromPromptTokens: from, Price: maxRates(a.beyondAll(), b.beyondAll())}
-	return base
-}
-
-func maxRates(a, b Price) Price {
-	return Price{
-		PromptPerMTok:           max(a.PromptPerMTok, b.PromptPerMTok),
-		CachedPromptPerMTok:     max(a.CachedPromptPerMTok, b.CachedPromptPerMTok),
-		CacheWritePromptPerMTok: max(a.CacheWritePromptPerMTok, b.CacheWritePromptPerMTok),
-		CompletionPerMTok:       max(a.CompletionPerMTok, b.CompletionPerMTok),
-	}
-}
-
-// beyondAll is the dearest rates the price charges at any prompt size: its long-context rates if it has them.
-func (p Price) beyondAll() Price {
-	if p.LongContext != nil {
-		return p.LongContext.Price
-	}
-	return p.at(0)
-}
-
 // at is the price's rates for a prompt of that many tokens.
 func (p Price) at(promptTokens int) Price {
 	if long := p.LongContext; long != nil && promptTokens >= long.FromPromptTokens {

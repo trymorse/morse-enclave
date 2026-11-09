@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -158,6 +159,52 @@ func TestEachEnvironmentsImageSetsOnlyImageSettings(t *testing.T) {
 				t.Errorf("%s sets %s, which is not an image setting", f, name)
 			}
 		}
+	}
+}
+
+// namesItsEnvironment refuses an image's env file unless it sets
+// PROXY_ENVIRONMENT to its own environment on exactly one line. A second line
+// would override the first, because build.sh turns each line into an ENV.
+func namesItsEnvironment(environment, src string) error {
+	var set []string
+	for _, line := range strings.Split(strings.TrimSpace(src), "\n") {
+		if name, value, _ := strings.Cut(line, "="); name == "PROXY_ENVIRONMENT" {
+			set = append(set, value)
+		}
+	}
+	if len(set) != 1 || set[0] != environment {
+		return fmt.Errorf("sets PROXY_ENVIRONMENT to %q, want %s on exactly one line", set, environment)
+	}
+	return nil
+}
+
+func TestEachEnvironmentsImageNamesItsOwnEnvironment(t *testing.T) {
+	files, _ := filepath.Glob("../../deploy/enclave/*.env")
+	if len(files) == 0 {
+		t.Fatal("no deploy/enclave/*.env")
+	}
+	for _, f := range files {
+		src, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := namesItsEnvironment(strings.TrimSuffix(filepath.Base(f), ".env"), string(src)); err != nil {
+			t.Errorf("%s %v", f, err)
+		}
+	}
+	prod := "PROXY_WORKER_ADDR=0.0.0.0:8080\nPROXY_ENVIRONMENT=prod\n"
+	for name, src := range map[string]string{
+		"names dev":      strings.Replace(prod, "=prod", "=dev", 1),
+		"names it twice": prod + "PROXY_ENVIRONMENT=prod\n",
+		"overrides it":   prod + "PROXY_ENVIRONMENT=dev\n",
+		"never names it": "PROXY_WORKER_ADDR=0.0.0.0:8080\n",
+	} {
+		if namesItsEnvironment("prod", src) == nil {
+			t.Errorf("a prod.env that %s passes", name)
+		}
+	}
+	if err := namesItsEnvironment("prod", prod); err != nil {
+		t.Errorf("a prod.env that names prod once is refused: %v", err)
 	}
 }
 

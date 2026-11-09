@@ -182,13 +182,13 @@ func VendorCode(code string) (Error, bool) {
 }
 
 var contextOverflowMessages = []*regexp.Regexp{
-	regexp.MustCompile(`^prompt is too long`),
-	regexp.MustCompile(`^The input token count (\(\d+\) )?exceeds the maximum number of tokens allowed`),
-	regexp.MustCompile(`^This (model|endpoint)'s maximum (context|prompt) length is \d+`),
-	regexp.MustCompile(`^'max_tokens' or 'max_completion_tokens' is too large: \d+\. This model's maximum context length is \d+`),
-	regexp.MustCompile(`^Input length \(\d+\) exceeds model's maximum context length`),
-	regexp.MustCompile(`^The input \(\d+ tokens\) is longer than the model's context length`),
-	regexp.MustCompile(`^Requested token count exceeds the model's maximum context length`),
+	regexp.MustCompile(`^prompt is too long(?:: \d+ tokens > (?P<window>\d+) maximum)?`),
+	regexp.MustCompile(`^The input token count (?:\(\d+\) )?exceeds the maximum number of tokens allowed(?: \(?(?P<window>\d+)\)?)?`),
+	regexp.MustCompile(`^This (?:model|endpoint)'s maximum (?:context|prompt) length is (?P<window>\d+)`),
+	regexp.MustCompile(`^'max_tokens' or 'max_completion_tokens' is too large: \d+\. This model's maximum context length is (?P<window>\d+)`),
+	regexp.MustCompile(`^Input length \(\d+\) exceeds model's maximum context length(?: \((?P<window>\d+)\))?`),
+	regexp.MustCompile(`^The input \(\d+ tokens\) is longer than the model's context length(?: \((?P<window>\d+) tokens\))?`),
+	regexp.MustCompile(`^Requested token count exceeds the model's maximum context length(?: of (?P<window>\d+) tokens)?`),
 }
 
 // unservedModel is Morph's 400 for a model it does not serve, where Together answers 404. The model is the route's,
@@ -237,6 +237,22 @@ func (r vendorReply) overflowsContext() bool {
 		}
 	}
 	return false
+}
+
+// StatedWindow is the context window that a vendor's refusal of a prompt as too long states, or 0 when the refusal
+// states none or is not one.
+func StatedWindow(status int, vendorBody []byte) int {
+	if SanitizedUpstreamError(status, vendorBody) != ErrContextLengthExceeded {
+		return 0
+	}
+	reply, _ := readVendorReply(vendorBody)
+	for _, pattern := range contextOverflowMessages {
+		if m := pattern.FindStringSubmatch(reply.message); m != nil {
+			window, _ := strconv.Atoi(m[pattern.SubexpIndex("window")])
+			return window
+		}
+	}
+	return 0
 }
 
 func SanitizedUpstreamError(status int, vendorBody []byte) Error {

@@ -20,7 +20,7 @@ var sentinelOutcomes = map[string]struct {
 	err  apierr.Error
 	want Outcome
 }{
-	"ErrContextLengthExceeded": {apierr.ErrContextLengthExceeded, ClientError},
+	"ErrContextLengthExceeded": {apierr.ErrContextLengthExceeded, ContextOverflow},
 	"ErrContentFilter":         {apierr.ErrContentFilter, ContentFilter},
 	"ErrInvalidRequest":        {apierr.ErrInvalidRequest, ClientError},
 	"ErrMalformedRequest":      {apierr.ErrMalformedRequest, ClientError},
@@ -142,8 +142,8 @@ func TestClassifyRanksWhatTheProviderDidAboveWhoHungUp(t *testing.T) {
 	}
 }
 
-func TestOnlyBusyAVendorErrorUnreachableAStallAVendorRefusalOfOurAccountAndAnUnattestedVendorFailOver(t *testing.T) {
-	want := map[Outcome]bool{UpstreamBusy: true, UpstreamError: true, Unreachable: true, Stalled: true, UpstreamUnavailable: true, Unattested: true}
+func TestOnlyBusyAVendorErrorUnreachableAStallAVendorRefusalOfOurAccountAnUnattestedVendorAndAPromptTooLongForTheHostFailOver(t *testing.T) {
+	want := map[Outcome]bool{UpstreamBusy: true, UpstreamError: true, Unreachable: true, Stalled: true, UpstreamUnavailable: true, Unattested: true, ContextOverflow: true}
 	for _, o := range Outcomes() {
 		if o.FailsOver() != want[o] {
 			t.Errorf("%s fails over: %t, want %t", o, o.FailsOver(), want[o])

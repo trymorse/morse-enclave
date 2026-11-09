@@ -32,7 +32,7 @@ var byCode = map[string]Outcome{
 	apierr.ErrUpstream.Code:              UpstreamError,
 	apierr.ErrUpstreamRetention.Code:     Retention,
 	apierr.ErrUnattested.Code:            Unattested,
-	apierr.ErrContextLengthExceeded.Code: ClientError,
+	apierr.ErrContextLengthExceeded.Code: ContextOverflow,
 	apierr.ErrContentFilter.Code:         ContentFilter,
 	apierr.ErrInvalidRequest.Code:        ClientError,
 	apierr.ErrRemoteMedia.Code:           ClientError,
@@ -44,7 +44,7 @@ var byCode = map[string]Outcome{
 
 var breaksMidstream = map[Outcome]bool{UpstreamBusy: true, UpstreamError: true, UpstreamUnavailable: true}
 
-var failsOver = map[Outcome]bool{UpstreamBusy: true, UpstreamError: true, Unreachable: true, Stalled: true, UpstreamUnavailable: true, Unattested: true}
+var failsOver = map[Outcome]bool{UpstreamBusy: true, UpstreamError: true, Unreachable: true, Stalled: true, UpstreamUnavailable: true, Unattested: true, ContextOverflow: true}
 
 // tripsBreaker holds MidstreamBreak although it never fails over: the reply that broke stays with its client, but a host
 // that breaks every stream after its first chunk is as broken as one that fails before it, and only an open circuit

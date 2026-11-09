@@ -89,6 +89,8 @@ type Reply struct {
 type Refused struct {
 	Status int
 	Err    error
+	// Window is the context window the vendor stated when it refused the prompt as too long, or 0.
+	Window int
 }
 
 func (r Refused) Error() string   { return r.Err.Error() }
@@ -229,10 +231,11 @@ func (e Endpoint) confirm(resp *http.Response) error {
 }
 
 func (e Endpoint) refuse(r Reply) error {
+	window := apierr.StatedWindow(r.Status, r.Body)
 	if e.Refuse != nil {
-		return Refused{Status: r.Status, Err: e.Refuse(r)}
+		return Refused{Status: r.Status, Err: e.Refuse(r), Window: window}
 	}
-	return Refused{Status: r.Status, Err: apierr.SanitizedUpstreamError(r.Status, r.Body)}
+	return Refused{Status: r.Status, Err: apierr.SanitizedUpstreamError(r.Status, r.Body), Window: window}
 }
 
 func (e Endpoint) fail(err error) error {

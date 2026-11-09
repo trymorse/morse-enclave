@@ -44,11 +44,12 @@ type Handed struct {
 }
 
 type payload struct {
-	Type  string    `json:"type"`
-	Key   []byte    `json:"key"`
-	Chain string    `json:"chain"`
-	Born  time.Time `json:"born"`
-	Floor uint64    `json:"floor"`
+	Type    string    `json:"type"`
+	Key     []byte    `json:"key"`
+	Chain   string    `json:"chain"`
+	Born    time.Time `json:"born"`
+	Floor   uint64    `json:"floor"`
+	Records []Logged  `json:"records"`
 }
 
 type admitted struct {
@@ -77,14 +78,14 @@ func (d *Door) admit(ctx context.Context, pins Pins) (admitted, *Refusal) {
 		return admitted{}, refuse(http.StatusUnprocessableEntity, "pins_unverified", "%v", err)
 	}
 	c, refused := d.update(func(c *custody) (*custody, *Refusal) {
-		if err := pinsig.Admit(st, d.environment, c.origin.Floor, logged, now, PinsMaxAge); err != nil {
+		if err := pinsig.Admit(st, d.environment, c.floor, logged, now, PinsMaxAge); err != nil {
 			return nil, refuse(http.StatusUnprocessableEntity, "pins_refused", "%v", err)
 		}
-		if st.Sequence == c.origin.Floor {
+		if st.Sequence == c.floor {
 			return c, nil
 		}
 		raised := *c
-		raised.origin.Floor = st.Sequence
+		raised.floor = st.Sequence
 		return &raised, nil
 	})
 	if refused != nil {
@@ -122,8 +123,8 @@ func (d *Door) handoff(ctx context.Context, req Handoff) (Handed, *Refusal) {
 	if err != nil {
 		return Handed{}, refuse(http.StatusUnprocessableEntity, "receiver_refused", "%v", err)
 	}
-	if age := in.now.Sub(c.origin.Born); age > MaxKeyAge {
-		return Handed{}, refuse(http.StatusUnprocessableEntity, "key_too_old", "the key was born %s ago, past %s", age.Round(time.Hour), MaxKeyAge)
+	if age := in.now.Sub(c.origin.Born); age > MaxKeyAge-KeyAgeMargin {
+		return Handed{}, refuse(http.StatusUnprocessableEntity, "key_too_old", "the key was born %s ago, past %s", age.Round(time.Hour), MaxKeyAge-KeyAgeMargin)
 	}
 	der, err := x509.MarshalPKCS8PrivateKey(c.key.private)
 	if err != nil {
@@ -133,7 +134,8 @@ func (d *Door) handoff(ctx context.Context, req Handoff) (Handed, *Refusal) {
 	for _, cert := range serving.Chain {
 		pem.Encode(&chain, &pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw})
 	}
-	body, err := json.Marshal(payload{Type: payloadType, Key: der, Chain: chain.String(), Born: c.origin.Born, Floor: c.origin.Floor})
+	records := append(append([]Logged{}, c.records...), serving.receipt.logged())
+	body, err := json.Marshal(payload{Type: payloadType, Key: der, Chain: chain.String(), Born: c.origin.Born, Floor: c.floor, Records: records})
 	if err != nil {
 		return Handed{}, refuse(http.StatusInternalServerError, "unsealed", "%v", err)
 	}
@@ -149,6 +151,9 @@ func (d *Door) handoff(ctx context.Context, req Handoff) (Handed, *Refusal) {
 }
 
 func (d *Door) take(ctx context.Context, req Handed) *Refusal {
+	if d.custody.Load().took {
+		return refusedHolding()
+	}
 	in, refused := d.admit(ctx, req.Pins)
 	if refused != nil {
 		return refused
@@ -178,8 +183,8 @@ func (d *Door) take(ctx context.Context, req Handed) *Refusal {
 	if !bytes.Equal(key.spki, spki) {
 		return refuse(http.StatusUnprocessableEntity, "key_not_attested", "the key in the blob is not the key the sender's document attests")
 	}
-	if age := in.now.Sub(p.Born); age > MaxKeyAge || age < -verify.MaxAhead {
-		return refuse(http.StatusUnprocessableEntity, "key_too_old", "the key was born %s before this enclave's time, outside 0 to %s", age.Round(time.Hour), MaxKeyAge)
+	if age := in.now.Sub(p.Born); age > MaxKeyAge-KeyAgeMargin || age < -verify.MaxAhead {
+		return refuse(http.StatusUnprocessableEntity, "key_too_old", "the key was born %s before this enclave's time, outside 0 to %s", age.Round(time.Hour), MaxKeyAge-KeyAgeMargin)
 	}
 	if in.statement.Sequence < p.Floor {
 		return refuse(http.StatusUnprocessableEntity, "pins_below_sender", "the statement's sequence %d is below the sender's floor %d", in.statement.Sequence, p.Floor)
@@ -188,15 +193,23 @@ func (d *Door) take(ctx context.Context, req Handed) *Refusal {
 	if refused != nil {
 		return refused
 	}
+	if refused := d.checkChain(chain, key, in.now); refused != nil {
+		return refused
+	}
 	from := seal.KeyIDOf(sender.PublicKey)
+	origin := Origin{Born: p.Born.UTC(), From: &from, Floor: in.custody.floor}
+	record, err := d.startCustody(ctx, key, origin, in.now)
+	if err != nil {
+		return refuse(http.StatusServiceUnavailable, "unattested", "this enclave could not attest the handed key: %v", err)
+	}
 	_, refused = d.update(func(c *custody) (*custody, *Refusal) {
 		if _, was := c.state.(Serving); was {
 			return nil, refuse(http.StatusConflict, "serving", "this door already serves a certificate")
 		}
-		if refused := d.checkChain(chain, key, in.now); refused != nil {
-			return nil, refused
+		if c.took {
+			return nil, refusedHolding()
 		}
-		return &custody{key: key, origin: Origin{Born: p.Born.UTC(), From: &from, Floor: c.origin.Floor}, state: serving(chain, key)}, nil
+		return &custody{key: key, origin: origin, record: record, records: p.Records, state: Unrecorded{handed: chain}, floor: c.floor, took: true}, nil
 	})
 	return refused
 }
@@ -227,4 +240,8 @@ func readJSON(w http.ResponseWriter, r *http.Request, into any) *Refusal {
 		return refuse(http.StatusBadRequest, "body_unreadable", "%v", err)
 	}
 	return nil
+}
+
+func refusedHolding() *Refusal {
+	return refuse(http.StatusConflict, "holding", "this boot already took a handed key")
 }

@@ -122,10 +122,12 @@ type ChatAdmission struct {
 	// in Unicode normal form C, which a smaller backup's window can be judged on (proxy Chat.carries). It is zero for
 	// any other chat.
 	TextMessages int
-	OutputAsked  int
-	Stream       bool
-	Compaction   bool
-	Character    chat.Character
+	// PromptCounted is true when every part of every message is text, so PromptBytes counts all the model reads.
+	PromptCounted bool
+	OutputAsked   int
+	Stream        bool
+	Compaction    bool
+	Character     chat.Character
 }
 
 func (ChatAdmission) kind() admissionKind { return admitsChat }
@@ -242,8 +244,9 @@ type Measured struct {
 	Endpoint          catalog.EndpointID  `json:",omitempty"`
 	// Unserved is a chat that no host served or began to reply to: the last endpoint tried failed before the client
 	// saw a status, with an outcome that fails over and is not its own refusal to attest, and no cut ended it. A host's
-	// refusal of the request, an unattested endpoint, and a cut before the first byte are not unserved. Endpoint then
-	// names only the last one tried, which its health and breaker still count.
+	// refusal of the request, a prompt too long for its window among them, an unattested endpoint, and a cut before
+	// the first byte are not unserved. Endpoint then names only the last one tried, which its health and breaker still
+	// count.
 	Unserved   bool          `json:",omitempty"`
 	FailedOver []Try         `json:",omitempty"`
 	VendorWait time.Duration `json:",omitempty"`

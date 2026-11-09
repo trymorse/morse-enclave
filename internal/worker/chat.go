@@ -185,9 +185,24 @@ func (w *InProcess) openChat(o Opening, compaction bool) (Admission, error) {
 	}
 	return ChatAdmission{
 		admitted: admitted{w.keep(o, oc)}, Model: name.model, Candidates: endpointsOf(routes), Affinity: digest, MaxPrice: want.maxPrice, Sealable: name.sealable(), OnBehalf: route.onBehalf,
-		PromptSize: oc.call.Size(), PromptBytes: limits.KibibytesCovering(oc.promptBytes), TextMessages: textMessages(oc.call), OutputAsked: oc.asked,
+		PromptSize: oc.call.Size(), PromptBytes: limits.KibibytesCovering(oc.promptBytes), TextMessages: textMessages(oc.call), PromptCounted: promptCounted(oc.call), OutputAsked: oc.asked,
 		Stream: req.Stream, Compaction: compaction, Character: oc.character,
 	}, nil
+}
+
+func promptCounted(c chat.Call) bool {
+	msgs, err := c.Messages()
+	if err != nil {
+		return false
+	}
+	for _, m := range msgs {
+		for _, p := range m.Parts() {
+			if p.Text == nil {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func textMessages(c chat.Call) int {
@@ -286,7 +301,7 @@ func (o *openedChat) run(_ context.Context, w *InProcess, h Handle, g Grant, rep
 	end := o.walk(ctx, w, granted, cg, rw)
 	a, got, e, m := end.a, end.got, end.e, end.m
 	unsent := got.callErr != nil && rw.status == 0
-	m.Unserved = unsent && m.Cut == measure.NotCut && m.Health.Outcome.FailsOver() && m.Health.Outcome != health.Unattested
+	m.Unserved = unsent && m.Cut == measure.NotCut && m.Health.Outcome.FailsOver() && m.Health.Outcome != health.Unattested && m.Health.Outcome != health.ContextOverflow
 	if unsent {
 		refuse(ctx, rw, got.callErr)
 	}
@@ -317,8 +332,12 @@ func (o *openedChat) try(ctx context.Context, w *InProcess, a attempt, g ChatGra
 	m.Health = rw.observed(ctx, got.callErr, false, opened, returned)
 	m.Health.Malformed = got.malformed && m.Health.Outcome == health.OK
 	m.Health.Retries, m.Health.Hedges, m.Health.OutputTokens = got.attempts.Retries, got.attempts.Hedges, a.route.tokensAfterFirstByte(got.reported)
-	if refused, ok := errors.AsType[upstream.Refused](got.callErr); ok && vendorFaults[m.Health.Outcome] {
+	refused, isRefusal := errors.AsType[upstream.Refused](got.callErr)
+	if isRefusal && vendorFaults[m.Health.Outcome] {
 		w.reports.VendorRefused(a.call.Model, refused.Status)
+	}
+	if isRefusal && m.Health.Outcome == health.ContextOverflow {
+		m.Health.Window = refused.Window
 	}
 	if chunk, ok := errors.AsType[chat.ErrorChunk](got.callErr); ok {
 		w.reports.UpstreamErrorChunk(a.call.Model, chunk.Code)

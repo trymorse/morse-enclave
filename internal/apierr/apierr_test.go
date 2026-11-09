@@ -110,3 +110,32 @@ func TestAnEnvelopeNamesItsParameterOnlyWhenAsked(t *testing.T) {
 		t.Errorf("Envelope() = %s, want %s", got, unnamed)
 	}
 }
+
+func TestStatedWindowIsTheLimitARefusalOfAPromptAsTooLongNames(t *testing.T) {
+	cases := []struct {
+		shape, body string
+		status      int
+		want        int
+	}{
+		{"anthropic", `{"type":"error","error":{"type":"invalid_request_error","message":"prompt is too long: 208310 tokens > 200000 maximum ` + canary + `"}}`, 400, 200000},
+		{"gemini, bare", `{"error":{"code":400,"message":"The input token count exceeds the maximum number of tokens allowed 1237083. ` + canary + `","status":"INVALID_ARGUMENT"}}`, 400, 1237083},
+		{"gemini, counted", `{"error":{"code":400,"message":"The input token count (1196265) exceeds the maximum number of tokens allowed (1048575). ` + canary + `","status":"INVALID_ARGUMENT"}}`, 400, 1048575},
+		{"vllm", `{"error":{"message":"This model's maximum context length is 131072 tokens. However, your prompt contains 140000 input tokens ` + canary + `","type":"BadRequestError","param":"input_tokens","code":400}}`, 400, 131072},
+		{"vllm, output", `{"error":{"message":"'max_tokens' or 'max_completion_tokens' is too large: 9000. This model's maximum context length is 65536 tokens ` + canary + `","type":"BadRequestError","code":400}}`, 400, 65536},
+		{"input length", `{"error":{"message":"Input length (140000) exceeds model's maximum context length (131072). ` + canary + `","type":"BadRequestError","code":400}}`, 400, 131072},
+		{"sglang", `{"object":"error","message":"The input (140000 tokens) is longer than the model's context length (98304 tokens). ` + canary + `","type":"BadRequest","param":null,"code":400}`, 400, 98304},
+		{"requested count", `{"object":"error","message":"Requested token count exceeds the model's maximum context length of 32768 tokens. ` + canary + `","type":"BadRequestError","code":400}`, 400, 32768},
+		{"xai", `{"code":"Client specified an invalid argument","error":"This model's maximum prompt length is 131072 but the request contains 537812 tokens. ` + canary + `"}`, 400, 131072},
+		{"together", `{"error":{"code":400,"message":"This endpoint's maximum context length is 163840 tokens. ` + canary + `","metadata":{"provider_name":"Together"}}}`, 400, 163840},
+		{"openai code with a stated window", `{"error":{"code":"context_length_exceeded","message":"This model's maximum context length is 128000 tokens. ` + canary + `"}}`, 400, 128000},
+		{"openai code alone", `{"error":{"code":"context_length_exceeded","message":"` + canary + `"}}`, 400, 0},
+		{"anthropic, no figures", `{"type":"error","error":{"type":"invalid_request_error","message":"prompt is too long"}}`, 400, 0},
+		{"a 500 naming a window", `{"error":{"message":"This model's maximum context length is 131072 tokens"}}`, 500, 0},
+		{"another 400", `{"error":{"message":"` + canary + `","type":"invalid_request_error"}}`, 400, 0},
+	}
+	for _, tc := range cases {
+		if got := apierr.StatedWindow(tc.status, []byte(tc.body)); got != tc.want {
+			t.Errorf("%s: stated window %d, want %d", tc.shape, got, tc.want)
+		}
+	}
+}

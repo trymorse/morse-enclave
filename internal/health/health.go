@@ -63,6 +63,7 @@ const (
 	ContentFilter
 	UpstreamRefused
 	Stalled
+	ContextOverflow
 	outcomeCount
 )
 
@@ -71,7 +72,7 @@ var outcomeNames = enum.Names[Outcome]{
 	UpstreamUnavailable: "upstream_unavailable", Unreachable: "unreachable", MidstreamBreak: "midstream_break",
 	Unattested: "unattested", Retention: "retention", Deadline: "deadline", ClientCancel: "client_cancel",
 	Throttled: "throttled", Shutdown: "shutdown", ContentFilter: "content_filter", UpstreamRefused: "upstream_refused",
-	Stalled: "stalled",
+	Stalled: "stalled", ContextOverflow: "context_overflow",
 }
 
 func (o Outcome) String() string { return outcomeNames.String(o) }
@@ -101,6 +102,9 @@ type Observation struct {
 	// that set no stop string, since some hosts cut a call's arguments at the client's stop string.
 	// provider_health does not record it; the breaker counts it as a failure of the endpoint.
 	Malformed bool `json:",omitempty"`
+	// Window is the context window the host stated when it refused the prompt as too long (ContextOverflow), or 0
+	// when it stated none.
+	Window int `json:",omitempty"`
 }
 
 // Healthy is whether the observation closes its endpoint's streak of failures.

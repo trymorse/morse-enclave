@@ -18,6 +18,7 @@ import (
 	"math/big"
 	"net/http"
 	"slices"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -29,9 +30,9 @@ var sharedNames = map[string]string{"prod": "inference.trymorse.ai", "dev": "inf
 
 const (
 	maxChain      = 64 << 10
+	answerRetries = 3
 	PinsMaxAge    = 7 * 24 * time.Hour
 	originType    = "morse-door-origin-v1"
-	answerRetries = 3
 )
 
 type Origin struct {
@@ -42,26 +43,63 @@ type Origin struct {
 
 type State interface{ wire() string }
 
-type Unserved struct{ selfSigned *tls.Certificate }
+// Unrecorded holds a key whose record the log is not yet proven to hold.
+// handed is the chain that came with a handed key, held and not served.
+type Unrecorded struct {
+	handed []*x509.Certificate
+}
+
+type Unserved struct {
+	receipt    Receipt
+	selfSigned *tls.Certificate // dev only
+}
 
 type Serving struct {
 	Chain    []*x509.Certificate
 	NotAfter time.Time
+	receipt  Receipt
 	served   *tls.Certificate
 }
 
-func (Unserved) wire() string { return StateUnserved }
-func (Serving) wire() string  { return StateServing }
+func newUnserved(receipt Receipt, selfSigned *tls.Certificate) Unserved {
+	return Unserved{receipt: receipt, selfSigned: selfSigned}
+}
+
+func newServing(chain []*x509.Certificate, notAfter time.Time, receipt Receipt, served *tls.Certificate) Serving {
+	return Serving{Chain: chain, NotAfter: notAfter, receipt: receipt, served: served}
+}
+
+func (Unrecorded) wire() string { return StateUnrecorded }
+func (Unserved) wire() string   { return StateUnserved }
+func (Serving) wire() string    { return StateServing }
+
+func receiptOf(s State) (Receipt, bool) {
+	switch s := s.(type) {
+	case Unserved:
+		return s.receipt, true
+	case Serving:
+		return s.receipt, true
+	}
+	return Receipt{}, false
+}
 
 const (
-	StateUnserved = "unserved"
-	StateServing  = "serving"
+	StateUnserved   = "unserved"
+	StateServing    = "serving"
+	StateUnrecorded = "unrecorded"
 )
 
+// custody is the snapshot the door swaps atomically. origin, record and
+// records are fixed when the custody starts. floor is the highest pins
+// sequence admitted this boot, and took is set by the boot's first take.
 type custody struct {
-	key    held
-	origin Origin
-	state  State
+	key     held
+	origin  Origin
+	record  []byte // the record certificate, DER, self-signed by the key
+	records []Logged
+	state   State
+	floor   uint64
+	took    bool
 }
 
 type held struct {
@@ -78,6 +116,9 @@ type Door struct {
 	trust       Trust
 	custody     atomic.Pointer[custody]
 	ready       chan struct{}
+	readyOnce   sync.Once
+	tufRoot     int64
+	clock       func() time.Time
 }
 
 type Enclave interface {
@@ -114,13 +155,17 @@ func newDoor(environment string, roots *x509.CertPool, enclave Enclave, trust Tr
 	if err != nil {
 		return nil, err
 	}
-	var unserved Unserved
-	if environment == "dev" {
-		if unserved.selfSigned, err = selfSigned(h); err != nil {
-			return nil, err
-		}
+	var root struct {
+		Signed struct {
+			Version int64 `json:"version"`
+		} `json:"signed"`
 	}
-	document, err := enclave.Attest(context.Background(), h.spki, nil)
+	if err := json.Unmarshal(trust.TUFRoot, &root); err != nil || root.Signed.Version == 0 {
+		return nil, fmt.Errorf("door: the trusted TUF root has no version: %v", err)
+	}
+	d := &Door{environment: environment, roots: roots, enclave: enclave, trust: trust, ready: make(chan struct{}), tufRoot: root.Signed.Version, clock: time.Now}
+	ctx := context.Background()
+	document, err := enclave.Attest(ctx, h.spki, nil)
 	if err != nil {
 		return nil, fmt.Errorf("door: the enclave's time at boot: %w", err)
 	}
@@ -128,8 +173,12 @@ func newDoor(environment string, roots *x509.CertPool, enclave Enclave, trust Tr
 	if err != nil {
 		return nil, fmt.Errorf("door: the enclave's time at boot: %w", err)
 	}
-	d := &Door{environment: environment, roots: roots, enclave: enclave, trust: trust, ready: make(chan struct{})}
-	d.custody.Store(&custody{key: h, origin: Origin{Born: born, Floor: floor}, state: unserved})
+	origin := Origin{Born: born, Floor: floor}
+	record, err := d.startCustody(ctx, h, origin, born)
+	if err != nil {
+		return nil, fmt.Errorf("door: the boot's record: %w", err)
+	}
+	d.custody.Store(&custody{key: h, origin: origin, record: record, state: Unrecorded{}, floor: floor})
 	return d, nil
 }
 
@@ -159,14 +208,26 @@ func (d *Door) update(change func(*custody) (*custody, *Refusal)) (*custody, *Re
 		if refused != nil || next == current {
 			return current, refused
 		}
+		if receipt, has := receiptOf(next.state); has && receipt.log == "" {
+			return current, refuse(http.StatusInternalServerError, "no_receipt", "a %s door needs a receipt from the log", next.state.wire())
+		}
 		if d.custody.CompareAndSwap(current, next) {
-			_, was := current.state.(Unserved)
-			if _, is := next.state.(Serving); was && is {
-				close(d.ready)
+			if servable(next.state) {
+				d.readyOnce.Do(func() { close(d.ready) })
 			}
 			return next, nil
 		}
 	}
+}
+
+func servable(s State) bool {
+	switch s := s.(type) {
+	case Serving:
+		return true
+	case Unserved:
+		return s.selfSigned != nil
+	}
+	return false
 }
 
 func (d *Door) attest(ctx context.Context, nonce func(*custody) []byte) ([]byte, *custody, error) {
@@ -197,6 +258,9 @@ func (d *Door) Ready() <-chan struct{} { return d.ready }
 func (d *Door) GetCertificate(*tls.ClientHelloInfo) (*tls.Certificate, error) {
 	switch state := d.custody.Load().state.(type) {
 	case Serving:
+		if !d.clock().Before(state.NotAfter) {
+			return nil, errors.New("door: the served chain has expired")
+		}
 		return state.served, nil
 	case Unserved:
 		if state.selfSigned != nil {
@@ -218,15 +282,19 @@ func selfSigned(key held) (*tls.Certificate, error) {
 }
 
 type Answer struct {
-	Object      string             `json:"object"`
-	State       string             `json:"state"`
-	Environment string             `json:"environment"`
-	SPKISHA256  string             `json:"spki_sha256"`
-	Names       []string           `json:"names"`
-	CSR         string             `json:"csr"`
-	Origin      AnswerOrigin       `json:"origin"`
-	Certificate *AnswerCertificate `json:"certificate,omitempty"`
-	Document    []byte             `json:"document"`
+	Object            string             `json:"object"`
+	State             string             `json:"state"`
+	Environment       string             `json:"environment"`
+	SPKISHA256        string             `json:"spki_sha256"`
+	Names             []string           `json:"names"`
+	CSR               string             `json:"csr,omitempty"`
+	Origin            AnswerOrigin       `json:"origin"`
+	RecordCertificate []byte             `json:"record"`
+	TUFRoot           int64              `json:"tuf_root_version"`
+	Receipt           *Logged            `json:"receipt"`
+	Records           []Logged           `json:"records"`
+	Certificate       *AnswerCertificate `json:"certificate,omitempty"`
+	Document          []byte             `json:"document"`
 }
 
 type AnswerOrigin struct {
@@ -276,12 +344,36 @@ func (d *Door) Register(mux *http.ServeMux) {
 			if err != nil {
 				break
 			}
+			now, err := d.enclave.Time(document)
+			if err != nil {
+				break
+			}
 			if d.custody.Load() == attested {
-				writeJSON(w, http.StatusOK, d.answer(attested, document))
+				writeJSON(w, http.StatusOK, d.answer(attested, document, now))
 				return
 			}
 		}
 		w.WriteHeader(http.StatusServiceUnavailable)
+	})
+	mux.HandleFunc("POST /door/entry", func(w http.ResponseWriter, r *http.Request) {
+		e, refused := d.entry()
+		if refused != nil {
+			writeJSON(w, refused.status, refused)
+			return
+		}
+		writeJSON(w, http.StatusOK, e)
+	})
+	mux.HandleFunc("PUT /door/record", func(w http.ResponseWriter, r *http.Request) {
+		var p Proof
+		if refused := readJSON(w, r, &p); refused != nil {
+			writeJSON(w, refused.status, refused)
+			return
+		}
+		if refused := d.record(r.Context(), p); refused != nil {
+			writeJSON(w, refused.status, refused)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 	})
 	mux.HandleFunc("POST /door/handoff", func(w http.ResponseWriter, r *http.Request) {
 		var req Handoff
@@ -309,6 +401,10 @@ func (d *Door) Register(mux *http.ServeMux) {
 		w.WriteHeader(http.StatusNoContent)
 	})
 	mux.HandleFunc("PUT /door/certificate", func(w http.ResponseWriter, r *http.Request) {
+		if _, unrecorded := d.custody.Load().state.(Unrecorded); unrecorded {
+			writeJSON(w, http.StatusConflict, refusedUnrecorded())
+			return
+		}
 		chain, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxChain))
 		if err != nil {
 			writeJSON(w, http.StatusRequestEntityTooLarge, refuse(http.StatusRequestEntityTooLarge, "chain_too_large", "the chain is over %d bytes", maxChain))
@@ -322,17 +418,35 @@ func (d *Door) Register(mux *http.ServeMux) {
 	})
 }
 
-func (d *Door) answer(c *custody, document []byte) Answer {
+func (d *Door) answer(c *custody, document []byte, now time.Time) Answer {
 	a := Answer{
-		Object: "door", State: c.state.wire(), Environment: d.environment, SPKISHA256: c.key.spkiSHA256(),
-		Names: c.key.names, CSR: string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: c.key.csr})),
+		Object: "door", State: c.state.wire(), Environment: d.environment, SPKISHA256: c.key.spkiSHA256(), Names: c.key.names,
 		Origin: AnswerOrigin{Born: c.origin.Born.UTC(), From: c.origin.From, Floor: c.origin.Floor}, Document: document,
+		RecordCertificate: c.record, TUFRoot: d.tufRoot, Records: append([]Logged{}, c.records...),
 	}
-	if serving, ok := c.state.(Serving); ok {
-		leaf := serving.Chain[0]
-		a.Certificate = &AnswerCertificate{Issuer: leaf.Issuer.String(), Serial: leaf.SerialNumber.Text(16), NotBefore: leaf.NotBefore, NotAfter: serving.NotAfter}
+	if receipt, has := receiptOf(c.state); has {
+		own := receipt.logged()
+		a.Receipt, a.Records = &own, append(a.Records, own)
+		if now.Sub(c.origin.Born) < MaxKeyAge-KeyAgeMargin {
+			a.CSR = string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: c.key.csr}))
+		}
+	}
+	var chain []*x509.Certificate
+	switch s := c.state.(type) {
+	case Serving:
+		chain = s.Chain
+	case Unrecorded:
+		chain = s.handed
+	}
+	if chain != nil {
+		leaf := chain[0]
+		a.Certificate = &AnswerCertificate{Issuer: leaf.Issuer.String(), Serial: leaf.SerialNumber.Text(16), NotBefore: leaf.NotBefore, NotAfter: leaf.NotAfter}
 	}
 	return a
+}
+
+func refusedUnrecorded() *Refusal {
+	return refuse(http.StatusConflict, "unrecorded", "the log is not yet proven to hold this door's record")
 }
 
 type Refusal struct {
@@ -356,10 +470,19 @@ func (d *Door) install(ctx context.Context, chainPEM []byte) *Refusal {
 		return refuse(http.StatusServiceUnavailable, "unattested", "this enclave could not read its time: %v", err)
 	}
 	_, refused = d.update(func(c *custody) (*custody, *Refusal) {
+		receipt, recorded := receiptOf(c.state)
+		if !recorded {
+			return nil, refusedUnrecorded()
+		}
+		if age := now.Sub(c.origin.Born); age >= MaxKeyAge {
+			return nil, refuse(http.StatusUnprocessableEntity, "key_too_old", "the key was born %s ago, at or past %s", age.Round(time.Hour), MaxKeyAge)
+		}
 		if refused := d.checkChain(chain, c.key, now); refused != nil {
 			return nil, refused
 		}
-		return &custody{key: c.key, origin: c.origin, state: serving(chain, c.key)}, nil
+		next := *c
+		next.state = servingOn(chain, c.key, receipt)
+		return &next, nil
 	})
 	return refused
 }
@@ -415,12 +538,12 @@ func (d *Door) checkChain(chain []*x509.Certificate, key held, now time.Time) *R
 	return nil
 }
 
-func serving(chain []*x509.Certificate, key held) Serving {
+func servingOn(chain []*x509.Certificate, key held, receipt Receipt) Serving {
 	served := &tls.Certificate{PrivateKey: key.private, Leaf: chain[0]}
 	for _, cert := range chain {
 		served.Certificate = append(served.Certificate, cert.Raw)
 	}
-	return Serving{Chain: chain, NotAfter: chain[0].NotAfter, served: served}
+	return newServing(chain, chain[0].NotAfter, receipt, served)
 }
 
 func writeJSON(w http.ResponseWriter, status int, body any) {

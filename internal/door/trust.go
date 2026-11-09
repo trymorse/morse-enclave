@@ -3,12 +3,15 @@ package door
 import (
 	"morse/backend/internal/pinsig"
 	"morse/backend/internal/sigstore/rekorv2"
+	"morse/backend/internal/sigstore/tuf"
 )
 
 type Trust struct {
 	Root      pinsig.TrustRoot
 	Identity  pinsig.Identity
 	Witnesses rekorv2.WitnessPolicy
+	// TUFRoot is the Sigstore TUF root.json the door walks forward from.
+	TUFRoot []byte
 }
 
 var pinsSigner = pinsig.Identity{
@@ -53,5 +56,5 @@ func Production() (Trust, error) {
 	if err != nil {
 		return Trust{}, err
 	}
-	return Trust{Root: root, Identity: pinsSigner, Witnesses: policy}, nil
+	return Trust{Root: root, Identity: pinsSigner, Witnesses: policy, TUFRoot: tuf.SigstoreRoot()}, nil
 }

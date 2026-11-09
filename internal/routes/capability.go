@@ -113,13 +113,13 @@ var capabilities = map[Provider]capability{
 		refusesDryAccount: true,
 	},
 	// Novita has no per-request retention header, so a route stands on its Terms of Service, section 10.2, which Daniel
-	// accepted as zero data retention for Ling 3.0 Flash on 2026-11-05. Novita documents 402 for an insufficient
-	// balance; its chat path takes apierr.SanitizedUpstreamError's default mapping of a 401 or 402 to
-	// upstream_unavailable.
+	// accepted as zero data retention for Ling 3.0 Flash on 2026-11-05 and for every Novita model on 2026-11-08.
+	// Novita documents 402 for an insufficient balance; its chat path takes apierr.SanitizedUpstreamError's default
+	// mapping of a 401 or 402 to upstream_unavailable.
 	ProviderNovita: {
 		kinds:                servedAt{catalog.KindChat: privateOnly},
 		zdrAt:                privateOnly,
-		zdrWhy:               "because Novita's Terms of Service, section 10.2 (https://novita.ai/legal/terms-of-service), keep nothing beyond generating and delivering the output and train on nothing, with carve-outs for law, support and automated safety screening, accepted by Daniel on 2026-11-05 for Ling; no per-request header",
+		zdrWhy:               "because Novita's Terms of Service, section 10.2 (https://novita.ai/legal/terms-of-service), keep nothing beyond generating and delivering the output and train on nothing, with carve-outs for law, support and automated safety screening, accepted by Daniel for every Novita model on 2026-11-08; no per-request header",
 		needsKey:             true,
 		answersFromReasoning: true,
 		refusesDryAccount:    true,
@@ -216,6 +216,16 @@ func (p Provider) Tiers(kind catalog.Kind) []catalog.Tier {
 }
 
 func (p Provider) ReasoningUncapped() bool { return capabilities[p].uncapped }
+
+// RetentionTerms is the recorded basis on which p keeps nothing of a request at tier t, the reason a route there must
+// set retention zdr, and false when this file records none for p at t.
+func (p Provider) RetentionTerms(t catalog.Tier) (string, bool) {
+	c := capabilities[p]
+	if !slices.Contains(c.zdrAt, t) {
+		return "", false
+	}
+	return c.zdrWhy, true
+}
 
 // Reasoning is when p's model reasons on a route that lists efforts.
 func (p Provider) Reasoning(efforts []string) chat.Reasoning {
