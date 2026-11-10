@@ -1,9 +1,11 @@
 // Package vendorpins keeps the enclave's vendor pins (Phala, NEAR, Tinfoil) current without a rebuild. The
-// enclave boots with the pins compiled into it and, while it runs, polls the newest release of the public
-// pins repository. A release replaces the active set only when its vendor statement verifies offline under
-// the pinned Sigstore signer, Rekor logged it within the age limit by a clock the host cannot move, its
-// sequence is above the active set's, and each of the three files hashes to the digest the statement lists.
-// Anything less is logged and the active set stays. Unsigned data is never read.
+// enclave boots with the pins compiled into it and, while it runs, polls vendor/index.json on the
+// statements/images branch of the public pins repository, with no credentials. It walks the index's
+// candidates in order and takes the first whose vendor statement verifies offline under the pinned Sigstore
+// signer, its Rekor v2 entry cosigned by enough witnesses, was signed within the age limit by a clock the
+// host cannot move, and has a sequence above the active set's. Each file the statement digests is then read
+// at the statement's pins_commit and must hash to the digest it lists. A candidate refused on the way is
+// logged, and with none taken the active set stays. Unsigned data is never parsed.
 package vendorpins
 
 import (
@@ -12,15 +14,14 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
-	"net/url"
-	"slices"
 	"strings"
 	"time"
 
 	"morse/backend/internal/attestation"
+	"morse/backend/internal/pinsbranch"
 	"morse/backend/internal/pinsig"
+	"morse/backend/internal/sigstore/rekorv2"
 	"morse/backend/internal/upstream"
 )
 
@@ -48,21 +49,13 @@ func ParseMode(s string) (Mode, error) {
 }
 
 const (
-	// ReleasesURL is the public pins repository's releases. Its latest/download/<asset> redirects to
-	// download/<tag>/<asset> of the release sign.yml marks latest, and that redirects to GitHub's asset host.
-	ReleasesURL = "https://github.com/trymorse/morse-pins/releases"
+	vendorDir = "vendor"
 
-	statementAsset = "vendor.statement.json"
-	bundleAsset    = "vendor.sigstore.json"
-
-	maxAsset    = 4 << 20
-	pollEvery   = 10 * time.Minute
-	pollTimeout = 2 * time.Minute
+	maxStatement = 128 << 10
+	maxFile      = 4 << 20
+	pollEvery    = 10 * time.Minute
+	pollTimeout  = 2 * time.Minute
 )
-
-// The files a release carries beside the statement, by their path in the statement and their asset name. The
-// fourth file the statement digests, phala_model_pins.json, is for the app's models list; nothing here reads it.
-var used = [...]string{"v4/phala_pins.json", "v4/near_pins.json", "v4/tinfoil_pins.json"}
 
 type Kind uint8
 
@@ -87,13 +80,17 @@ type Event struct {
 type Config struct {
 	Mode   Mode
 	Client *http.Client
-	// BaseURL overrides ReleasesURL.
-	BaseURL  string
+	// GitURL and RawURL override pinsbranch.GitURL and pinsbranch.RawURL. Requests go to those two and
+	// follow no redirect.
+	GitURL   string
+	RawURL   string
 	Root     pinsig.TrustRoot
 	Identity pinsig.Identity
-	MaxAge   time.Duration
-	// Floor is the sequence the image was built at. The embedded files are at or below it, so a release at or
-	// below it cannot be newer than them.
+	// Witnesses count the cosignatures a vendor statement's Rekor v2 entry needs.
+	Witnesses rekorv2.WitnessPolicy
+	MaxAge    time.Duration
+	// Floor is the sequence the image was built at. The embedded files are at or below it, so a statement at
+	// or below it cannot be newer than them.
 	Floor uint64
 	// Now is the trusted time, from a source the host cannot move, such as the NSM attestation document's.
 	Now func(context.Context) (time.Time, error)
@@ -101,8 +98,6 @@ type Config struct {
 	Observe func(Event)
 	// OnSwap runs after a swap, so the gates verify against the new pins at once.
 	OnSwap func()
-	// Redirect admits the one redirect a download may follow. Nil admits https to GitHub's release asset hosts.
-	Redirect func(*url.URL) bool
 	// Every overrides the poll interval.
 	Every time.Duration
 }
@@ -114,9 +109,6 @@ type Loader struct {
 }
 
 func New(c Config) *Loader {
-	if c.BaseURL == "" {
-		c.BaseURL = ReleasesURL
-	}
 	if c.Every == 0 {
 		c.Every = pollEvery
 	}
@@ -138,7 +130,7 @@ func (l *Loader) Run(ctx context.Context) {
 	}
 }
 
-// Poll fetches the newest release once and acts on it as the mode says. Polls must not overlap.
+// Poll walks the index once and acts on the first candidate it admits as the mode says. Polls must not overlap.
 func (l *Loader) Poll(ctx context.Context) {
 	if l.Mode == Off {
 		return
@@ -150,20 +142,55 @@ func (l *Loader) Poll(ctx context.Context) {
 	}
 }
 
-var errNotNewer = errors.New("vendorpins: no newer release")
+var (
+	errNotNewer = errors.New("vendorpins: no newer statement")
+	errNoTime   = errors.New("no trusted time")
+)
 
 func (l *Loader) floor() uint64 {
 	return max(attestation.Vendors().Source.Sequence, l.Floor, l.reported)
 }
 
+func (l *Loader) branch() pinsbranch.Reader {
+	return pinsbranch.Reader{Git: l.GitURL, Raw: l.RawURL, Do: func(req *http.Request) (*http.Response, error) { return upstream.Do(l.Client, req) }}
+}
+
+// once reads every candidate at the one commit the branch's tip names now, so a statement signed mid-poll
+// cannot mix its files with another's. The index lists the highest sequence first, so a candidate no newer
+// than the active set ends the walk.
 func (l *Loader) once(ctx context.Context) error {
-	// Every asset comes from the one tag latest names now, so a release published mid-poll cannot mix its files
-	// with another's.
-	release, err := l.latest(ctx)
+	branch := l.branch()
+	commit, err := branch.Tip(ctx)
 	if err != nil {
 		return err
 	}
-	statement, err := l.get(ctx, release, statementAsset)
+	candidates, err := branch.Index(ctx, commit, vendorDir)
+	if err != nil {
+		return err
+	}
+	var now time.Time
+	clock := func() (time.Time, error) {
+		if now.IsZero() {
+			t, err := l.Now(ctx)
+			if err != nil {
+				return time.Time{}, fmt.Errorf("%w: %w", errNoTime, err)
+			}
+			now = t
+		}
+		return now, nil
+	}
+	for _, c := range candidates {
+		err := l.take(ctx, branch, commit, c, clock)
+		if err == nil || errors.Is(err, errNotNewer) || errors.Is(err, errNoTime) {
+			return err
+		}
+		l.observe(Event{Kind: Failed, From: attestation.Vendors().Source, Err: fmt.Errorf("%s: %w", c.Name, err)})
+	}
+	return nil
+}
+
+func (l *Loader) take(ctx context.Context, branch pinsbranch.Reader, commit string, c pinsbranch.Candidate, clock func() (time.Time, error)) error {
+	statement, err := branch.File(ctx, commit, c.Statement, maxStatement)
 	if err != nil {
 		return err
 	}
@@ -171,34 +198,40 @@ func (l *Loader) once(ctx context.Context) error {
 	if peek, err := pinsig.ParseVendorStatement(statement); err == nil && peek.Sequence <= l.floor() {
 		return errNotNewer
 	}
-	bundle, err := l.get(ctx, release, bundleAsset)
+	bundle, err := branch.File(ctx, commit, c.Bundle, maxStatement)
 	if err != nil {
 		return err
 	}
-	st, logged, err := pinsig.VerifyVendor(statement, bundle, l.Root, l.Identity)
+	st, signed, err := pinsig.VerifyVendor(statement, bundle, l.Root, l.Identity, l.Witnesses)
 	if err != nil {
 		return err
 	}
-	now, err := l.Now(ctx)
+	now, err := clock()
 	if err != nil {
-		return fmt.Errorf("no trusted time: %w", err)
-	}
-	// The active sequence must be strictly below the release's, and Admit's floor is inclusive.
-	if err := pinsig.AdmitVendor(st, l.floor()+1, logged, now, l.MaxAge); err != nil {
 		return err
 	}
-	var canonical [len(used)][]byte
-	for i, path := range used {
-		raw, err := l.get(ctx, release, path[strings.LastIndex(path, "/")+1:])
+	// The active sequence must be strictly below the statement's, and Admit's floor is inclusive.
+	if err := pinsig.AdmitVendor(st, l.floor()+1, signed, now, l.MaxAge); err != nil {
+		return err
+	}
+	// The files are read at the main commit the signer built from, which VerifyVendor bound to the statement.
+	var canonical [len(pinsig.VendorFiles)][]byte
+	for i, key := range pinsig.VendorFiles {
+		path, err := publicPath(key)
 		if err != nil {
 			return err
 		}
-		if canonical[i], err = st.CheckFile(path, raw); err != nil {
+		raw, err := branch.File(ctx, st.PinsCommit, path, maxFile)
+		if err != nil {
+			return err
+		}
+		if canonical[i], err = st.CheckFile(key, raw); err != nil {
 			return err
 		}
 	}
 	sum := sha256.Sum256(statement)
-	// The signer vouched for the JCS bytes, so those are what the pins parse from.
+	// The signer vouched for the JCS bytes, so those are what the pins parse from. The fourth file,
+	// phala_model_pins.json, is for the app's models list; nothing here parses it.
 	next, err := attestation.ParseVendorSet(canonical[0], canonical[1], canonical[2], attestation.VendorSource{Sequence: st.Sequence, StatementSHA256: hex.EncodeToString(sum[:])})
 	if err != nil {
 		return err
@@ -221,90 +254,22 @@ func (l *Loader) once(ctx context.Context) error {
 	return nil
 }
 
+// publicPath is where trymorse/morse-pins holds the file a vendor statement lists under key. sign.yml says:
+// "The vendor statement names each file by its path in the private pins repository, v4/<name>, the key every
+// reader of the statement (pinsig.VendorFiles, morse-core's VENDOR_FILES) expects, and this repository holds
+// that file at its root." A key without the v4/ prefix is refused rather than guessed at.
+func publicPath(key string) (string, error) {
+	name, ok := strings.CutPrefix(key, "v4/")
+	if !ok {
+		return "", fmt.Errorf("vendor statement key %q is not v4/<name>", key)
+	}
+	return name, nil
+}
+
 func (l *Loader) observe(e Event) {
 	if l.Observe != nil {
 		l.Observe(e)
 	}
-}
-
-// assetHosts serve a release's assets, to which github.com redirects its download URLs.
-var assetHosts = []string{"objects.githubusercontent.com", "release-assets.githubusercontent.com", "github-releases.githubusercontent.com"}
-
-func githubAsset(u *url.URL) bool {
-	return u.Scheme == "https" && slices.Contains(assetHosts, u.Hostname())
-}
-
-// latest returns the download URL of the release sign.yml marks latest, read from the redirect GitHub answers
-// latest/download with: download/<tag>/ under the same releases URL, and nowhere else.
-func (l *Loader) latest(ctx context.Context) (string, error) {
-	base := strings.TrimSuffix(l.BaseURL, "/")
-	resp, err := l.fetch(ctx, base+"/latest/download/"+statementAsset)
-	if err != nil {
-		return "", fmt.Errorf("fetch the latest release: %w", err)
-	}
-	resp.Body.Close()
-	if resp.StatusCode/100 != 3 {
-		return "", fmt.Errorf("fetch the latest release: %s, not a redirect to its tag", resp.Status)
-	}
-	to, err := resp.Location()
-	if err != nil {
-		return "", fmt.Errorf("fetch the latest release: %w", err)
-	}
-	prefix, suffix := base+"/download/", "/"+statementAsset
-	got := to.String()
-	tag, ok := strings.CutPrefix(got, prefix)
-	if ok {
-		tag, ok = strings.CutSuffix(tag, suffix)
-	}
-	if !ok || tag == "" || strings.ContainsAny(tag, "/?#%") {
-		return "", fmt.Errorf("fetch the latest release: redirect %q is not a release under %s", got, base)
-	}
-	return prefix + tag, nil
-}
-
-// get downloads one asset of release through internal/upstream, which follows no redirect. GitHub answers a
-// tag's download with a 302 to its asset host, so get follows that one hop itself, to a host the loader admits
-// and no other.
-func (l *Loader) get(ctx context.Context, release, name string) ([]byte, error) {
-	target := release + "/" + name
-	resp, err := l.fetch(ctx, target)
-	if err != nil {
-		return nil, fmt.Errorf("fetch %s: %w", name, err)
-	}
-	if resp.StatusCode/100 == 3 {
-		to, err := resp.Location()
-		resp.Body.Close()
-		allowed := l.Redirect
-		if allowed == nil {
-			allowed = githubAsset
-		}
-		if err != nil || !allowed(to) {
-			return nil, fmt.Errorf("fetch %s: redirect %q is not to a host the loader admits", name, resp.Header.Get("Location"))
-		}
-		if resp, err = l.fetch(ctx, to.String()); err != nil {
-			return nil, fmt.Errorf("fetch %s: %w", name, err)
-		}
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("fetch %s: %s", name, resp.Status)
-	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxAsset+1))
-	if err != nil {
-		return nil, fmt.Errorf("fetch %s: %w", name, err)
-	}
-	if len(body) > maxAsset {
-		return nil, fmt.Errorf("fetch %s: more than %d bytes", name, maxAsset)
-	}
-	return body, nil
-}
-
-func (l *Loader) fetch(ctx context.Context, target string) (*http.Response, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
-	if err != nil {
-		return nil, err
-	}
-	return upstream.Do(l.Client, req)
 }
 
 func diff(a, b attestation.VendorCounts) string {

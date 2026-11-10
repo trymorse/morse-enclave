@@ -101,6 +101,9 @@ type openedChat struct {
 	promptBytes   int
 	// afterCut is set while a reply sealed whole runs (see outlivesCut).
 	afterCut *afterCut
+	// veil is set on a chat that asked for the Privacy Veil, from /open until its run ends, and veilMeasure once it ran.
+	veil        *openedVeil
+	veilMeasure *VeilMeasure
 }
 
 // played is the character the chat plays: the launch the proxy checked, the user's own character whose rules it
@@ -125,6 +128,13 @@ func (w *InProcess) openChat(o Opening, compaction bool) (Admission, error) {
 	name, known := w.chats[req.Model]
 	if !known {
 		return nil, apierr.ErrModelNotFound
+	}
+	veilAsk, err := w.veilAsk(o, p, req)
+	if err != nil {
+		return nil, err
+	}
+	if p.scheme == nil {
+		req = req.Without(privacyVeilField)
 	}
 	ask := askOf(p, o.KeyCaller, req)
 	var digest affinity.Digest
@@ -180,14 +190,21 @@ func (w *InProcess) openChat(o Opening, compaction bool) (Admission, error) {
 	if err == nil && route.onBehalf {
 		err = unsealableRefusal(openaicompat.Unsealable(oc.call.Request))
 	}
+	if err == nil && veilAsk != nil {
+		oc.veil, err = w.planVeil(o, *veilAsk, req)
+	}
 	if err != nil {
 		return nil, err
 	}
-	return ChatAdmission{
+	admission := ChatAdmission{
 		admitted: admitted{w.keep(o, oc)}, Model: name.model, Candidates: endpointsOf(routes), Affinity: digest, MaxPrice: want.maxPrice, Sealable: name.sealable(), OnBehalf: route.onBehalf,
 		PromptSize: oc.call.Size(), PromptBytes: limits.KibibytesCovering(oc.promptBytes), TextMessages: textMessages(oc.call), PromptCounted: promptCounted(oc.call), OutputAsked: oc.asked,
 		Stream: req.Stream, Compaction: compaction, Character: oc.character,
-	}, nil
+	}
+	if oc.veil != nil {
+		admission.PrivacyVeil = oc.veil.admission()
+	}
+	return admission, nil
 }
 
 func promptCounted(c chat.Call) bool {
@@ -252,6 +269,9 @@ type attempt struct {
 	// hedgeAfter is how long the call may stay silent before a second call to the same endpoint races it, and
 	// stallAfter before it is given up as stalled. Zero is never.
 	hedgeAfter, stallAfter time.Duration
+	// veil restores this call's reply. The attempt takes it when the walk starts the try, so a try that outlives the
+	// run never reads the chat's veil after the run drops it.
+	veil *replyVeil
 }
 
 // attempt is the call on r. Only the last endpoint waits out a busy refusal, and only one whose hedge has no next
@@ -259,7 +279,7 @@ type attempt struct {
 func (o *openedChat) attempt(r chatRoute, g ChatGrant, last, hedgesInPlace bool) attempt {
 	c := o.call
 	c.RouteEffort, c.Efforts, c.OutputLimit = r.DefaultReasoningEffort, r.ReasoningEfforts, r.clamp(g.OutputLimit, o.asked)
-	a := attempt{route: r, call: c, promptBound: g.PromptBound}
+	a := attempt{route: r, call: c, promptBound: g.PromptBound, veil: o.veil.reply()}
 	if last {
 		a.waits = r.Upstream.busyWaits()
 	}
@@ -298,13 +318,25 @@ func (o *openedChat) run(_ context.Context, w *InProcess, h Handle, g Grant, rep
 		ctx = o.afterCut.ctx
 	}
 	rw := newReplyWriter(reply)
+	if o.veil != nil {
+		defer o.dropVeil()
+		if m, failed := o.applyVeil(ctx, w, rw); failed {
+			return m
+		}
+		ctx = upstream.WithEgress(ctx, o.veil.veil.Egress)
+	}
 	end := o.walk(ctx, w, granted, cg, rw)
 	a, got, e, m := end.a, end.got, end.e, end.m
+	if errors.Is(got.callErr, upstream.ErrEgressRefused) && rw.status == 0 {
+		return o.egressRefused(w, rw, m)
+	}
 	unsent := got.callErr != nil && rw.status == 0
 	m.Unserved = unsent && m.Cut == measure.NotCut && m.Health.Outcome.FailsOver() && m.Health.Outcome != health.Unattested && m.Health.Outcome != health.ContextOverflow
 	if unsent {
+		rw.Header().Del(HeaderPrivacyVeil)
 		refuse(ctx, rw, got.callErr)
 	}
+	m.PrivacyVeil = o.veilMeasure
 	p := a.route.Upstream.count(a, e, got)
 	switch {
 	case got.unproven != nil && e.Outcome == measure.Completed:
@@ -474,10 +506,11 @@ func (u Plain) serve(ctx context.Context, w *InProcess, o *openedChat, a attempt
 	}
 	var got served
 	retry := chat.BusyRetry{Provider: u.Provider, Waits: a.waits, HedgeAfter: a.hedgeAfter, StallAfter: a.stallAfter}
+	rv := a.veil
 	if a.call.Stream {
-		got = stream(ctx, reply, http.NewResponseController(reply), retry, a.call, transcript, clock, w.keepaliveEvery)
+		got = stream(ctx, reply, http.NewResponseController(reply), retry, a.call, transcript, clock, w.keepaliveEvery, rv)
 	} else {
-		got = complete(ctx, reply, retry, a.call, transcript, clock)
+		got = complete(ctx, reply, retry, a.call, transcript, clock, rv)
 	}
 	got.transcript = transcript
 	return got
@@ -511,6 +544,7 @@ func (s served) evidence(end ending, a attempt, g ChatGrant) measure.Evidence {
 		attachments, attachmentBytes = 0, 0
 	}
 	return measure.Evidence{
+		SealedWhole:        errors.Is(err, chat.ErrSealedBody),
 		Outcome:            end.outcome(),
 		Cut:                end.cut(),
 		Unsent:             errors.Is(s.callErr, upstream.ErrNotSent),
@@ -580,8 +614,8 @@ func (t *thinkingClock) thought() thought {
 	return thought{duration: cmp.Or(t.firstAnswer, t.now()).Sub(t.firstEvent), interleaved: t.interleaved}
 }
 
-func stream(ctx context.Context, w http.ResponseWriter, rc *http.ResponseController, prov chat.BusyRetry, c chat.Call, transcript *chat.Transcript, clock *thinkingClock, keepalive time.Duration) served {
-	sw := &sseWriter{eventStream: eventStream{w: w, rc: rc}, transcript: transcript, clock: clock}
+func stream(ctx context.Context, w http.ResponseWriter, rc *http.ResponseController, prov chat.BusyRetry, c chat.Call, transcript *chat.Transcript, clock *thinkingClock, keepalive time.Duration, rv *replyVeil) served {
+	sw := &sseWriter{eventStream: eventStream{w: w, rc: rc}, transcript: transcript, clock: clock, veil: rv}
 	stop := func() {}
 	if clock != nil {
 		stop = sw.keepAlive(ctx, keepalive)
@@ -593,14 +627,16 @@ func stream(ctx context.Context, w http.ResponseWriter, rc *http.ResponseControl
 	}
 	switch {
 	case err == nil:
+		sw.closeVeil()
 		sw.done()
 	case sw.started && ctx.Err() == nil && sw.err == nil:
+		sw.closeVeil()
 		sw.errorEvent()
 	}
 	return served{reported: reported, attempts: attempts, reply: measure.Streamed{Events: sw.delivered, VisibleBytes: sw.visible}, finish: sw.finish, unanswered: unanswered(sw.finish, sw.sent), malformed: sw.calls.Malformed(sw.finish, c.Stops()), writeErr: sw.err, callErr: err, thought: clock.thought()}
 }
 
-func complete(ctx context.Context, w http.ResponseWriter, prov chat.BusyRetry, c chat.Call, transcript *chat.Transcript, clock *thinkingClock) served {
+func complete(ctx context.Context, w http.ResponseWriter, prov chat.BusyRetry, c chat.Call, transcript *chat.Transcript, clock *thinkingClock, rv *replyVeil) served {
 	clock.startAtCall()
 	body, tokens, attempts, err := prov.Complete(ctx, c)
 	if err != nil {
@@ -611,13 +647,19 @@ func complete(ctx context.Context, w http.ResponseWriter, prov chat.BusyRetry, c
 	if unanswered(d.Finish, d.Delivered()) {
 		body = body.MarkUnanswered()
 	}
-	written, writeErr := body.WriteTo(w)
-	if written > 0 {
-		transcript.Add(d)
-	}
 	var calls chat.ToolCalls
 	if d.ToolCalled {
 		calls.Add(body)
 	}
-	return served{reported: tokens, attempts: attempts, reply: measure.Buffered{Bytes: int(written)}, finish: d.Finish, unanswered: unanswered(d.Finish, d.Delivered()), malformed: calls.Malformed(d.Finish, c.Stops()), writeErr: writeErr}
+	vendorBytes := len(chunkBytes(body))
+	body = rv.complete(body)
+	written, writeErr := body.WriteTo(w)
+	if written > 0 {
+		transcript.Add(d)
+	}
+	measured := int(written)
+	if rv != nil && written > 0 {
+		measured = vendorBytes
+	}
+	return served{reported: tokens, attempts: attempts, reply: measure.Buffered{Bytes: measured}, finish: d.Finish, unanswered: unanswered(d.Finish, d.Delivered()), malformed: calls.Malformed(d.Finish, c.Stops()), writeErr: writeErr}
 }

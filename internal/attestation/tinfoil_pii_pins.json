@@ -1,0 +1,20 @@
+{
+ "hosts": [
+  "pii-filter.tinfoil.sh"
+ ],
+ "releases": [
+  {
+   "name": "confidential-pii-cpu v0.4.0",
+   "digest": "8786ce1ec13c70a948903e98553d40a16a988d02f1754f57de9180414997054d",
+   "measurement": "093ae06ffa2f01a79dff929a7ddf4cdd11916271a112a586e49d578d9562e6653559831c3313953a8f44978c4cccbcd9"
+  }
+ ],
+ "policy": "0x30000",
+ "vmpl": 0,
+ "min_tcb": {
+  "bootloader": 10,
+  "tee": 0,
+  "snp": 23,
+  "microcode": 84
+ }
+}

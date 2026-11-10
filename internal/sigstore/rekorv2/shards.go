@@ -57,11 +57,20 @@ type tlogJSON struct {
 // in Sigstore's root does not stop every other. Skipping only shrinks what
 // verifies. It refuses a root with no usable log, and two logs with one id,
 // whose windows it could not choose between.
-func ParseShards(root tuf.TrustedRoot) (Shards, error) {
+func ParseShards(root tuf.TrustedRoot) (Shards, error) { return parseShards(root.JSON()) }
+
+// ParseEmbeddedShards reads the Ed25519 logs of a trusted_root.json that the
+// image compiles in, under ParseShards' rules. The image's measurement covers
+// those bytes as TUF's signatures cover a fetched root, so a verifier that
+// runs offline against the root its image carries, as pinsig does, reads its
+// shards here. Bytes from anywhere else go through tuf.Verify and ParseShards.
+func ParseEmbeddedShards(trustedRootJSON []byte) (Shards, error) { return parseShards(trustedRootJSON) }
+
+func parseShards(trustedRootJSON []byte) (Shards, error) {
 	var raw struct {
 		Tlogs []json.RawMessage `json:"tlogs"`
 	}
-	if err := json.Unmarshal(root.JSON(), &raw); err != nil {
+	if err := json.Unmarshal(trustedRootJSON, &raw); err != nil {
 		return Shards{}, fmt.Errorf("%w: %v", ErrTrustedRoot, err)
 	}
 	shards := Shards{byID: map[[32]byte]shard{}}

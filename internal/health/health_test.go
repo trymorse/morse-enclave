@@ -1,6 +1,7 @@
 package health
 
 import (
+	"maps"
 	"slices"
 	"sync"
 	"testing"
@@ -210,5 +211,52 @@ func TestAReplyUnderMinDecodeTokensIsLeftOut(t *testing.T) {
 	r.Meter(route).Observe(Observation{Path: PathStream, Outcome: OK, Duration: 11 * time.Second, TTFT: time.Second, OutputTokens: 199})
 	if row := rowFor(t, r.Drain(), PathStream, OK); row.OutputTokens != 0 || row.GenerationMicros != 0 {
 		t.Errorf("a 199-token reply recorded %d tokens over %dµs, want none: under %d tokens a reply is mostly fixed latency", row.OutputTokens, row.GenerationMicros, MinDecodeTokens)
+	}
+}
+
+func TestAnOKReplyWithAnUnusableToolCallIsRecordedAsMalformedAndKeepsItsTimings(t *testing.T) {
+	r := NewRecorder()
+	m := r.Meter(route)
+	m.Observe(Observation{Path: PathStream, Outcome: OK, Malformed: true, Duration: 2 * time.Second, TTFT: 400 * time.Millisecond, OutputTokens: 400})
+	m.Observe(Observation{Path: PathStream, Outcome: OK, Duration: 2 * time.Second, TTFT: 400 * time.Millisecond, OutputTokens: 400})
+	batch := r.Drain()
+	malformed, ok := rowFor(t, batch, PathStream, Malformed), rowFor(t, batch, PathStream, OK)
+	if malformed.Requests != 1 || ok.Requests != 1 {
+		t.Errorf("malformed %d and ok %d requests, want 1 and 1", malformed.Requests, ok.Requests)
+	}
+	if malformed.TTFT.Total() != 1 || malformed.DecodeRate.Total() != 1 {
+		t.Errorf("the malformed row holds %d first tokens and %d decode rates, want its reply's 1 and 1", malformed.TTFT.Total(), malformed.DecodeRate.Total())
+	}
+}
+
+func TestEachTimedReplyCountsOnceAtItsWholeDecodeRateRoundedDown(t *testing.T) {
+	r := NewRecorder()
+	m := r.Meter(route)
+	// 400 tokens over 4.9 s of decode is 81.6 tok/s; 400 over 5.1 s is 78.4; 100 tokens are too few to time.
+	m.Observe(Observation{Path: PathStream, Outcome: OK, Duration: 5 * time.Second, TTFT: 100 * time.Millisecond, OutputTokens: 400})
+	m.Observe(Observation{Path: PathStream, Outcome: OK, Duration: 5200 * time.Millisecond, TTFT: 100 * time.Millisecond, OutputTokens: 400})
+	m.Observe(Observation{Path: PathStream, Outcome: OK, Duration: time.Second, TTFT: 100 * time.Millisecond, OutputTokens: 100})
+	got := rowFor(t, r.Drain(), PathStream, OK).DecodeRate
+	if want := (Rates{81: 1, 78: 1}); !maps.Equal(got, want) {
+		t.Errorf("decode rates %v, want %v", got, want)
+	}
+	if again := r.Drain(); len(again) != 0 {
+		t.Errorf("a second drain returned %+v, want nothing", again)
+	}
+}
+
+func TestTheMedianDecodeRateIsTheRateAtWhichHalfTheRepliesDecodedOrSlower(t *testing.T) {
+	for _, c := range []struct {
+		rates Rates
+		want  int
+	}{
+		{Rates{70: 1, 90: 1}, 70},
+		{Rates{70: 1, 80: 1, 90: 1}, 80},
+		{Rates{79: 10, 120: 11}, 120},
+		{Rates{}, 0},
+	} {
+		if got := c.rates.Quantile(0.5); got != c.want {
+			t.Errorf("median of %v is %d, want %d", c.rates, got, c.want)
+		}
 	}
 }

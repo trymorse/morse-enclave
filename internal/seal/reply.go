@@ -22,6 +22,7 @@ const (
 	saltSize       = 32
 	nonceSize      = 12
 	frameHeadSize  = 1 + 4
+	maxFrameSize   = frameHeadSize + MaxFrameData + (Pad-(frameHeadSize+MaxFrameData)%Pad)%Pad + tagSize
 	infoReplyKey   = "morse-seal-v1 reply key"
 	infoReplyNonce = "morse-seal-v1 reply nonce"
 )
@@ -247,6 +248,9 @@ func (r *Reply) next() ([]byte, bool, error) {
 	var size [4]byte
 	if _, err := io.ReadFull(r.r, size[:]); err != nil {
 		return nil, false, ErrTruncated
+	}
+	if binary.BigEndian.Uint32(size[:]) > maxFrameSize {
+		return nil, false, fmt.Errorf("%w: frame %d size", ErrInvalid, r.frames.n)
 	}
 	frame := make([]byte, 4+binary.BigEndian.Uint32(size[:]))
 	copy(frame, size[:])

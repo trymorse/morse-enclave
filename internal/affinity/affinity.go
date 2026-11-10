@@ -119,3 +119,15 @@ func (c Conversation) Short() string { return hex.EncodeToString(c[24:32]) }
 func (Conversation) String() string { return "affinity.Conversation(redacted)" }
 
 func (Conversation) GoString() string { return "affinity.Conversation(redacted)" }
+
+// Partition names, for one UTC day, the cache partition of an API key's unsealed chats under the Privacy Veil: an
+// HMAC of the key's digest the worker can't trace back to the key, and that changes daily. Nil without a key.
+func (k Key) Partition(day string, credential []byte) []byte {
+	if !k.Set() {
+		return nil
+	}
+	mac := hmac.New(sha256.New, k.secret)
+	mac.Write([]byte("privacy-veil-partition|" + day + "|"))
+	mac.Write(credential)
+	return mac.Sum(nil)[:16]
+}

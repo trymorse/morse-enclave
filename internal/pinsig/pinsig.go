@@ -1,13 +1,17 @@
 // Package pinsig verifies, offline, that a blob or a DSSE statement was
-// signed by a GitHub Actions workflow through Sigstore keyless signing and
-// logged in Rekor v1.
+// signed by a GitHub Actions workflow through Sigstore keyless signing.
 //
 // The enclave embeds a Sigstore trusted root and the identity its workflow
-// signs with. Verify refuses unless the bundle's certificate chains to a
-// Fulcio CA in the root, the Rekor entry carries both a signed entry
-// timestamp and an inclusion proof under a log key in the root, the entry's
-// body names the signed content, the signature, and the certificate the
-// bundle carries, and the certificate's Fulcio extensions equal the identity.
+// signs with. Verify and VerifyVendor take Morse's statements, which the
+// public signer logs in Rekor v2 only, through VerifyBundleV2: the entry is
+// in a v2 shard of the root and carries enough witness cosignatures. VerifyDSSE
+// takes Tinfoil's router provenance, which Tinfoil logs in Rekor v1, so the
+// v1 rule is per signer and not package-wide: there the entry carries both a
+// signed entry timestamp and an inclusion proof under a v1 log key in the
+// root. Either way the bundle's certificate chains to a Fulcio CA in the
+// root, the entry's body names the signed content, the signature, and the
+// certificate the bundle carries, and the certificate's Fulcio extensions
+// equal the identity.
 package pinsig
 
 import (
@@ -17,6 +21,8 @@ import (
 	"fmt"
 	"regexp"
 	"time"
+
+	"morse/backend/internal/sigstore/rekorv2"
 )
 
 var (
@@ -72,11 +78,13 @@ func ExactRef(ref string) RefRule { return exactRef(ref) }
 // suffix, no leading zero, and at most nine digits per component.
 func SemverTags() RefRule { return semverTags{} }
 
-// Record is what a verified bundle proves about its content: when Rekor
-// logged it, which commit of the source repository the signing run built
-// from, which run signed it, and at which source ref.
+// Record is what a verified bundle proves about its content: when Rekor v1
+// logged it (zero for a Rekor v2 entry, which carries no such time), when
+// its certificate was issued, which commit of the source repository the
+// signing run built from, which run signed it, and at which source ref.
 type Record struct {
 	IntegratedTime   time.Time
+	NotBefore        time.Time
 	SourceDigest     string
 	RunInvocationURI string
 	Ref              string
@@ -89,8 +97,9 @@ type Envelope struct {
 }
 
 // VerifyBundle checks that bundle is a Sigstore message-signature bundle
-// whose certificate, log entry, and signature all vouch for blob under root
-// and id. It refuses a DSSE bundle.
+// whose certificate, Rekor v1 log entry, and signature all vouch for blob
+// under root and id. It refuses a DSSE bundle. Verify and VerifyVendor do
+// not call it: Morse's statements are logged in Rekor v2 (VerifyBundleV2).
 func VerifyBundle(blob, bundle []byte, root TrustRoot, id Identity) (Record, error) {
 	b, err := parseBundle(bundle)
 	if err != nil {
@@ -157,13 +166,14 @@ func verify(b bundle, root TrustRoot, id Identity, signed [32]byte) (Record, err
 	if err != nil {
 		return Record{}, err
 	}
-	return Record{IntegratedTime: b.entry.integratedTime, SourceDigest: signer.sourceDigest, RunInvocationURI: signer.runInvocation, Ref: signer.ref}, nil
+	return Record{IntegratedTime: b.entry.integratedTime, NotBefore: leaf.NotBefore, SourceDigest: signer.sourceDigest, RunInvocationURI: signer.runInvocation, Ref: signer.ref}, nil
 }
 
-// Verify checks the bundle over statement and parses the statement, which
-// must name the commit the signing run built from.
-func Verify(statement, bundle []byte, root TrustRoot, id Identity) (Statement, time.Time, error) {
-	rec, err := VerifyBundle(statement, bundle, root, id)
+// Verify checks the Rekor v2 bundle over statement (VerifyBundleV2) and
+// parses the statement, which must name the commit the signing run built
+// from. The time it returns is the certificate's NotBefore, for Admit.
+func Verify(statement, bundle []byte, root TrustRoot, id Identity, witnesses rekorv2.WitnessPolicy) (Statement, time.Time, error) {
+	rec, err := VerifyBundleV2(statement, bundle, root, id, witnesses)
 	if err != nil {
 		return Statement{}, time.Time{}, err
 	}
@@ -174,7 +184,7 @@ func Verify(statement, bundle []byte, root TrustRoot, id Identity) (Statement, t
 	if st.PinsCommit != rec.SourceDigest {
 		return Statement{}, time.Time{}, fmt.Errorf("%w: pins_commit %s is not the commit the signer built from, %s", ErrStatement, st.PinsCommit, rec.SourceDigest)
 	}
-	return st, rec.IntegratedTime, nil
+	return st, rec.NotBefore, nil
 }
 
 type window struct{ start, end time.Time }

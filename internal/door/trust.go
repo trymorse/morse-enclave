@@ -7,18 +7,26 @@ import (
 )
 
 type Trust struct {
-	Root      pinsig.TrustRoot
-	Identity  pinsig.Identity
+	Root     pinsig.TrustRoot
+	Identity pinsig.Identity
+	// Witnesses count the cosignatures on the door's own record and on every
+	// statement Identity signs, which pinsig takes from Rekor v2 only.
 	Witnesses rekorv2.WitnessPolicy
 	// TUFRoot is the Sigstore TUF root.json the door walks forward from.
 	TUFRoot []byte
 }
 
+// pinsSigner is the public sign.yml of trymorse/morse-pins. It signs image
+// statements and the vendor statement to Rekor v2 only, so the image never
+// trusts the private Watermark-Labs/pins signer and never accepts a v1
+// statement. The IDs are the repository's and its owner's, from gh api
+// repos/trymorse/morse-pins on 2026-11-09, so a renamed or recreated
+// repository fails.
 var pinsSigner = pinsig.Identity{
 	Issuer:              "https://token.actions.githubusercontent.com",
-	SourceRepositoryURI: "https://github.com/Watermark-Labs/pins",
-	SourceRepositoryID:  "1405118053",
-	SourceOwnerID:       "334112171",
+	SourceRepositoryURI: "https://github.com/trymorse/morse-pins",
+	SourceRepositoryID:  "1437511167",
+	SourceOwnerID:       "345029672",
 	Workflow:            ".github/workflows/sign.yml",
 	Ref:                 pinsig.ExactRef("refs/heads/main"),
 	Triggers:            []string{"push", "schedule"},

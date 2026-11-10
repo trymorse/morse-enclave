@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"morse/backend/internal/apierr"
+	"morse/backend/internal/attested"
 	"morse/backend/internal/billing/measure"
 	"morse/backend/internal/catalog"
 	"morse/backend/internal/chat"
@@ -120,7 +121,7 @@ func (c *Client) Open(ctx context.Context, o Opening) (Admission, error) {
 	req.Header.Set(headerMethod, o.Method)
 	req.Header.Set(headerPath, o.Path)
 	req.Header.Set(headerQuery, o.Query)
-	setOpening(req.Header, o.Cast, o.Framing, o.KeyCaller, o.KeyFloor)
+	setOpening(req.Header, o.Cast, o.Framing, o.KeyCaller, o.KeyFloor, o.PrivacyVeil)
 	data, _, err := c.call(req)
 	if sent.err != nil {
 		return nil, sent.err
@@ -137,16 +138,28 @@ func (c *Client) OpenSealed(ctx context.Context, o SealedOpening) (SealedAdmissi
 	if err != nil {
 		return SealedAdmission{}, err
 	}
-	req.Header.Set("Content-Type", SealedContentType)
-	setOpening(req.Header, o.Cast, o.Framing, o.KeyCaller, o.KeyFloor)
+	req.Header.Set("Content-Type", seal.ContentType)
+	setOpening(req.Header, o.Cast, o.Framing, o.KeyCaller, o.KeyFloor, o.PrivacyVeil)
 	data, header, err := c.call(req)
 	switch {
 	case err != nil:
 		return SealedAdmission{}, err
-	case header.Get("Content-Type") == SealedContentType:
+	case header.Get("Content-Type") == seal.ContentType:
 		return SealedAdmission{}, SealedRefusal{Reply: data}
 	}
 	return admissionOf(data)
+}
+
+func (c *Client) Unpinned(ctx context.Context) ([]attested.UnpinnedRelease, error) {
+	data, _, err := c.get(ctx, "/unpinned")
+	if err != nil {
+		return nil, err
+	}
+	var reply unpinnedWire
+	if err := json.Unmarshal(data, &reply); err != nil {
+		return nil, fmt.Errorf("worker: /unpinned: %w", err)
+	}
+	return reply.Releases, nil
 }
 
 func (c *Client) Attestation(ctx context.Context) (Attested, error) {
@@ -256,6 +269,9 @@ func measuredUnsamplingUnknownHealth(trailer string) (Measured, error) {
 	var known bool
 	if m.Health, known = t.Health.known(); !known {
 		m.Health, m.Unsampled = health.Observation{}, true
+	}
+	if m.PrivacyVeil != nil && m.PrivacyVeil.Failed != VeilOK {
+		m.Unsampled = true
 	}
 	m.FailedOver = knownTries(t.FailedOver)
 	return m, nil

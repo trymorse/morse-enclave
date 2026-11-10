@@ -65,6 +65,13 @@ func (w *InProcess) entry(h Handle) *entry {
 func (w *InProcess) forget(h Handle) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	// Only a handle no run claimed lets go of its veil here. A timer that fired as start claimed the handle runs this
+	// after start, and the run, which still needs the veil, drops it itself.
+	if e := w.opened[h]; e != nil && e.phase == waiting {
+		if veiled, ok := e.opened.(interface{ dropVeil() }); ok {
+			veiled.dropVeil()
+		}
+	}
 	delete(w.opened, h)
 }
 

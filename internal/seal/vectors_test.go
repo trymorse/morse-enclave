@@ -109,6 +109,7 @@ func buildVectors(t *testing.T) vectors {
 		{"chat to two keys", []int{0, 1}, Head{Method: "POST", Path: "/v1/chat/completions", Headers: map[string]string{"Content-Type": "application/json"}, TS: 1792216730}, []byte(`{"model":"stub","stream":true,"messages":[{"role":"user","content":"hi"}]}`)},
 		{"e2ee chat to one key", []int{0}, Head{Method: "POST", Path: "/v1/chat/completions", Headers: e2eeHeaders, TS: 1792216730}, []byte(`{"model":"e2ee","messages":[{"role":"user","content":"ciphertext"}]}`)},
 		{"lookup with a query to one key", []int{1}, Head{Method: "GET", Path: "/v1/lookup/coingecko/simple/price?ids=bitcoin&vs_currencies=usd", Headers: map[string]string{}, TS: 1792216730}, nil},
+		{"chat asking for the privacy veil", []int{0}, Head{Method: "POST", Path: "/v1/chat/completions", Headers: map[string]string{"Content-Type": "application/json"}, TS: 1792216730, PrivacyVeil: json.RawMessage(`{"report":true}`), PrivacyVeilPartition: "BwcHBwcHBwcHBwcHBwcHBw"}, []byte(`{"model":"stub","stream":true,"messages":[{"role":"user","content":"Call Jane Doe at 415-555-0199"}]}`)},
 		{"body on the padding boundary", []int{0}, Head{Method: "POST", Path: "/v1/search", Headers: map[string]string{"Content-Type": "application/json"}, TS: 1792216730}, exact},
 	}
 	for _, r := range requests {
@@ -118,12 +119,12 @@ func buildVectors(t *testing.T) vectors {
 			keys = append(keys, identities[at].PublicKey())
 			req.Ephemerals = append(req.Ephemerals, fixed("ephemeral "+r.name+string(rune('a'+n))))
 		}
-		sealed, err := sealUnder(keys, r.head, r.body, [cekSize]byte(req.CEK), deterministicWrapper(t, req.Ephemerals))
+		sealed, err := innerOf(r.body).sealUnder(keys, r.head, [cekSize]byte(req.CEK), deterministicWrapper(t, req.Ephemerals))
 		if err != nil {
 			t.Fatal(err)
 		}
 		req.HeadJSON, _ = json.Marshal(req.Head)
-		req.Inner = innerOf(req.HeadJSON, r.body)
+		req.Inner = plaintextOf(req.HeadJSON, r.body)
 		req.AAD = sealed[:prefixSize+len(r.recipients)*entrySize]
 		req.Ciphertext = sealed[len(req.AAD):]
 		req.Sealed = sealed
@@ -253,7 +254,9 @@ func TestTheVectorsAreTheBytesTheseInputsSealToAndTheyOpen(t *testing.T) {
 				t.Errorf("%s: recipient %d: %v", r.Name, at, err)
 				continue
 			}
-			if !reflect.DeepEqual(opened.Head, r.Head.Head) || len(opened.Body) != r.Head.BodyLen || !bytes.Equal(opened.Body, r.Body) || !bytes.Equal(opened.CEK[:], r.CEK) {
+			openedHead, _ := json.Marshal(opened.Head)
+			storedHead, _ := json.Marshal(r.Head.Head)
+			if !bytes.Equal(openedHead, storedHead) || len(opened.Body) != r.Head.BodyLen || !bytes.Equal(opened.Body, r.Body) || !bytes.Equal(opened.CEK[:], r.CEK) {
 				t.Errorf("%s: recipient %d opened %+v %q", r.Name, at, opened.Head, opened.Body)
 			}
 		}
@@ -288,4 +291,18 @@ func TestTheVectorsAreTheBytesTheseInputsSealToAndTheyOpen(t *testing.T) {
 	if len(boundary.Inner) != 4+len(boundary.HeadJSON)+len(boundary.Body) {
 		t.Errorf("the boundary request's inner has %d bytes of padding, want none", len(boundary.Inner)-4-len(boundary.HeadJSON)-len(boundary.Body))
 	}
+}
+
+func innerOf(body []byte) Inner {
+	var inner Inner
+	inner.Grow(len(body))
+	inner.Fill(bytes.NewReader(body))
+	return inner
+}
+
+func plaintextOf(headJSON, body []byte) []byte {
+	inner := binary.BigEndian.AppendUint32(nil, uint32(len(headJSON)))
+	inner = append(inner, headJSON...)
+	inner = append(inner, body...)
+	return append(inner, make([]byte, padding(len(inner)+tagSize))...)
 }

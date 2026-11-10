@@ -1,5 +1,12 @@
 package seal
 
+const (
+	MaxBody           = 32 << 20
+	Endpoint          = "POST /v1/sealed"
+	ContentType       = "application/morse-sealed"
+	DoorClientAddress = "Door-Client-Address"
+)
+
 type Route struct {
 	Pattern string
 	Sealed  bool

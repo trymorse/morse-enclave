@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"morse/backend/internal/aci"
@@ -360,6 +361,26 @@ func tinfoilVerifier(policy attestation.Policy, host string, gateway tinfoil.Gat
 	}
 }
 
+// filterVerifier judges the privacy filter's bundle against the filter's own pins, and fetches no provenance: a
+// filter release serves only once a person pins it, after reviewing what its config lets the enclave reach.
+func filterVerifier(policy attestation.Policy, host string, pins func() attestation.RouterPins, verified func(attestation.TinfoilReport)) attested.Verifier[aci.SPKI] {
+	return func(ctx context.Context, bundle []byte, _ attestation.Nonce) (attestation.Verdicts[aci.SPKI], error) {
+		r, err := policy.VerifyTinfoil(ctx, bundle, host)
+		if err != nil {
+			return attestation.Verdicts[aci.SPKI]{}, err
+		}
+		v, err := pins().Judge(r)
+		if err != nil {
+			return attestation.Verdicts[aci.SPKI]{}, err
+		}
+		if verified != nil {
+			verified(r)
+		}
+		v.Serve = func(func(string) bool) json.RawMessage { return bundle }
+		return v, nil
+	}
+}
+
 func (tinfoilVendor) Speaks() *chat.Scheme { return ehbp.Scheme }
 
 func (tinfoilVendor) Receipts() bool { return false }
@@ -375,3 +396,40 @@ func (g tinfoilGate) Route(up attester.Upstream) chat.VerbatimRoute {
 }
 
 func (tinfoilGate) Plain(attester.Upstream) (Plain, bool) { return nil, false }
+
+// PrivacyFilter is the Privacy Veil's filter: Tinfoil's privacy filter enclave, verified against its own pins, which
+// name its host, and reached over TLS pinned to the key its report binds. Run keeps its report fresh.
+type PrivacyFilter struct {
+	*attested.TLSGate
+	*tinfoil.Filter
+	scope string
+	// hpke is the X25519 key of the latest report that verified, which each request's body is sealed to.
+	hpke atomic.Pointer[[32]byte]
+}
+
+func (f *PrivacyFilter) sealKey() ([32]byte, bool) {
+	if k := f.hpke.Load(); k != nil && f.Ready() {
+		return *k, true
+	}
+	return [32]byte{}, false
+}
+
+func NewPrivacyFilter(apiKey string, d Deps) *PrivacyFilter {
+	host := attestation.TinfoilFilterPins().Hosts[0]
+	baseURL := "https://" + host
+	gateway := tinfoil.NewGateway(baseURL, host, d.Unpinned)
+	pf := &PrivacyFilter{scope: attester.Tinfoil.Name + "/" + host}
+	pf.TLSGate = attested.NewTLSGate(attested.Config[aci.SPKI]{
+		Scope:    pf.scope,
+		Verifier: filterVerifier(d.Policy, host, attestation.TinfoilFilterPins, func(r attestation.TinfoilReport) { pf.hpke.Store(&r.HPKE) }),
+		Fetch: func(ctx context.Context, _ attestation.Nonce) ([]byte, error) {
+			return gateway.Bundle(ctx)
+		},
+		Observe: d.Observe,
+	}, host, d.Base)
+	pf.Filter = tinfoil.NewFilter(baseURL, apiKey, pf.Client(), tinfoilGate{pf.TLSGate}, pf.sealKey)
+	return pf
+}
+
+// Scope names the filter's gate in the worker's log.
+func (f *PrivacyFilter) Scope() string { return f.scope }

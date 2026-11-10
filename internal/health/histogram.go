@@ -80,6 +80,20 @@ func (c Counts) Quantile(q float64) time.Duration {
 	return 0
 }
 
+// QuantileAtLeast is the least the q-quantile can be: the lower edge of the bucket Quantile names. A bucket is up to an
+// eighth of its bound wide, so a ceiling it straddles is not known to be missed, and only this edge passing it is.
+func (c Counts) QuantileAtLeast(q float64) time.Duration {
+	bound := c.Quantile(q)
+	if bound <= 0 {
+		return 0
+	}
+	i := bucketOf(uint64(bound.Microseconds()) - 1)
+	if i == 0 {
+		return 0
+	}
+	return bucketUpperBound(i - 1)
+}
+
 func (h *Histogram) Snapshot() Counts {
 	return h.read((*atomic.Uint64).Load)
 }

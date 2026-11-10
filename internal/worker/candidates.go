@@ -122,7 +122,7 @@ func askOf(p protocol, keyCaller bool, req *chat.Request) chatAsk {
 }
 
 // inTheClear is a key caller's plaintext chat that the relay read on its way in, so a digest of it tells the relay
-// nothing new (DESIGN.md Section 7, sk_ keys). A sealed body (cek) or one the vendor seals is never digested.
+// nothing new. A sealed body (cek) or one the vendor seals is never digested.
 func (o Opening) inTheClear(ask chatAsk) bool { return o.cek == nil && ask == askOnBehalf }
 
 func (n chatName) reach(p protocol, ask chatAsk, compaction bool, want providerAsk, keyFloor catalog.Tier) ([]chatRoute, error) {

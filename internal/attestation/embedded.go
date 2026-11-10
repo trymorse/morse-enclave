@@ -16,6 +16,21 @@ var nearPinsJSON []byte
 //go:embed tinfoil_pins.json
 var tinfoilPinsJSON []byte
 
+// The Privacy Veil's filter runs in a Tinfoil enclave of its own, pinned as the router is. Its pins are not in a
+// VendorSet: the pins repository does not carry them yet, so a signed release never swaps them, and a new filter
+// release takes a code release.
+//
+//go:embed tinfoil_pii_pins.json
+var tinfoilFilterPinsJSON []byte
+
+var filterPins = sync.OnceValue(func() RouterPins {
+	pins, err := ParseTinfoilPins(tinfoilFilterPinsJSON)
+	if err != nil {
+		panic("attestation: embedded tinfoil_pii_pins.json: " + err.Error())
+	}
+	return pins
+})
+
 // VendorSource says where a VendorSet came from: the files compiled into the binary, or a signed release of
 // the pins repository, which StatementSHA256 names by the hash of its vendor statement.
 type VendorSource struct {
@@ -108,6 +123,9 @@ func PhalaPins() IdentityPins { return Vendors().Phala }
 func NearPins() GatewayModelPins { return Vendors().Near }
 
 func TinfoilPins() RouterPins { return Vendors().Tinfoil }
+
+// TinfoilFilterPins are the pins of the Privacy Veil's filter.
+func TinfoilFilterPins() RouterPins { return filterPins() }
 
 func LoadPhalaPins(path string) (IdentityPins, error) {
 	if path == "" {

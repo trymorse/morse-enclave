@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"time"
 )
 
@@ -37,8 +38,9 @@ const (
 )
 
 var (
-	ErrKeyUnknown = errors.New("seal: no entry is sealed to this key")
-	ErrInvalid    = errors.New("seal: the sealed request does not open")
+	ErrKeyUnknown   = errors.New("seal: no entry is sealed to this key")
+	ErrInvalid      = errors.New("seal: the sealed request does not open")
+	ErrHeadTooLarge = errors.New("seal: the head is over MaxHead")
 )
 
 var (
@@ -100,6 +102,11 @@ type Head struct {
 	Path    string            `json:"path"`
 	Headers map[string]string `json:"headers"`
 	TS      int64             `json:"ts"`
+	// PrivacyVeil is a chat's privacy_veil, asked inside the seal so the relay can't drop it. A worker from before the
+	// Veil refuses any head that carries it, rather than serve the chat unveiled. PrivacyVeilPartition is the client's
+	// random id for the chat, at least 16 bytes in base64url, under which the worker may cache where details were.
+	PrivacyVeil          json.RawMessage `json:"privacy_veil,omitempty"`
+	PrivacyVeilPartition string          `json:"privacy_veil_partition,omitempty"`
 }
 
 type wireHead struct {
@@ -211,10 +218,55 @@ func parseInner(inner []byte) (Head, []byte, error) {
 	return head.Head, bytes.Clone(body), nil
 }
 
-func Seal(keys [][]byte, head Head, body []byte) (sealed []byte, cek [cekSize]byte, err error) {
+type Inner struct{ buf []byte }
+
+const (
+	innerFront = prefixSize + MaxKeys*entrySize + 4 + MaxHead
+	innerTail  = Pad + tagSize
+)
+
+func (i Inner) Len() int { return max(0, len(i.buf)-innerFront) }
+
+func (i Inner) Room() int { return max(0, cap(i.buf)-innerFront-innerTail) }
+
+func (i Inner) Body() []byte {
+	if len(i.buf) < innerFront {
+		return nil
+	}
+	return i.buf[innerFront:]
+}
+
+func (i *Inner) Grow(room int) {
+	grown := make([]byte, innerFront+i.Len(), innerFront+max(room, i.Len())+innerTail)
+	copy(grown[innerFront:], i.Body())
+	i.buf = grown
+}
+
+func (i *Inner) Fill(r io.Reader) error {
+	if i.buf == nil {
+		i.Grow(0)
+	}
+	for i.Len() < i.Room() {
+		n, err := r.Read(i.buf[len(i.buf) : innerFront+i.Room()])
+		i.buf = i.buf[:len(i.buf)+n]
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (i Inner) Seal(keys [][]byte, head Head) (sealed []byte, cek [cekSize]byte, err error) {
 	rand.Read(cek[:])
-	sealed, err = sealUnder(keys, head, body, cek, wrapCEK)
+	sealed, err = i.sealUnder(keys, head, cek, wrapCEK)
 	return sealed, cek, err
+}
+
+func Seal(keys [][]byte, head Head, body []byte) ([]byte, [cekSize]byte, error) {
+	var inner Inner
+	inner.Grow(len(body))
+	inner.Fill(bytes.NewReader(body))
+	return inner.Seal(keys, head)
 }
 
 type wrapper func(publicKey []byte, id KeyID, cek []byte) (enc, wrapped []byte, err error)
@@ -232,15 +284,22 @@ func wrapCEK(publicKey []byte, id KeyID, cek []byte) ([]byte, []byte, error) {
 	return enc, wrapped, err
 }
 
-func sealUnder(keys [][]byte, head Head, body []byte, cek [cekSize]byte, wrap wrapper) ([]byte, error) {
+func (i Inner) sealUnder(keys [][]byte, head Head, cek [cekSize]byte, wrap wrapper) ([]byte, error) {
 	if len(keys) < 1 || len(keys) > MaxKeys {
 		return nil, fmt.Errorf("seal: %d keys, want 1 to %d", len(keys), MaxKeys)
 	}
-	headJSON, err := json.Marshal(wireHead{Head: head, BodyLen: len(body)})
+	headJSON, err := json.Marshal(wireHead{Head: head, BodyLen: i.Len()})
 	if err != nil {
 		return nil, err
 	}
-	out := []byte{Version, byte(len(keys))}
+	if len(headJSON) > MaxHead {
+		return nil, fmt.Errorf("%w: %d bytes", ErrHeadTooLarge, len(headJSON))
+	}
+	if i.buf == nil {
+		i.Grow(0)
+	}
+	start := innerFront - 4 - len(headJSON) - prefixSize - len(keys)*entrySize
+	out := append(i.buf[start:start], Version, byte(len(keys)))
 	for _, key := range keys {
 		id := KeyIDOf(key)
 		enc, wrapped, err := wrap(key, id, cek[:])
@@ -254,19 +313,19 @@ func sealUnder(keys [][]byte, head Head, body []byte, cek [cekSize]byte, wrap wr
 		out = append(out, enc...)
 		out = append(out, wrapped...)
 	}
-	inner := innerOf(headJSON, body)
+	aad := out
+	out = binary.BigEndian.AppendUint32(out, uint32(len(headJSON)))
+	out = append(out, headJSON...)
+	plain := i.buf[start+len(aad) : len(i.buf)]
+	pad := padding(len(plain) + tagSize)
+	plain = plain[:len(plain)+pad]
+	clear(plain[len(plain)-pad:])
 	content, err := contentCipher(cek[:])
 	if err != nil {
 		return nil, err
 	}
-	return content.Seal(out, zeroNonce[:], inner, out), nil
-}
-
-func innerOf(headJSON, body []byte) []byte {
-	inner := binary.BigEndian.AppendUint32(nil, uint32(len(headJSON)))
-	inner = append(inner, headJSON...)
-	inner = append(inner, body...)
-	return append(inner, make([]byte, padding(len(inner)+tagSize))...)
+	sealed := content.Seal(plain[:0], zeroNonce[:], plain, aad)
+	return i.buf[start : start+len(aad)+len(sealed)], nil
 }
 
 func padding(n int) int { return (Pad - n%Pad) % Pad }

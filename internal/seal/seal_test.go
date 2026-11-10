@@ -5,6 +5,8 @@ import (
 	"crypto/rand"
 	"encoding/binary"
 	"errors"
+	"io"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -128,18 +130,19 @@ func TestAHeadPastMaxHeadIsInvalidAndOverheadBoundsTheSealedBytes(t *testing.T) 
 	id := newIdentity(t)
 	long := chatHead
 	long.Path = "/v1/lookup/x/" + strings.Repeat("a", MaxHead)
-	sealed, _, err := Seal([][]byte{id.PublicKey()}, long, nil)
-	if err != nil {
-		t.Fatal(err)
+	if sealed, _, err := Seal([][]byte{id.PublicKey()}, long, nil); !errors.Is(err, ErrHeadTooLarge) {
+		t.Errorf("a head past MaxHead sealed to %d bytes with %v, want ErrHeadTooLarge", len(sealed), err)
 	}
-	if _, err := id.Open(sealed); !errors.Is(err, ErrInvalid) {
-		t.Errorf("a head past MaxHead opened: %v", err)
+	oversized := plaintextOf([]byte(`{"method":"GET","path":"/`+strings.Repeat("a", MaxHead)+`","headers":{},"ts":1,"body_len":0}`), nil)
+	if _, _, err := parseInner(oversized); !errors.Is(err, ErrInvalid) {
+		t.Errorf("a head past MaxHead parsed: %v", err)
 	}
 	most := chatHead
 	most.Path = "/v1/lookup/x/" + strings.Repeat("a", MaxHead-200)
 	keys := [][]byte{id.PublicKey(), newIdentity(t).PublicKey(), newIdentity(t).PublicKey(), newIdentity(t).PublicKey()}
 	body := bytes.Repeat([]byte("x"), 3*Pad+1)
-	if sealed, _, err = Seal(keys, most, body); err != nil {
+	sealed, _, err := Seal(keys, most, body)
+	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := id.Open(sealed); err != nil || len(sealed) > len(body)+Overhead {
@@ -235,5 +238,52 @@ func TestAReplayIsRefusedForTheWindowAndForgottenAfterIt(t *testing.T) {
 	replays.Admit(third, at.Add(ReplayWindow+pruneReplaysEvery))
 	if _, kept := replays.seen[other]; kept || len(replays.seen) != 2 {
 		t.Errorf("the cache holds %d entries after pruning, and the oldest kept %t", len(replays.seen), kept)
+	}
+}
+
+func allocatedBy(f func()) uint64 {
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	f()
+	runtime.ReadMemStats(&after)
+	return after.TotalAlloc - before.TotalAlloc
+}
+
+func TestABodyIsSealedWhereItLiesAndSealCopiesItOnce(t *testing.T) {
+	id := newIdentity(t)
+	keys := [][]byte{id.PublicKey()}
+	body := bytes.Repeat([]byte("y"), 4<<20)
+	var sealed []byte
+	copied := allocatedBy(func() { sealed, _, _ = Seal(keys, chatHead, body) })
+	if opened, err := id.Open(sealed); err != nil || !bytes.Equal(opened.Body, body) {
+		t.Fatalf("Seal's output does not open to the body: %v", err)
+	}
+	if copied > uint64(len(body))*3/2 {
+		t.Errorf("Seal allocated %d MiB for a %d MiB body, want one copy: the body is sealed in the storage it lands in", copied>>20, len(body)>>20)
+	}
+	var inner Inner
+	inner.Grow(1 << 20)
+	if err := inner.Fill(bytes.NewReader(body)); err != nil {
+		t.Fatalf("a 4 MiB body into 1 MiB of room: %v, want nil with the room full", err)
+	}
+	inner.Grow(len(body))
+	if err := inner.Fill(io.MultiReader(bytes.NewReader(body[inner.Len():len(body)-1]), bytes.NewReader(body[len(body)-1:]))); err != nil || inner.Len() != len(body) {
+		t.Fatalf("the rest of the body: %v with %d bytes, want nil with the room full at %d", err, inner.Len(), len(body))
+	}
+	inner.Grow(len(body) + 1)
+	if err := inner.Fill(bytes.NewReader(nil)); !errors.Is(err, io.EOF) || inner.Len() != len(body) {
+		t.Fatalf("filling from an ended reader: %v, want io.EOF with the body kept", err)
+	}
+	inPlace := allocatedBy(func() { sealed, _, _ = inner.Seal(keys, chatHead) })
+	if opened, err := id.Open(sealed); err != nil || !bytes.Equal(opened.Body, body) {
+		t.Fatalf("an Inner's seal does not open to the body: %v", err)
+	}
+	if storage := inner.buf[:cap(inner.buf)]; inPlace > 64<<10 || &storage[len(storage)-cap(sealed)] != &sealed[0] {
+		t.Errorf("sealing an Inner allocated %d KiB and the sealed request lies elsewhere; want it encrypted in the Inner's own storage", inPlace>>10)
+	}
+	empty, _, err := (Inner{}).Seal(keys, chatHead)
+	if opened, err2 := id.Open(empty); err != nil || err2 != nil || len(opened.Body) != 0 {
+		t.Errorf("a zero Inner seals a request without a body: %v %v %q", err, err2, opened.Body)
 	}
 }

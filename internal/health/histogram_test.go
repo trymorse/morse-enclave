@@ -91,3 +91,23 @@ func TestARecordRacingADrainIsTakenExactlyOnce(t *testing.T) {
 		t.Errorf("drains took %d samples of %d recorded", taken, writers*each)
 	}
 }
+
+func TestTheLeastAQuantileCanBeIsTheLowerEdgeOfTheBucketItFallsIn(t *testing.T) {
+	var h Histogram
+	for range 9 {
+		h.Record(time.Second)
+	}
+	h.Record(2 * time.Second)
+	c := h.Snapshot()
+	for _, q := range []float64{0.5, 0.9} {
+		if lo, hi := c.QuantileAtLeast(q), c.Quantile(q); lo > time.Second || hi <= time.Second || lo >= hi {
+			t.Errorf("q%.0f: at least %s, at most %s, want an edge at or below 1s below a bound above it", q*100, lo, hi)
+		}
+	}
+	if lo := c.QuantileAtLeast(1); lo > 2*time.Second || lo <= time.Second {
+		t.Errorf("q100 at least %s, want the edge of 2s's bucket", lo)
+	}
+	if lo := (Counts{}).QuantileAtLeast(0.9); lo != 0 {
+		t.Errorf("an empty histogram's q90 is at least %s, want 0", lo)
+	}
+}

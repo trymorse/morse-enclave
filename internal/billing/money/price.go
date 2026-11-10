@@ -72,6 +72,21 @@ func (p Price) Cost(u chat.Usage) Micros {
 	return PerMTok(Micros(scaled))
 }
 
+// VeilRate is what the Privacy Veil's filter charges for a chat: a price for each call and for each million tokens it
+// reads. Morse's cost book and the price a key pays both take this shape, and the price equals the cost.
+type VeilRate struct {
+	PerCall Micros
+	PerMTok Micros
+}
+
+// Of is what calls calls reading tokens tokens cost, rounded up to a whole micro.
+func (r VeilRate) Of(calls, tokens int) Micros {
+	return Micros(max(calls, 0))*r.PerCall + PerMTok(Micros(billableTokens(tokens)*int64(billableRate(r.PerMTok))))
+}
+
+// Zero is a rate that charges nothing: the Veil is not priced.
+func (r VeilRate) Zero() bool { return r == VeilRate{} }
+
 func PerMTok(scaled Micros) Micros {
 	return (scaled + priceUnitRoundingSlack) / tokensPerPriceUnit
 }

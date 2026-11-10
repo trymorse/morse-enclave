@@ -22,11 +22,9 @@ import (
 	"morse/backend/internal/web"
 )
 
-const SealedContentType = "application/morse-sealed"
-
 var sealedMethods = []string{http.MethodGet, http.MethodPost, http.MethodDelete}
 
-var sealedBodyCaps = map[string]int{
+var SealedBodyCaps = map[string]int{
 	SearchPattern: web.MaxRequestBody, FetchPattern: web.MaxRequestBody, ResearchPattern: research.MaxRequestBody, TranscriptionPattern: audio.MaxRequestBody,
 	PluginCallPattern: plugins.MaxCallBody, PluginTokenPattern: plugins.MaxTokenBody, PluginRevokePattern: plugins.MaxTokenBody,
 }
@@ -48,8 +46,9 @@ type SealedOpening struct {
 	Body []byte
 	Cast chat.Cast
 	Framing
-	KeyCaller bool
-	KeyFloor  catalog.Tier
+	KeyCaller   bool
+	KeyFloor    catalog.Tier
+	PrivacyVeil VeilOpening
 }
 
 type SealedAdmission struct {
@@ -116,7 +115,7 @@ func (w *InProcess) OpenSealed(ctx context.Context, o SealedOpening) (SealedAdmi
 	if !ok {
 		return refuse(ErrSealedInvalid.Envelope(), ErrSealedInvalid.Status)
 	}
-	if limit, capped := sealedBodyCaps[pattern]; capped && len(req.Body) > limit {
+	if limit, capped := SealedBodyCaps[pattern]; capped && len(req.Body) > limit {
 		return refuse(apierr.ErrRequestTooLarge.Envelope(), apierr.ErrRequestTooLarge.Status)
 	}
 	header := http.Header{}
@@ -124,7 +123,8 @@ func (w *InProcess) OpenSealed(ctx context.Context, o SealedOpening) (SealedAdmi
 		header.Set(name, value)
 	}
 	cek := req.CEK
-	admitted, err := w.Open(ctx, Opening{Method: req.Method, Path: target.Path, Query: target.RawQuery, Header: ContentHeaders(header), Body: bytes.NewReader(req.Body), Cast: o.Cast, Framing: o.Framing, KeyCaller: o.KeyCaller, KeyFloor: o.KeyFloor, cek: &cek})
+	admitted, err := w.Open(ctx, Opening{Method: req.Method, Path: target.Path, Query: target.RawQuery, Header: ContentHeaders(header), Body: bytes.NewReader(req.Body), Cast: o.Cast, Framing: o.Framing, KeyCaller: o.KeyCaller, KeyFloor: o.KeyFloor,
+		PrivacyVeil: o.PrivacyVeil, cek: &cek, veilHead: req.PrivacyVeil, veilPartition: req.PrivacyVeilPartition})
 	if err != nil {
 		refusal := refusalWire(contentRefusal(err))
 		return refuse(refusal.Envelope(), refusal.Status)
@@ -166,7 +166,7 @@ type sealedReply struct {
 
 func newSealedReply(outer http.ResponseWriter, cek [32]byte) *sealedReply {
 	h := outer.Header()
-	h.Set("Content-Type", SealedContentType)
+	h.Set("Content-Type", seal.ContentType)
 	h.Set("Cache-Control", "no-store")
 	rc := http.NewResponseController(outer)
 	stream, _ := seal.NewStream(outer, func() { rc.Flush() }, cek)

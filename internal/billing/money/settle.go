@@ -24,6 +24,16 @@ type Settlement struct {
 	EndpointCost EndpointCost
 	Provider     string
 	Placement    Placement
+	PrivacyVeil  VeilCharge
+}
+
+// VeilCharge is what a chat's Privacy Veil cost: the filter's billable calls and tokens, how long its scan took, the
+// part of Cost the caller paid for it, and what Morse paid Tinfoil.
+type VeilCharge struct {
+	Calls, Tokens int
+	Millis        int64
+	Micros        Micros
+	Cost          Micros
 }
 
 func Unbilled(o measure.Outcome) Settlement { return Settlement{Outcome: o, Source: measure.UsageNone} }

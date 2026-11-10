@@ -43,8 +43,9 @@ type Receipt struct {
 
 func (r Receipt) logged() Logged { return Logged{Log: r.log, Index: r.index} }
 
-// recordDigest is H, the digest K signs for every entry of its record.
-func recordDigest(spkiSHA256 string) [32]byte {
+// RecordDigest is H, the digest K signs for every entry of its record, and
+// the digest a watcher requires of every entry it counts.
+func RecordDigest(spkiSHA256 string) [32]byte {
 	return sha256.Sum256([]byte(RecordType + "\n" + spkiSHA256 + "\n"))
 }
 
@@ -116,7 +117,7 @@ func (d *Door) entry() (Entry, *Refusal) {
 	if _, unrecorded := c.state.(Unrecorded); !unrecorded {
 		return Entry{}, refuse(http.StatusConflict, "recorded", "this door's record is already proven")
 	}
-	digest := recordDigest(c.key.spkiSHA256())
+	digest := RecordDigest(c.key.spkiSHA256())
 	signature, err := ecdsa.SignASN1(rand.Reader, c.key.private, digest[:])
 	if err != nil {
 		return Entry{}, refuse(http.StatusInternalServerError, "unsigned", "%v", err)
@@ -128,7 +129,7 @@ func (d *Door) entry() (Entry, *Refusal) {
 // custody's record certificate and a signature by its key over H.
 func prove(c *custody, e rekorv2.Entry) (Receipt, *Refusal) {
 	body := e.Body()
-	digest := recordDigest(c.key.spkiSHA256())
+	digest := RecordDigest(c.key.spkiSHA256())
 	if body.Digest != digest || !bytes.Equal(body.Certificate, c.record) || !ecdsa.VerifyASN1(&c.key.private.PublicKey, digest[:], body.Signature) {
 		return Receipt{}, refuse(http.StatusUnprocessableEntity, string(rekorv2.NotThisRecord), "the entry does not carry this custody's record and a signature by its key")
 	}

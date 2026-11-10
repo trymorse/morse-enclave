@@ -65,6 +65,10 @@ func (p RouterPins) Pinned(m string) bool {
 	return slices.ContainsFunc(p.Releases, func(r RouterRelease) bool { return r.Measurement == m })
 }
 
+func (p RouterPins) Lists(field, observed string) bool {
+	return field == ReleasesField && p.Pinned(observed)
+}
+
 // releaseDrift serves an unpinned measurement when Sigstore proves Tinfoil's release workflow
 // published it at a tag newer than every pinned release. Anything less is an anchor. Observed is the
 // bare measurement for both kinds, which cmd/tinfoilpin and the browser read.

@@ -75,12 +75,15 @@ func (s SealedSender) Complete(ctx context.Context, body []byte, header http.Hea
 }
 
 func (s SealedSender) open(ctx context.Context, body []byte, header http.Header, seal Sealing) (*http.Response, error) {
+	if err := upstream.CheckEgress(ctx, body); err != nil {
+		return nil, err
+	}
 	sealed, err := sealBody(body, seal)
 	if err != nil {
 		return nil, err
 	}
 	seal.Forward(header.Set)
-	resp, err := s.Endpoint.Open(ctx, upstream.Request{Method: http.MethodPost, Path: ChatCompletionsPath, Header: header, Body: sealed})
+	resp, err := s.Endpoint.Open(upstream.WithoutEgress(ctx), upstream.Request{Method: http.MethodPost, Path: ChatCompletionsPath, Header: header, Body: sealed})
 	if err != nil {
 		return nil, err
 	}

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"morse/backend/internal/affinity"
+	"morse/backend/internal/attested"
 	"morse/backend/internal/billing/measure"
 	"morse/backend/internal/billing/money"
 	"morse/backend/internal/catalog"
@@ -44,6 +45,7 @@ type Worker interface {
 	Receipt(ctx context.Context, v Vendor, id string) (json.RawMessage, error)
 	Session(ctx context.Context, v Vendor, id string) (json.RawMessage, error)
 	Sessions(ctx context.Context, v Vendor) ([]chat.ListedSession, error)
+	Unpinned(ctx context.Context) ([]attested.UnpinnedRelease, error)
 }
 
 // Format is the attestation document a client asked for. Only a Tinfoil route reads it, and it serves its v3
@@ -76,7 +78,12 @@ type Opening struct {
 	Framing
 	KeyCaller bool
 	KeyFloor  catalog.Tier
-	cek       *[32]byte
+	// PrivacyVeil is the relay's word on a chat's Veil. A sealed chat's own ask comes from its head, in veilHead and
+	// veilPartition, where the relay can't reach it.
+	PrivacyVeil   VeilOpening
+	cek           *[32]byte
+	veilHead      json.RawMessage
+	veilPartition string
 }
 
 func ContentHeaders(from http.Header) http.Header {
@@ -128,6 +135,8 @@ type ChatAdmission struct {
 	Stream        bool
 	Compaction    bool
 	Character     chat.Character
+	// PrivacyVeil is set when the chat asked for the Veil, which scans it when it runs.
+	PrivacyVeil *VeilAdmission `json:",omitempty"`
 }
 
 func (ChatAdmission) kind() admissionKind { return admitsChat }
@@ -247,17 +256,27 @@ type Measured struct {
 	// refusal of the request, a prompt too long for its window among them, an unattested endpoint, and a cut before
 	// the first byte are not unserved. Endpoint then names only the last one tried, which its health and breaker still
 	// count.
-	Unserved   bool          `json:",omitempty"`
-	FailedOver []Try         `json:",omitempty"`
-	VendorWait time.Duration `json:",omitempty"`
-	Late       <-chan Try    `json:"-"`
-	Lingers    bool          `json:",omitempty"`
-	Counted    <-chan Count  `json:"-"`
+	Unserved    bool          `json:",omitempty"`
+	FailedOver  []Try         `json:",omitempty"`
+	VendorWait  time.Duration `json:",omitempty"`
+	PrivacyVeil *VeilMeasure  `json:",omitempty"`
+	Late        <-chan Try    `json:"-"`
+	Lingers     bool          `json:",omitempty"`
+	Counted     <-chan Count  `json:"-"`
 }
 
 type Try struct {
 	Endpoint catalog.EndpointID
 	Health   health.Observation
+}
+
+// VeilWait is the time a streamed reply's Privacy Veil spent scanning before the first vendor call: the worker's
+// time, which the relay's clock would otherwise count as its own overhead.
+func (m Measured) VeilWait() time.Duration {
+	if m.PrivacyVeil == nil || m.VendorWait <= 0 {
+		return 0
+	}
+	return time.Duration(m.PrivacyVeil.Millis) * time.Millisecond
 }
 
 type Follow uint8

@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -29,6 +30,7 @@ const (
 	logQueue     = 8192
 	writeTimeout = 5 * time.Second
 	flushTimeout = 5 * time.Second
+	listenQueue  = 4096
 )
 
 type secret struct {
@@ -36,7 +38,7 @@ type secret struct {
 	Value string `json:"value"`
 }
 
-var hostCredentials = []string{"COINGECKO_API_KEY", "OPENALEX_API_KEY"}
+var hostCredentials = []string{"COINGECKO_API_KEY", "OPENALEX_API_KEY", "TINFOIL_PRIVACY_FILTER_API_KEY"}
 
 func main() {
 	log.SetFlags(0)
@@ -59,13 +61,31 @@ func main() {
 		line, _ := json.Marshal(map[string]any{"time": time.Now().UTC(), "level": "WARN", "msg": "enclave refused host secrets", "names": dropped})
 		logs.add(line)
 	}
-	code := run(os.Args[1:], env, logs)
+	code := launch("/proc/sys", os.Args[1:], env, logs)
 	close(logs.lines)
 	select {
 	case <-shipped:
 	case <-time.After(flushTimeout):
 	}
 	os.Exit(code)
+}
+
+func launch(procSys string, argv, env []string, logs *shipper) int {
+	if err := raiseListenQueues(procSys); err != nil {
+		line, _ := json.Marshal(map[string]any{"time": time.Now().UTC(), "level": "ERROR", "msg": "enclave could not raise its listen queues", "error": err.Error()})
+		logs.add(line)
+		return 1
+	}
+	return run(argv, env, logs)
+}
+
+func raiseListenQueues(procSys string) error {
+	for _, name := range []string{"net/core/somaxconn", "net/ipv4/tcp_max_syn_backlog"} {
+		if err := os.WriteFile(filepath.Join(procSys, name), fmt.Appendf(nil, "%d\n", listenQueue), 0o644); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func fetchSecrets(url string) []secret {

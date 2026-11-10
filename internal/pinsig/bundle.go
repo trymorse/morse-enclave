@@ -18,7 +18,8 @@ import (
 // bundle is a Sigstore bundle v0.3 reduced to what keyless signing with
 // Rekor v1 produces: one leaf certificate, one signed content, and one Rekor
 // entry of that content's kind with both a signed entry timestamp and an
-// inclusion proof.
+// inclusion proof. A Rekor v2 bundle shares the first three, and its entry
+// is read by rekorv2 (v2.go).
 type bundle struct {
 	leafDER   []byte
 	content   signed
@@ -147,29 +148,40 @@ func parseBundle(raw []byte) (bundle, error) {
 
 // readBundle reads everything but the Rekor body, whose errors are ErrBody.
 func readBundle(raw []byte) (bundle, error) {
+	b, e, kind, err := readSigned(raw)
+	if err != nil {
+		return bundle{}, err
+	}
+	return readV1Entry(b, e, kind)
+}
+
+// readSigned reads what a bundle carries whichever log holds its entry: the
+// media type, the leaf, the signed content, and exactly one log entry, which
+// it returns unread with the Rekor body kind that content is logged as.
+func readSigned(raw []byte) (bundle, exactjson.Value, string, error) {
 	j := exactjson.Parse(raw)
 	mediaType := j.Key("mediaType").Text()
 	vm := j.Key("verificationMaterial")
 	hasSignature, hasEnvelope := j.Has("messageSignature"), j.Has("dsseEnvelope")
 	if err := j.Err(); err != nil {
-		return bundle{}, err
+		return bundle{}, exactjson.Value{}, "", err
 	}
 	switch {
 	case mediaType != bundleV03 && mediaType != bundleV03Legacy:
-		return bundle{}, fmt.Errorf("media type %q is not bundle v0.3", mediaType)
+		return bundle{}, exactjson.Value{}, "", fmt.Errorf("media type %q is not bundle v0.3", mediaType)
 	case !hasSignature && !hasEnvelope:
-		return bundle{}, errors.New("neither a message signature nor a DSSE envelope")
+		return bundle{}, exactjson.Value{}, "", errors.New("neither a message signature nor a DSSE envelope")
 	case hasSignature && hasEnvelope:
-		return bundle{}, errors.New("both a message signature and a DSSE envelope")
+		return bundle{}, exactjson.Value{}, "", errors.New("both a message signature and a DSSE envelope")
 	case !vm.Has("certificate"):
-		return bundle{}, errors.New("no leaf certificate")
+		return bundle{}, exactjson.Value{}, "", errors.New("no leaf certificate")
 	}
 	var entries []exactjson.Value
 	if vm.Has("tlogEntries") {
 		entries = vm.Key("tlogEntries").Items()
 	}
 	if len(entries) != 1 {
-		return bundle{}, fmt.Errorf("%d log entries, not one", len(entries))
+		return bundle{}, exactjson.Value{}, "", fmt.Errorf("%d log entries, not one", len(entries))
 	}
 	b := bundle{leafDER: vm.Key("certificate").Key("rawBytes").Bytes()}
 	var kind string
@@ -178,30 +190,38 @@ func readBundle(raw []byte) (bundle, error) {
 		digest := ms.Key("messageDigest")
 		algorithm, value, signature := digest.Key("algorithm").Text(), digest.Key("digest").Bytes(), ms.Key("signature").Bytes()
 		if err := j.Err(); err != nil {
-			return bundle{}, err
+			return bundle{}, exactjson.Value{}, "", err
 		}
 		if algorithm != "SHA2_256" || len(value) != 32 {
-			return bundle{}, errors.New("the message digest is not a SHA2_256 digest")
+			return bundle{}, exactjson.Value{}, "", errors.New("the message digest is not a SHA2_256 digest")
 		}
 		b.content, b.signature, kind = messageSignature{digest: [32]byte(value)}, signature, "hashedrekord"
 	} else {
 		env := j.Key("dsseEnvelope")
 		payload, payloadType, signatures := env.Key("payload").Bytes(), env.Key("payloadType").Text(), env.Key("signatures").Items()
 		if err := j.Err(); err != nil {
-			return bundle{}, err
+			return bundle{}, exactjson.Value{}, "", err
 		}
 		if len(signatures) != 1 || payloadType == "" {
-			return bundle{}, errors.New("the DSSE envelope does not carry one signature and a payload type")
+			return bundle{}, exactjson.Value{}, "", errors.New("the DSSE envelope does not carry one signature and a payload type")
 		}
 		b.content, b.signature, kind = dsseEnvelope{payloadType: payloadType, payload: payload}, signatures[0].Key("sig").Bytes(), "dsse"
 	}
-	e := entries[0]
+	if err := j.Err(); err != nil {
+		return bundle{}, exactjson.Value{}, "", err
+	}
+	return b, entries[0], kind, nil
+}
+
+// readV1Entry reads a Rekor v1 entry of kind, with both a signed entry
+// timestamp and an inclusion proof, into b.
+func readV1Entry(b bundle, e exactjson.Value, kind string) (bundle, error) {
 	kindVersion := e.Key("kindVersion")
 	entryKind, version := kindVersion.Key("kind").Text(), kindVersion.Key("version").Text()
 	logID := e.Key("logId").Key("keyId").Bytes()
 	logIndex, integratedTime := e.Key("logIndex").Uint(), e.Key("integratedTime").Uint()
 	canonical := e.Key("canonicalizedBody").Bytes()
-	if err := j.Err(); err != nil {
+	if err := e.Err(); err != nil {
 		return bundle{}, err
 	}
 	switch {
@@ -231,14 +251,14 @@ func readBundle(raw []byte) (bundle, error) {
 	for _, h := range hashes {
 		hash := h.Bytes()
 		if len(hash) != 32 {
-			if err := j.Err(); err != nil {
+			if err := e.Err(); err != nil {
 				return bundle{}, err
 			}
 			return bundle{}, errors.New("an inclusion proof hash is not 32 bytes")
 		}
 		proof.hashes = append(proof.hashes, [32]byte(hash))
 	}
-	if err := j.Err(); err != nil {
+	if err := e.Err(); err != nil {
 		return bundle{}, err
 	}
 	switch {

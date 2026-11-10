@@ -217,6 +217,20 @@ func (p IdentityPins) Pinned(m OSMeasurement) (OSImage, bool) {
 	return findImage(p.Images, m.registers())
 }
 
+func (p IdentityPins) Lists(field, observed string) bool {
+	switch field {
+	case ReleasesField:
+		return slices.ContainsFunc(p.Releases, func(r Release) bool { return r.String() == observed })
+	case osImageHashField:
+		return listsImage(p.Images, observed)
+	}
+	return false
+}
+
+func listsImage(images []OSImage, osImageHash string) bool {
+	return slices.ContainsFunc(images, func(i OSImage) bool { return i.OSImageHash == osImageHash })
+}
+
 func (p IdentityPins) Check(v PhalaReport) []Drift {
 	return slices.Concat(imageDrift(p.Images, v.OSMeasurement), p.gatewayDrift(v))
 }

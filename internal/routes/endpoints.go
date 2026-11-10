@@ -102,8 +102,9 @@ func (e endpoint) sealed() bool {
 }
 
 type modelsFile struct {
-	Models  []json.RawMessage `json:"models"`
-	Aliases []Alias           `json:"aliases"`
+	Models      []json.RawMessage `json:"models"`
+	Aliases     []Alias           `json:"aliases"`
+	PrivacyVeil json.RawMessage   `json:"privacy_veil"`
 }
 
 type served struct {

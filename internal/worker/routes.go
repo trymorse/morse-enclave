@@ -83,8 +83,14 @@ func (c *openCall) Write([]byte) (int, error) { return 0, nil }
 func (c *openCall) WriteHeader(int) { c.err = errNoSuchRoute }
 
 func (w *InProcess) Open(ctx context.Context, o Opening) (Admission, error) {
-	if o.Writing != nil && o.Method+" "+o.Path != ChatPattern {
+	route := o.Method + " " + o.Path
+	if o.Writing != nil && route != ChatPattern {
 		return nil, errExamplesNotChat
+	}
+	if route != ChatPattern && route != CompactPattern {
+		if err := veilNotHere(o); err != nil {
+			return nil, err
+		}
 	}
 	call := &openCall{worker: w, opening: o}
 	r := &http.Request{Method: o.Method, URL: &url.URL{Path: o.Path, RawQuery: o.Query}}

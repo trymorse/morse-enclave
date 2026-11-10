@@ -42,6 +42,7 @@ var (
 	ErrTinfoilBundle = errors.New("attestation: the Tinfoil bundle is not an SEV-SNP report with its VCEK and certificate")
 	ErrSNPReport     = errors.New("attestation: the SEV-SNP report does not verify under AMD's Genoa root")
 	ErrSNPPolicy     = errors.New("attestation: the SEV-SNP guest allows debugging or a migration agent")
+	ErrSNPVCEK       = errors.New("attestation: the SEV-SNP report names a chip or TCB its VCEK was not issued for")
 	ErrTinfoilTLS    = errors.New("attestation: REPORT_DATA does not bind the router certificate's key")
 )
 
@@ -155,7 +156,27 @@ func (p Policy) verifySNP(report *spb.Report, vcek []byte) (notAfter time.Time, 
 	if err != nil {
 		return time.Time{}, fmt.Errorf("%w: %w", ErrTinfoilBundle, err)
 	}
+	if err := vcekNamesReport(report, vcekCert); err != nil {
+		return time.Time{}, err
+	}
 	return vcekCert.NotAfter, nil
+}
+
+// vcekNamesReport refuses a report whose REPORTED_TCB or CHIP_ID is not the TCB and HWID AMD issued
+// the VCEK for. The VCEK's signature over the report does not bind those fields: a key issued for an
+// older TCB could sign a report claiming a newer one, and min_tcb is judged on the claim.
+func vcekNamesReport(report *spb.Report, vcek *x509.Certificate) error {
+	exts, err := kds.VcekCertificateExtensions(vcek)
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrSNPVCEK, err)
+	}
+	if reported := kds.TCBVersion(report.GetReportedTcb()); reported != exts.TCBVersion {
+		return fmt.Errorf("%w: REPORTED_TCB %s, VCEK TCB %s", ErrSNPVCEK, snpTCB(uint64(reported)), snpTCB(uint64(exts.TCBVersion)))
+	}
+	if chip := report.GetChipId(); !bytes.Equal(chip, exts.HWID) || bytes.Count(chip, []byte{0}) == len(chip) {
+		return fmt.Errorf("%w: CHIP_ID %x, VCEK HWID %x", ErrSNPVCEK, chip, exts.HWID)
+	}
+	return nil
 }
 
 func tinfoilReport(host string, report *spb.Report, tls aci.SPKI, hpke [32]byte, notAfter time.Time) TinfoilReport {

@@ -128,6 +128,7 @@ type sseWriter struct {
 	calls      chat.ToolCalls
 	transcript *chat.Transcript
 	clock      *thinkingClock
+	veil       *replyVeil
 }
 
 func (s *sseWriter) emit(c chat.Chunk) error {
@@ -137,6 +138,7 @@ func (s *sseWriter) emit(c chat.Chunk) error {
 	if unanswered(finish, sent) {
 		c = c.MarkUnanswered()
 	}
+	c = s.veil.chunk(c)
 	var object bytes.Buffer
 	c.WriteTo(&object)
 	err := s.event(bytes.NewReader(padObject(object.Bytes(), filler())))
@@ -214,6 +216,15 @@ func hasPadding(object []byte) bool {
 		_, ok := topLevel[key[1:len(key)-1]]
 		return ok
 	})
+}
+
+// closeVeil writes, before the stream ends, any text the Veil still holds back and the report.
+func (s *sseWriter) closeVeil() {
+	for _, c := range s.veil.closing() {
+		var object bytes.Buffer
+		c.WriteTo(&object)
+		s.event(bytes.NewReader(padObject(object.Bytes(), filler())))
+	}
 }
 
 func (s *sseWriter) done() {

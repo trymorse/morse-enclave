@@ -151,8 +151,8 @@ func TestOnlyBusyAVendorErrorUnreachableAStallAVendorRefusalOfOurAccountAnUnatte
 	}
 }
 
-func TestOnlyBusyAVendorErrorUnreachableAStallAVendorRefusalOfOurAccountAMidstreamBreakAndAnUnattestedVendorTripTheBreaker(t *testing.T) {
-	want := map[Outcome]bool{UpstreamBusy: true, UpstreamError: true, Unreachable: true, Stalled: true, UpstreamUnavailable: true, MidstreamBreak: true, Unattested: true}
+func TestOnlyBusyAVendorErrorUnreachableAStallAVendorRefusalOfOurAccountAMidstreamBreakAnUnattestedVendorAndAMalformedReplyTripTheBreaker(t *testing.T) {
+	want := map[Outcome]bool{UpstreamBusy: true, UpstreamError: true, Unreachable: true, Stalled: true, UpstreamUnavailable: true, MidstreamBreak: true, Unattested: true, Malformed: true}
 	for _, o := range Outcomes() {
 		if o.TripsBreaker() != want[o] {
 			t.Errorf("%s trips the breaker: %t, want %t", o, o.TripsBreaker(), want[o])
@@ -161,7 +161,7 @@ func TestOnlyBusyAVendorErrorUnreachableAStallAVendorRefusalOfOurAccountAMidstre
 }
 
 func TestAMalformedReplyTripsTheBreakerOnlyWhenItEndedOKOrItsOutcomeTripsItAlready(t *testing.T) {
-	want := map[Outcome]bool{OK: true, UpstreamBusy: true, UpstreamError: true, Unreachable: true, Stalled: true, UpstreamUnavailable: true, MidstreamBreak: true, Unattested: true}
+	want := map[Outcome]bool{OK: true, UpstreamBusy: true, UpstreamError: true, Unreachable: true, Stalled: true, UpstreamUnavailable: true, MidstreamBreak: true, Unattested: true, Malformed: true}
 	for _, o := range Outcomes() {
 		seen := Observation{Outcome: o, Malformed: true}
 		if seen.TripsBreaker() != want[o] || seen.Healthy() {

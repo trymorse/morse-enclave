@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"morse/backend/internal/jcs"
+	"morse/backend/internal/sigstore/rekorv2"
 )
 
 const vendorStatementType = "morse-vendor-pins-v1"
@@ -99,10 +100,10 @@ func (s VendorStatement) CheckFile(path string, raw []byte) ([]byte, error) {
 	return canonical, nil
 }
 
-// VerifyVendor checks the bundle over a vendor statement and parses it. Like Verify, the statement must name
-// the commit the signing run built from.
-func VerifyVendor(statement, bundle []byte, root TrustRoot, id Identity) (VendorStatement, time.Time, error) {
-	rec, err := VerifyBundle(statement, bundle, root, id)
+// VerifyVendor checks the Rekor v2 bundle over a vendor statement and parses it. Like Verify, the statement
+// must name the commit the signing run built from, and the time it returns is the certificate's NotBefore.
+func VerifyVendor(statement, bundle []byte, root TrustRoot, id Identity, witnesses rekorv2.WitnessPolicy) (VendorStatement, time.Time, error) {
+	rec, err := VerifyBundleV2(statement, bundle, root, id, witnesses)
 	if err != nil {
 		return VendorStatement{}, time.Time{}, err
 	}
@@ -113,12 +114,12 @@ func VerifyVendor(statement, bundle []byte, root TrustRoot, id Identity) (Vendor
 	if st.PinsCommit != rec.SourceDigest {
 		return VendorStatement{}, time.Time{}, fmt.Errorf("%w: pins_commit %s is not the commit the signer built from, %s", ErrStatement, st.PinsCommit, rec.SourceDigest)
 	}
-	return st, rec.IntegratedTime, nil
+	return st, rec.NotBefore, nil
 }
 
 // AdmitVendor is Admit for a vendor statement, which names no environment: its sequence is at or above the
-// floor, and Rekor logged it at or before now and no more than maxAge before. now must come from a source the
-// host cannot move.
-func AdmitVendor(st VendorStatement, floor uint64, integrated, now time.Time, maxAge time.Duration) error {
-	return admitWindow(st.Sequence, floor, integrated, now, maxAge)
+// floor, and it was signed (the time VerifyVendor returns) at or before now and no more than maxAge before.
+// now must come from a source the host cannot move.
+func AdmitVendor(st VendorStatement, floor uint64, signed, now time.Time, maxAge time.Duration) error {
+	return admitWindow(st.Sequence, floor, signed, now, maxAge)
 }

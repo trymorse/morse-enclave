@@ -15,6 +15,7 @@ import (
 	"morse/backend/internal/billing/measure"
 	"morse/backend/internal/chat"
 	"morse/backend/internal/media"
+	"morse/backend/internal/seal"
 	"morse/backend/internal/upstream"
 )
 
@@ -59,6 +60,7 @@ func NewServer(inner *InProcess, routesDigest string) *Server {
 	s.mux.HandleFunc("POST /poll", s.poll)
 	s.mux.HandleFunc("GET /routes", s.serveRoutes)
 	s.mux.HandleFunc("GET /attestation", s.attestation)
+	s.mux.HandleFunc("GET /unpinned", s.serveUnpinned)
 	s.mux.HandleFunc("POST /attest", s.evidence(func(ctx context.Context, req evidenceRequest) (any, error) {
 		att, err := s.inner.Attest(ctx, req.Vendor, req.Nonce, req.format())
 		return attestationWire{Report: att.Report, BindModel: att.BindModel, GPUVerdicts: att.GPUVerdicts, VendorPins: att.VendorPins}, err
@@ -117,7 +119,7 @@ func (s *Server) opening(header http.Header) (Opening, error) {
 	if err != nil {
 		return Opening{}, err
 	}
-	return Opening{Cast: s.casts.of(o.Prompts, o.Rules), Framing: Framing{Launch: o.Launch, Own: o.Own, Writing: o.Writing}, KeyCaller: o.KeyCaller, KeyFloor: o.keyFloor}, nil
+	return Opening{Cast: s.casts.of(o.Prompts, o.Rules), Framing: Framing{Launch: o.Launch, Own: o.Own, Writing: o.Writing}, KeyCaller: o.KeyCaller, KeyFloor: o.keyFloor, PrivacyVeil: o.Veil}, nil
 }
 
 func (s *Server) open(w http.ResponseWriter, r *http.Request) {
@@ -146,9 +148,9 @@ func (s *Server) openSealed(w http.ResponseWriter, r *http.Request) {
 		apierr.WriteError(w, apierr.ErrRequestTooLarge)
 		return
 	}
-	opened, err := s.inner.OpenSealed(r.Context(), SealedOpening{Body: body, Cast: o.Cast, Framing: o.Framing, KeyCaller: o.KeyCaller, KeyFloor: o.KeyFloor})
+	opened, err := s.inner.OpenSealed(r.Context(), SealedOpening{Body: body, Cast: o.Cast, Framing: o.Framing, KeyCaller: o.KeyCaller, KeyFloor: o.KeyFloor, PrivacyVeil: o.PrivacyVeil})
 	if refused, ok := errors.AsType[SealedRefusal](err); ok {
-		w.Header().Set("Content-Type", SealedContentType)
+		w.Header().Set("Content-Type", seal.ContentType)
 		w.Write(refused.Reply)
 		return
 	}
@@ -319,6 +321,15 @@ func (s *Server) poll(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) serveRoutes(w http.ResponseWriter, r *http.Request) {
 	apierr.WriteJSON(w, http.StatusOK, Served{Digest: s.routesDigest, Wire: WireVersion})
+}
+
+func (s *Server) serveUnpinned(w http.ResponseWriter, r *http.Request) {
+	releases, err := s.inner.Unpinned(r.Context())
+	if err != nil {
+		apierr.WriteError(w, apierr.ErrUnavailable)
+		return
+	}
+	apierr.WriteJSON(w, http.StatusOK, unpinnedWire{Releases: releases})
 }
 
 func (s *Server) attestation(w http.ResponseWriter, r *http.Request) {

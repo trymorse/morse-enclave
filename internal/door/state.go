@@ -255,7 +255,7 @@ func (d *Door) now(ctx context.Context) (time.Time, error) {
 
 func (d *Door) Ready() <-chan struct{} { return d.ready }
 
-func (d *Door) GetCertificate(*tls.ClientHelloInfo) (*tls.Certificate, error) {
+func (d *Door) certificate(*tls.ClientHelloInfo) (*tls.Certificate, error) {
 	switch state := d.custody.Load().state.(type) {
 	case Serving:
 		if !d.clock().Before(state.NotAfter) {

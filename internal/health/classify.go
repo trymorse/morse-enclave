@@ -49,7 +49,8 @@ var failsOver = map[Outcome]bool{UpstreamBusy: true, UpstreamError: true, Unreac
 // tripsBreaker holds MidstreamBreak although it never fails over: the reply that broke stays with its client, but a host
 // that breaks every stream after its first chunk is as broken as one that fails before it, and only an open circuit
 // keeps the next turns, its home's among them, off it.
-var tripsBreaker = map[Outcome]bool{UpstreamBusy: true, UpstreamError: true, Unreachable: true, Stalled: true, UpstreamUnavailable: true, MidstreamBreak: true, Unattested: true}
+// It holds Malformed for the same reason: the client kept the reply, and a host that sends unusable calls is broken.
+var tripsBreaker = map[Outcome]bool{UpstreamBusy: true, UpstreamError: true, Unreachable: true, Stalled: true, UpstreamUnavailable: true, MidstreamBreak: true, Unattested: true, Malformed: true}
 
 func (o Outcome) FailsOver() bool { return failsOver[o] }
 
@@ -63,6 +64,10 @@ func Classify(e Evidence) Outcome {
 		return OK
 	case e.Err == nil:
 		return cutOutcomes[e.Cut]
+	case errors.Is(e.Err, upstream.ErrEgressRefused):
+		// The Privacy Veil kept a body that still held a detail from leaving: nothing reached the vendor, so this says
+		// nothing about it.
+		return ClientError
 	case errors.Is(e.Err, upstream.ErrUnreachable):
 		return Unreachable
 	case errors.Is(e.Err, upstream.ErrStalled):

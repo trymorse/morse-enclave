@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"morse/backend/internal/apierr"
+	"morse/backend/internal/attested"
 	"morse/backend/internal/billing/measure"
 	"morse/backend/internal/catalog"
 	"morse/backend/internal/chat"
@@ -174,7 +175,11 @@ type pollRequest struct {
 	Deadline time.Time `json:"deadline"`
 }
 
-const WireVersion = 3
+const WireVersion = 4
+
+type unpinnedWire struct {
+	Releases []attested.UnpinnedRelease `json:"releases"`
+}
 
 type Served struct {
 	Digest string `json:"digest"`
@@ -223,11 +228,12 @@ type openingWire struct {
 	Writing   *chat.Writing     `json:"writing,omitempty"`
 	KeyCaller bool              `json:"key_caller,omitempty"`
 	KeyFloor  string            `json:"key_floor,omitempty"`
+	Veil      VeilOpening       `json:"privacy_veil,omitzero"`
 	keyFloor  catalog.Tier
 }
 
-func setOpening(header http.Header, c chat.Cast, f Framing, keyCaller bool, keyFloor catalog.Tier) {
-	o := openingWire{Prompts: c.Prompts(), Rules: c.Rules(), Launch: f.Launch, Own: f.Own, Writing: f.Writing, KeyCaller: keyCaller}
+func setOpening(header http.Header, c chat.Cast, f Framing, keyCaller bool, keyFloor catalog.Tier, veil VeilOpening) {
+	o := openingWire{Prompts: c.Prompts(), Rules: c.Rules(), Launch: f.Launch, Own: f.Own, Writing: f.Writing, KeyCaller: keyCaller, Veil: veil}
 	if keyFloor.Valid() {
 		o.KeyFloor = keyFloor.String()
 	}
@@ -260,8 +266,11 @@ func refusalWire(err error) apierr.Error {
 
 func wireRefusal(resp *http.Response) error {
 	var e struct {
-		Error struct{ Message, Type, Code string } `json:"error"`
-		KeyID *seal.KeyID                          `json:"key_id"`
+		Error struct {
+			Message, Type, Code, Reason string
+			Param                       *string
+		} `json:"error"`
+		KeyID *seal.KeyID `json:"key_id"`
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, apierr.MaxErrorBody)).Decode(&e); err != nil || e.Error.Type == "" {
 		return fmt.Errorf("worker: status %d with no refusal envelope", resp.StatusCode)
@@ -272,5 +281,9 @@ func wireRefusal(resp *http.Response) error {
 		}
 		return KeyUnknown{Holds: *e.KeyID}
 	}
-	return apierr.Error{Status: resp.StatusCode, Type: e.Error.Type, Code: e.Error.Code, Message: e.Error.Message}
+	refusal := apierr.Error{Status: resp.StatusCode, Type: e.Error.Type, Code: e.Error.Code, Message: e.Error.Message, Reason: e.Error.Reason}
+	if e.Error.Param != nil {
+		refusal.Param = *e.Error.Param
+	}
+	return refusal
 }

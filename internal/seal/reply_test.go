@@ -3,6 +3,7 @@ package seal
 import (
 	"bytes"
 	"crypto/rand"
+	"encoding/binary"
 	"errors"
 	"io"
 	"net/http"
@@ -231,5 +232,38 @@ func TestOpenReplyStreamsTheBodyAcrossFramesAndNamesATruncatedOne(t *testing.T) 
 	}
 	if _, err := OpenReply(bytes.NewReader(nil), cek); !errors.Is(err, ErrTruncated) {
 		t.Errorf("an empty reply read as %v", err)
+	}
+}
+
+type countingReader struct {
+	r    io.Reader
+	read int
+}
+
+func (c *countingReader) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	c.read += n
+	return n, err
+}
+
+func TestAFrameSizePastTheFormatIsRefusedBeforeItIsRead(t *testing.T) {
+	cek, _ := testKeys(t)
+	var out bytes.Buffer
+	s, _ := NewStream(&out, func() {}, cek)
+	s.Begin(ReplyHead{Status: 200})
+	s.Close()
+	salt := out.Bytes()[:saltSize]
+	for name, size := range map[string]uint32{"a gibibyte": 1 << 30, "one over the largest frame": maxFrameSize + 1} {
+		wire := binary.BigEndian.AppendUint32(bytes.Clone(salt), size)
+		r := &countingReader{r: bytes.NewReader(append(wire, make([]byte, 2*maxFrameSize)...))}
+		var err error
+		allocated := allocatedBy(func() { _, err = OpenReply(r, cek) })
+		if !errors.Is(err, ErrInvalid) || r.read > saltSize+4 || allocated > 64<<10 {
+			t.Errorf("%s: %v after reading %d bytes and allocating %d KiB; want ErrInvalid on the size alone, since a relay could otherwise make the door allocate 4 GiB before authenticating a byte", name, err, r.read, allocated>>10)
+		}
+	}
+	wire := binary.BigEndian.AppendUint32(bytes.Clone(salt), maxFrameSize)
+	if _, err := OpenReply(bytes.NewReader(wire), cek); !errors.Is(err, ErrTruncated) {
+		t.Errorf("the largest frame the format allows read as %v, want its bytes read and ErrTruncated", err)
 	}
 }

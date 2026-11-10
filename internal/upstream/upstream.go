@@ -39,6 +39,9 @@ func Do(client *http.Client, req *http.Request) (*http.Response, error) {
 	if _, set := req.Header["User-Agent"]; !set {
 		req.Header["User-Agent"] = []string{""}
 	}
+	if err := egress(req); err != nil {
+		return nil, err
+	}
 	var wrote atomic.Bool
 	req = req.WithContext(httptrace.WithClientTrace(req.Context(), &httptrace.ClientTrace{WroteHeaders: func() { wrote.Store(true) }}))
 	resp, err := noRedirects(client).Do(req)

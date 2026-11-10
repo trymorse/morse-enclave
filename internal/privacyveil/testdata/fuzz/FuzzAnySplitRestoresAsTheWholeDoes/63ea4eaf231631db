@@ -1,0 +1,4 @@
+go test fuzz v1
+string("0000[NAME_1]SSN_1 ")
+int(73)
+int(7)

@@ -20,9 +20,11 @@ import (
 	"morse/backend/internal/routes"
 )
 
-var imageSettings = []string{"PROXY_WORKER_ADDR", "PROXY_ROUTES_FILE", "PROXY_ENVIRONMENT", "PROXY_DOOR_FLOOR", "PROXY_VENDOR_PINS"}
+var imageSettings = []string{"PROXY_WORKER_ADDR", "PROXY_ROUTES_FILE", "PROXY_ENVIRONMENT", "PROXY_DOOR_FLOOR", "PROXY_DOOR_ADDR", "PROXY_DOOR_RELAY_URL", "PROXY_DOOR_PROXY_PROTOCOL", "PROXY_DOOR_PROXY_PEERS", "PROXY_VENDOR_PINS"}
 
 var neverInAnImage = []string{"PROXY_HPKE_DEV_KEY"}
+
+var runtimeSettings = []string{"GOMEMLIMIT"}
 
 func TestTheHostSetsOnlyCredentialsAndTheImagesValuesWin(t *testing.T) {
 	image := []string{"PROXY_ROUTES_FILE=/routes.json", "AUTH_URL=https://auth.example"}
@@ -154,7 +156,7 @@ func TestEachEnvironmentsImageSetsOnlyImageSettings(t *testing.T) {
 			if !ok || value == "" || strings.ContainsAny(value, " \t\"'") {
 				t.Errorf("%s: %q is not NAME=value with no spaces or quotes", f, line)
 			}
-			known := slices.Contains(imageSettings, name)
+			known := slices.Contains(imageSettings, name) || slices.Contains(runtimeSettings, name)
 			if !known || slices.Contains(hostCredentials, name) {
 				t.Errorf("%s sets %s, which is not an image setting", f, name)
 			}
@@ -280,12 +282,13 @@ func TestAFullQueueDropsLinesWithoutBlockingAndTheHostLearnsHowMany(t *testing.T
 	}
 }
 
-func TestTheCommandsOutputReachesTheHostAndItsExitCodeIsKept(t *testing.T) {
+func toHost(t *testing.T) (*shipper, <-chan string) {
+	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer ln.Close()
+	t.Cleanup(func() { ln.Close() })
 	s := newShipper(ln.Addr().String(), 16)
 	go s.run()
 	lines := make(chan string, 4)
@@ -303,16 +306,27 @@ func TestTheCommandsOutputReachesTheHostAndItsExitCodeIsKept(t *testing.T) {
 			lines <- l
 		}
 	}()
-	sh, err := exec.LookPath("sh")
-	if err != nil {
-		t.Skip("no sh")
-	}
+	return s, lines
+}
+
+func quietly[T any](f func() T) T {
 	devnull, _ := os.Open(os.DevNull)
 	defer devnull.Close()
 	stdout := os.Stdout
 	os.Stdout = devnull
-	code := run([]string{sh, "-c", `echo "{\"msg\":\"out $SECRET\"}"; echo err >&2; exit 7`}, []string{"SECRET=s"}, s)
-	os.Stdout = stdout
+	defer func() { os.Stdout = stdout }()
+	return f()
+}
+
+func TestTheCommandsOutputReachesTheHostAndItsExitCodeIsKept(t *testing.T) {
+	s, lines := toHost(t)
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("no sh")
+	}
+	code := quietly(func() int {
+		return run([]string{sh, "-c", `echo "{\"msg\":\"out $SECRET\"}"; echo err >&2; exit 7`}, []string{"SECRET=s"}, s)
+	})
 	if code != 7 {
 		t.Errorf("exit code %d, want 7", code)
 	}
@@ -328,5 +342,47 @@ func TestTheCommandsOutputReachesTheHostAndItsExitCodeIsKept(t *testing.T) {
 	slices.Sort(got)
 	if want := []string{`err`, `{"msg":"out s"}`}; !slices.Equal(got, want) {
 		t.Errorf("host got %q, want %q", got, want)
+	}
+}
+
+func TestTheWorkerStartsOnlyOnceTheEnclavesListenQueuesAreRaised(t *testing.T) {
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("no sh")
+	}
+	procSys := t.TempDir()
+	for _, dir := range []string{"net/core", "net/ipv4"} {
+		if err := os.MkdirAll(filepath.Join(procSys, dir), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s, lines := toHost(t)
+	read := `echo "{\"somaxconn\":$(cat net/core/somaxconn),\"syn\":$(cat net/ipv4/tcp_max_syn_backlog)}"`
+	code := quietly(func() int { return launch(procSys, []string{sh, "-c", "cd " + procSys + " && " + read}, nil, s) })
+	select {
+	case l := <-lines:
+		if want := `{"somaxconn":4096,"syn":4096}`; code != 0 || strings.TrimSpace(l) != want {
+			t.Errorf("the worker saw %q and exited %d, want %s: Linux 4.14's 128 overflows TCP_DEFER_ACCEPT's held connections at about 130 a second", l, code, want)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the worker's line never reached the host")
+	}
+
+	s, lines = toHost(t)
+	ran := filepath.Join(t.TempDir(), "ran")
+	if code := quietly(func() int { return launch(t.TempDir(), []string{sh, "-c", "touch " + ran}, nil, s) }); code == 0 {
+		t.Error("with listen queues the enclave could not raise, the launch exited 0, want a failure")
+	}
+	if _, err := os.Stat(ran); err == nil {
+		t.Error("the worker started though the enclave could not raise its listen queues, want it never started on 128")
+	}
+	select {
+	case l := <-lines:
+		var notice struct{ Level, Msg string }
+		if json.Unmarshal([]byte(l), &notice) != nil || notice.Level != "ERROR" || notice.Msg != "enclave could not raise its listen queues" {
+			t.Errorf("the host got %q, want an ERROR that the enclave could not raise its listen queues", l)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the host never heard why the worker did not start")
 	}
 }

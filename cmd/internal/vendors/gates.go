@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"time"
 
 	"morse/backend/internal/attestation"
 	"morse/backend/internal/attested"
@@ -12,8 +13,9 @@ import (
 )
 
 type Gates struct {
-	deps  tee.Deps
-	gates map[tee.Scope]gateEntry
+	deps     tee.Deps
+	gates    map[tee.Scope]gateEntry
+	unpinned *attested.UnpinnedReleases
 }
 
 type gateEntry struct {
@@ -23,7 +25,37 @@ type gateEntry struct {
 }
 
 func NewGates(base *http.Transport, unpinned *http.Client, policy attestation.Policy, observe func(attested.Event)) *Gates {
-	return &Gates{deps: tee.Deps{Base: base, Unpinned: unpinned, Policy: policy, Observe: observe}, gates: map[tee.Scope]gateEntry{}}
+	return &Gates{deps: tee.Deps{Base: base, Unpinned: unpinned, Policy: policy, Observe: observe}, gates: map[tee.Scope]gateEntry{}, unpinned: attested.NewUnpinnedReleases(time.Now)}
+}
+
+func Pinned(set attestation.VendorSet) func(vendor, field, release string) bool {
+	return func(vendor, field, release string) bool {
+		switch vendor {
+		case attester.Phala.Name:
+			return set.Phala.Lists(field, release)
+		case attester.Near.Name:
+			return set.Near.Lists(field, release)
+		case attester.Tinfoil.Name:
+			return set.Tinfoil.Lists(field, release)
+		}
+		return false
+	}
+}
+
+func (gs *Gates) Unpinned() []attested.UnpinnedRelease {
+	if gs == nil {
+		return nil
+	}
+	return gs.unpinned.Seen()
+}
+
+func (gs *Gates) observedBy(by *attester.Vendor) tee.Deps {
+	deps := gs.deps
+	deps.Observe = func(ev attested.Event) {
+		gs.unpinned.Observe(by.Name, ev)
+		gs.deps.Observe(ev)
+	}
+	return deps
 }
 
 func (gs *Gates) gate(route string, by *attester.Vendor, up attester.Upstream) (tee.Gate, error) {
@@ -31,7 +63,7 @@ func (gs *Gates) gate(route string, by *attester.Vendor, up attester.Upstream) (
 	scope := v.Scope(up)
 	first, ok := gs.gates[scope]
 	if !ok {
-		first = gateEntry{gate: v.NewGate(up, gs.deps), route: route, up: up}
+		first = gateEntry{gate: v.NewGate(up, gs.observedBy(by)), route: route, up: up}
 		gs.gates[scope] = first
 	}
 	if err := v.Share(first.up, up); err != nil {

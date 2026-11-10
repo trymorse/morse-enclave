@@ -23,6 +23,10 @@ func TestEachSideTakesTheBestEvidenceItHasAndTheBillIsLabelledByItsWeakestSide(t
 		"nothing counted":                                   {func(*measure.Evidence) {}, chat.Usage{PromptTokens: 50, CompletionTokens: 7}, measure.Sides{Prompt: measure.MethodRequestBytes, Completion: measure.MethodChunks}, measure.UsageEstimated},
 		"nothing counted past the window":                   {func(e *measure.Evidence) { e.PromptBound = 40 }, chat.Usage{PromptTokens: 40, CompletionTokens: 7}, measure.Sides{Prompt: measure.MethodRequestBytes, Completion: measure.MethodChunks}, measure.UsageEstimated},
 		"budgeted, nothing counted, records a token a byte": {func(e *measure.Evidence) { e.Budgeted = true }, chat.Usage{PromptTokens: 100, CompletionTokens: 7}, measure.Sides{Prompt: measure.MethodRequestBytes, Completion: measure.MethodChunks}, measure.UsageEstimated},
+		"a body sealed whole bills a token a byte":          {func(e *measure.Evidence) { e.SealedWhole = true }, chat.Usage{PromptTokens: 100, CompletionTokens: 7}, measure.Sides{Prompt: measure.MethodRequestBytes, Completion: measure.MethodChunks}, measure.UsageEstimated},
+		"a body sealed whole stops at the bound": {func(e *measure.Evidence) {
+			e.SealedWhole, e.PromptBound = true, 60
+		}, chat.Usage{PromptTokens: 60, CompletionTokens: 7}, measure.Sides{Prompt: measure.MethodRequestBytes, Completion: measure.MethodChunks}, measure.UsageEstimated},
 		"attachments add an allowance each to the byte estimate": {func(e *measure.Evidence) {
 			e.Attachments, e.PromptBound = 2, 20_000
 		}, chat.Usage{PromptTokens: 50 + 2*measure.AttachmentTokens, CompletionTokens: 7}, measure.Sides{Prompt: measure.MethodRequestBytes, Completion: measure.MethodChunks}, measure.UsageEstimated},

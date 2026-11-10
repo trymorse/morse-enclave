@@ -8,7 +8,10 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"time"
+
+	"morse/backend/internal/sigstore/rekorv2"
 )
 
 //go:embed sigstore_trusted_root.json
@@ -18,11 +21,13 @@ var publicGood []byte
 func PublicGood() (TrustRoot, error) { return ParseTrustRoot(publicGood) }
 
 // TrustRoot is the subset of a Sigstore trusted_root.json the verifier
-// needs: Fulcio CA chains with their validity windows, and Rekor v1 ECDSA
-// P-256 log keys by log id. Logs with other keys (Rekor v2) are left out.
+// needs: Fulcio CA chains with their validity windows, Rekor v1 ECDSA P-256
+// log keys by log id for VerifyDSSE, and the Rekor v2 Ed25519 shards for
+// Verify and VerifyVendor.
 type TrustRoot struct {
 	authorities []authority
 	logs        map[[32]byte]logKey
+	shards      rekorv2.Shards
 }
 
 type authority struct {
@@ -35,18 +40,20 @@ type logKey struct {
 	window window
 }
 
+type tlogJSON struct {
+	HashAlgorithm string `json:"hashAlgorithm"`
+	PublicKey     struct {
+		RawBytes   []byte     `json:"rawBytes"`
+		KeyDetails string     `json:"keyDetails"`
+		ValidFor   windowJSON `json:"validFor"`
+	} `json:"publicKey"`
+	LogID struct {
+		KeyID []byte `json:"keyId"`
+	} `json:"logId"`
+}
+
 type trustRootJSON struct {
-	Logs []struct {
-		HashAlgorithm string `json:"hashAlgorithm"`
-		PublicKey     struct {
-			RawBytes   []byte     `json:"rawBytes"`
-			KeyDetails string     `json:"keyDetails"`
-			ValidFor   windowJSON `json:"validFor"`
-		} `json:"publicKey"`
-		LogID struct {
-			KeyID []byte `json:"keyId"`
-		} `json:"logId"`
-	} `json:"tlogs"`
+	Logs        []tlogJSON `json:"tlogs"`
 	Authorities []struct {
 		CertChain struct {
 			Certificates []struct {
@@ -107,6 +114,15 @@ func ParseTrustRoot(trustedRootJSON []byte) (TrustRoot, error) {
 	}
 	if len(root.logs) == 0 || len(root.authorities) == 0 {
 		return TrustRoot{}, fmt.Errorf("%w: no Rekor v1 log key or no certificate authority", ErrTrustRoot)
+	}
+	// A root with no Ed25519 log leaves the shards empty, so every Rekor v2
+	// entry fails as an unknown log. One that lists a shard must be readable.
+	if slices.ContainsFunc(raw.Logs, func(l tlogJSON) bool { return l.PublicKey.KeyDetails == "PKIX_ED25519" }) {
+		shards, err := rekorv2.ParseEmbeddedShards(trustedRootJSON)
+		if err != nil {
+			return TrustRoot{}, fmt.Errorf("%w: %v", ErrTrustRoot, err)
+		}
+		root.shards = shards
 	}
 	return root, nil
 }

@@ -41,6 +41,18 @@ const (
 	modelWorkload       = "model"
 )
 
+func (p GatewayModelPins) Lists(field, observed string) bool {
+	for workload, w := range map[string]WorkloadPins{gatewayWorkload: p.Gateway, modelWorkload: p.Model} {
+		switch field {
+		case workloadField(workload, composeHashField):
+			return slices.ContainsFunc(w.Composes, func(c Compose) bool { return c.ComposeHash == observed })
+		case workloadField(workload, osImageHashField):
+			return listsImage(w.Images, observed)
+		}
+	}
+	return false
+}
+
 func (p WorkloadPins) Check(w Workload) []Drift {
 	drifts := imageDrift(p.Images, w.OSMeasurement)
 	if p.TDAttributes != w.TDAttributes {
@@ -84,7 +96,7 @@ func (p GatewayModelPins) Judge(r NearReport) Verdicts[aci.SPKI] {
 func (p GatewayModelPins) EnforceAnchorsBesidesImages(gateway NearGateway, m NearModel) error {
 	var drifts []Drift
 	for _, d := range p.drifts(gateway.Workload, m.Workload) {
-		if d.Field != gatewayWorkload+"."+ImagesField && d.Field != modelWorkload+"."+ImagesField {
+		if d.Field != workloadField(gatewayWorkload, ImagesField) && d.Field != workloadField(modelWorkload, ImagesField) {
 			drifts = append(drifts, d)
 		}
 	}
@@ -97,10 +109,12 @@ func (p GatewayModelPins) drifts(gateway, model Workload) []Drift {
 
 func scoped(workload string, drifts []Drift) []Drift {
 	for i := range drifts {
-		drifts[i].Field = workload + "." + drifts[i].Field
+		drifts[i].Field = workloadField(workload, drifts[i].Field)
 	}
 	return drifts
 }
+
+func workloadField(workload, field string) string { return workload + "." + field }
 
 func ParseNearPins(raw []byte) (GatewayModelPins, error) {
 	var p GatewayModelPins

@@ -6,6 +6,7 @@ import (
 	"io"
 	stdlog "log"
 	"log/slog"
+	"maps"
 	"slices"
 	"strings"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"morse/backend/internal/attestation"
 	"morse/backend/internal/attested"
 	"morse/backend/internal/chat"
+	"morse/backend/internal/door"
 	"morse/backend/internal/health"
 	"morse/backend/internal/vendorpins"
 )
@@ -36,9 +38,16 @@ const (
 	upstreamRefused
 	upstreamUnpinned
 	upstreamRefreshFailed
+	doorListening
+	doorServeFailed
+	doorConnectionRefused
+	doorRelayFailed
 	vendorPinsFailed
 	vendorPinsWouldSwap
 	vendorPinsSwapped
+	privacyVeilUnavailable
+	privacyVeilRefused
+	privacyFilterLabelUnknown
 )
 
 var messages = [...]struct {
@@ -61,9 +70,17 @@ var messages = [...]struct {
 	upstreamRefused:       {"upstream refused", slog.LevelWarn},
 	upstreamUnpinned:      {"upstream unpinned", slog.LevelError},
 	upstreamRefreshFailed: {"upstream attestation refresh failed", slog.LevelWarn},
+	doorListening:         {"door listening", slog.LevelInfo},
+	doorServeFailed:       {"door serve failed", slog.LevelError},
+	doorConnectionRefused: {"door connection refused", slog.LevelWarn},
+	doorRelayFailed:       {"door relay failed", slog.LevelWarn},
 	vendorPinsFailed:      {"vendor pins release refused, active set kept", slog.LevelWarn},
 	vendorPinsWouldSwap:   {"vendor pins would swap (log mode, nothing swapped)", slog.LevelInfo},
 	vendorPinsSwapped:     {"vendor pins swapped", slog.LevelInfo},
+	// Once a minute, never per request: a line timed to one request would tell the host it held a detail.
+	privacyVeilUnavailable:    {"privacy veil unavailable", slog.LevelWarn},
+	privacyVeilRefused:        {"privacy veil refused", slog.LevelInfo},
+	privacyFilterLabelUnknown: {"privacy filter label unknown", slog.LevelWarn},
 }
 
 type fields struct {
@@ -178,6 +195,15 @@ func (l *logger) UpstreamErrorChunk(model string, code chat.ErrorCode) {
 func (l *logger) UnknownReplyField(model, _ string) { l.log(unknownReplyField, fields{Route: model}) }
 
 func (l *logger) VendorUsageMissing(model string) { l.log(vendorUsageMissing, fields{Route: model}) }
+func (l *logger) Listening()                      { l.log(doorListening, fields{}) }
+
+func (l *logger) ConnectionRefused(r door.ConnectionRefusal) {
+	l.log(doorConnectionRefused, fields{Reason: r.String()})
+}
+
+func (l *logger) RelayFailed(pattern string, f door.Failure) {
+	l.log(doorRelayFailed, fields{Route: pattern, Reason: f.String()})
+}
 
 var attestations = map[attested.Kind]message{
 	attested.Anchored:           upstreamAttested,
@@ -251,3 +277,26 @@ func (l *logger) attestation(ev attested.Event) {
 }
 
 func discarded() *stdlog.Logger { return stdlog.New(io.Discard, "", 0) }
+
+func silenceStandardLogger() { stdlog.SetOutput(io.Discard) }
+
+// privacyFilterLabelsUnknown counts the spans the filter labelled in a way this build does not know. It names no
+// label: the filter chooses them.
+func (l *logger) privacyFilterLabelsUnknown(n int) {
+	l.log(privacyFilterLabelUnknown, fields{Count: n})
+}
+
+// privacyVeilFailures logs the minute's failed Veils, one line for each reason.
+func (l *logger) privacyVeilFailures(counts map[string]int) {
+	for _, reason := range slices.Sorted(maps.Keys(counts)) {
+		l.log(privacyVeilUnavailable, fields{Reason: reason, Count: counts[reason]})
+	}
+}
+
+// privacyVeilRefusals logs the minute's Veils that the chat ended itself, too large or left by its client, apart from
+// the failures the alarm sums.
+func (l *logger) privacyVeilRefusals(counts map[string]int) {
+	for _, reason := range slices.Sorted(maps.Keys(counts)) {
+		l.log(privacyVeilRefused, fields{Reason: reason, Count: counts[reason]})
+	}
+}

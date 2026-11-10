@@ -141,27 +141,30 @@ func ParseStatement(raw []byte) (Statement, error) {
 
 // Admit is the policy a verified statement must pass before its images are
 // trusted: it is for env, its sequence is at or above the floor the key has
-// travelled with, and Rekor logged it at or before now and no more than
-// maxAge before. now must come from a source the host cannot move, such as
-// the timestamp of a fresh NSM attestation document: a host clock set back
-// would admit a statement Rekor logged years ago.
-func Admit(st Statement, env string, floor uint64, integrated, now time.Time, maxAge time.Duration) error {
+// travelled with, and it was signed at or before now and no more than maxAge
+// before. signed is the time Verify returns, the certificate's NotBefore:
+// the signature is never earlier, so the age is never understated, and no
+// witness clock can make a stale statement look new. now must come from a
+// source the host cannot move, such as the timestamp of a fresh NSM
+// attestation document: a host clock set back would admit a statement signed
+// years ago.
+func Admit(st Statement, env string, floor uint64, signed, now time.Time, maxAge time.Duration) error {
 	if st.Environment != env {
 		return fmt.Errorf("%w: statement is for %s, not %s", ErrAdmit, st.Environment, env)
 	}
-	return admitWindow(st.Sequence, floor, integrated, now, maxAge)
+	return admitWindow(st.Sequence, floor, signed, now, maxAge)
 }
 
-func admitWindow(sequence, floor uint64, integrated, now time.Time, maxAge time.Duration) error {
+func admitWindow(sequence, floor uint64, signed, now time.Time, maxAge time.Duration) error {
 	switch {
 	case now.IsZero():
 		return fmt.Errorf("%w: no trusted time", ErrAdmit)
 	case sequence < floor:
 		return fmt.Errorf("%w: sequence %d is below the floor %d", ErrAdmit, sequence, floor)
-	case integrated.After(now):
-		return fmt.Errorf("%w: logged at %s, after now %s", ErrAdmit, integrated.Format(time.RFC3339), now.Format(time.RFC3339))
-	case now.Sub(integrated) > maxAge:
-		return fmt.Errorf("%w: logged %s ago, more than %s", ErrAdmit, now.Sub(integrated), maxAge)
+	case signed.After(now):
+		return fmt.Errorf("%w: signed at %s, after now %s", ErrAdmit, signed.Format(time.RFC3339), now.Format(time.RFC3339))
+	case now.Sub(signed) > maxAge:
+		return fmt.Errorf("%w: signed %s ago, more than %s", ErrAdmit, now.Sub(signed), maxAge)
 	}
 	return nil
 }

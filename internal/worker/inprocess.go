@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"morse/backend/internal/attested"
 	"morse/backend/internal/catalog"
 	"morse/backend/internal/chat"
 	"morse/backend/internal/jobs"
@@ -29,12 +30,14 @@ type InProcess struct {
 	lookup         *lookup.Relay
 	plugins        *plugins.Relay
 	reports        Reporter
+	unpinned       func() []attested.UnpinnedRelease
 	now            func() time.Time
 	keepaliveEvery time.Duration
 	videoSubmit    time.Duration
 	proofBudget    time.Duration
 	counters       counters
 	sealing        sealedState
+	privacyVeil    *PrivacyVeil
 	mu             sync.Mutex
 	last           uint64
 	opened         map[Handle]*entry
@@ -74,6 +77,9 @@ type Config struct {
 	Keepalive     time.Duration
 	VideoSubmit   time.Duration
 	ProofBudget   time.Duration
+	Unpinned      func() []attested.UnpinnedRelease
+	// PrivacyVeil serves the Veil. Nil refuses every chat that asks for it.
+	PrivacyVeil *PrivacyVeil
 }
 
 func NewInProcess(cfg Config) (*InProcess, error) {
@@ -86,7 +92,7 @@ func NewInProcess(cfg Config) (*InProcess, error) {
 		chats: indexChats(cfg.Models), images: map[string]media.ImageGenerator{}, videos: map[string]media.VideoGenerator{},
 		searches: map[string]web.Searcher{}, fetches: map[string]web.Fetcher{}, researchers: map[string]research.Researcher{}, transcribers: map[string]transcriber{},
 		endpoints: map[string]catalog.EndpointID{},
-		lookup:    cfg.Lookup, plugins: cfg.Plugins, reports: cfg.Reports,
+		lookup:    cfg.Lookup, plugins: cfg.Plugins, reports: cfg.Reports, unpinned: cfg.Unpinned, privacyVeil: cfg.PrivacyVeil,
 		now: cfg.Now, keepaliveEvery: cmp.Or(cfg.Keepalive, keepalive), videoSubmit: cmp.Or(cfg.VideoSubmit, videoSubmitTimeout), proofBudget: cmp.Or(cfg.ProofBudget, proofBudget), opened: map[Handle]*entry{},
 	}
 	if w.now == nil {
@@ -134,6 +140,13 @@ func (w *InProcess) indexNonChat(name string, m Model) {
 const videoSubmitTimeout = 2 * time.Minute
 
 const proofBudget = 6 * time.Second
+
+func (w *InProcess) Unpinned(context.Context) ([]attested.UnpinnedRelease, error) {
+	if w.unpinned == nil {
+		return nil, nil
+	}
+	return w.unpinned(), nil
+}
 
 func (w *InProcess) Poll(ctx context.Context, route, vendorID string) (jobs.Poll, error) {
 	if videos, known := w.videos[route]; known {

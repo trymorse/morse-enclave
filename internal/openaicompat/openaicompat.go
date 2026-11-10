@@ -247,8 +247,8 @@ func (p *Provider) Complete(ctx context.Context, c chat.Call) (chat.Chunk, chat.
 }
 
 func (p *Provider) admit(c chat.Call) error {
-	if p.Admit == nil {
-		return nil
+	if err := NamedFunctions(c); err != nil || p.Admit == nil {
+		return err
 	}
 	return p.Admit(c)
 }

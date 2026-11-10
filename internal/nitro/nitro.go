@@ -1,5 +1,5 @@
 // Package nitro attests the proxy's HPKE key: on an enclave through /dev/nsm, and elsewhere with a stand-in document
-// that a production build of the web app refuses. deploy/enclave/DESIGN.md section 2 is the rule.
+// that a production build of the web app refuses.
 package nitro
 
 import (

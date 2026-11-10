@@ -35,6 +35,7 @@ type Evidence struct {
 	Attachments        int
 	PromptBound        int
 	Budgeted           bool
+	SealedWhole        bool
 	Reply              Reply
 	Finish             chat.Finish
 	Unanswered         bool
@@ -236,9 +237,12 @@ func (m Measurement) unmeasured() UsageSource {
 	return UsageReported
 }
 
+// promptEstimate bills a prompt nobody counted. Text Morse can read is billed at the bytes per token
+// no real prompt is denser than, since a count follows on a cut; a body sealed whole can never be
+// counted and may be any text, so it, like a budgeted prompt, is billed a token a byte.
 func (e Evidence) promptEstimate() Reading {
 	text := e.PromptBytes
-	if !e.Budgeted {
+	if !e.Budgeted && !e.SealedWhole {
 		text = bytesEstimate(text)
 	}
 	return reading(min(text+e.Attachments*AttachmentTokens, e.PromptBound), MethodRequestBytes)

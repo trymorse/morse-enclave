@@ -1,24 +1,29 @@
 # /// script
 # requires-python = ">=3.10"
-# dependencies = ["cbor2==6.1.5", "cryptography==50.0.2"]
+# dependencies = ["cbor2==6.1.5", "cryptography==50.0.2", "tuf==7.0.1", "securesystemslib==1.6.0", "urllib3==2.8.0"]
 # ///
-"""Checks that every certificate for Morse's inference door holds a key that a pinned prod enclave attests.
+"""Checks that every certificate for Morse's inference door holds a key whose boot record a pinned enclave logged in Rekor.
 
-Usage: uv run check-door.py --pins <morse-pins checkout> --caa-history caa.jsonl --sequence-state sequence.json --caa-account <ca>=<account uri> ...
+Usage: uv run check-door.py --pins <morse-pins checkout> --records <morse-records checkout> --enclave <morse-enclave checkout> --caa-history caa.jsonl --sequence-state state.json --caa-account <ca>=<account uri> ...
 
-It reads Certificate Transparency for inference.trymorse.ai and every wildcard that covers it, the boot records
-in morse-pins, the CAA record, and the door's live attestation, and runs the six checks in the README.
-It exits 1 if any check fails, and 2 if none fails but check 6 is not enforced.
+It reads Certificate Transparency for inference.trymorse.ai and every wildcard that covers it, the enclave_pins.json
+history in morse-pins, the pointers in morse-records, each entry a pointer names in Sigstore's Rekor v2, with the log
+keys from Sigstore's TUF repository and the witnesses this script lists, the CAA record, and the door's live
+attestation, and runs the checks listed in CHECKS below. Check 7 is reserved for the check of the public image signer.
+It exits 1 if any check fails, and 2 if none fails but a check is not enforced.
 """
 
 import argparse
 import base64
+import binascii
 import hashlib
 import json
 import re
 import subprocess
 import sys
 import types
+import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -32,6 +37,10 @@ from cryptography.x509.oid import NameOID
 nitro = types.ModuleType("check_enclave")
 exec(compile(Path(__file__).with_name("check-enclave.py").read_text(), "check-enclave.py", "exec"), nitro.__dict__)
 Refused = nitro.Refused
+# rekor.py holds the offline Rekor v2 verification, the checks the door's enclave runs on its own entry.
+rekor = types.ModuleType("rekor")
+exec(compile(Path(__file__).with_name("rekor.py").read_text(), "rekor.py", "exec"), rekor.__dict__)
+Refusal = rekor.Refusal
 
 NAME = "inference.trymorse.ai"
 CRTSH_URL = "https://crt.sh/?q=%25.{}&output=json"
@@ -39,12 +48,37 @@ CRTSH_CERT_URL = "https://crt.sh/?d={}"
 CERTSPOTTER_URL = "https://api.certspotter.com/v1/issuances?domain={}&match_wildcards=true&expand=dns_names&expand=cert_der"
 ATTESTATION_URL = "https://inference.trymorse.ai/v1/attestation"
 DOH_URL = "https://dns.google/resolve?name={}&type=CAA"
-STATEMENT_TYPE = "morse-door-records-v1"
+RECORDS_REPO_URL = "https://api.github.com/repos/trymorse/morse-records"
 ORIGIN_TYPE = "morse-door-origin-v1"
+RECORD_TYPE = "morse-door-boot-v1"
+RECORD_OID = "1.3.6.1.4.1.67561.1"
 LIVE_GRACE = timedelta(hours=2)
 RUN_GAP = timedelta(minutes=7)
 MAX_AHEAD = timedelta(minutes=2)
 MAX_AGE = timedelta(seconds=nitro.MAX_AGE_SECONDS)
+MAX_KEY_AGE = timedelta(days=60)
+POINTER_LATE = timedelta(minutes=20)
+WITNESS_LAPSE = timedelta(hours=24)
+
+# Sigstore's TUF repository, walked forward from the root the door's image embeds.
+TUF_URL = "https://tuf-repo-cdn.sigstore.dev"
+TUF_ROOT = 16
+TUF_ROOT_SHA256 = "27aea7e372aa7864065174f0661784fcf8b0e28b1dbfebeada31a0f1fb19167f"
+TUF_FETCHER = None
+
+# This watcher's own witness policy. It must be at least as strict as the image's: it may list fewer witnesses or
+# require a larger k, never more witnesses or a smaller k. It is not read from the image, so one Morse commit cannot
+# relax both, and check 8 fails when the newest pinned image lists a witness this list does not, or a smaller k.
+WITNESS_K = 3
+WITNESSES = [
+    ("krabbel.ct.ipng.ch+4b10dbd8+BO4sLOtnhktlqMCejDx9C5LDd+/xZxbmBb6BP9ZD2Def", "IPng Networks"),
+    ("staging.witness.transparency.goog/ring-any-bells+2e1a8dc9+BG5JTpLc3FJtwzgh1Uv+Qelz9qeOH2bfWjS1s0s+y4rL", "TrustFabric"),
+    ("witness.stagemole.eu+67f7aea0+BEqSG3yu9YrmcM3BHvQYTxwFj3uSWakQepafafpUqklv", "Mullvad VPN"),
+    ("witness.navigli.sunlight.geomys.org+a3e00fe2+BNy/co4C1Hn1p+INwJrfUlgz7W55dSZReusH/GhUhJ/G", "Geomys"),
+]
+
+HEX16 = re.compile(r"[0-9a-f]{16}", re.ASCII)
+HEX64 = re.compile(r"[0-9a-f]{64}", re.ASCII)
 
 
 @dataclass(frozen=True)
@@ -52,22 +86,43 @@ class Certificate:
     source: str
     names: list
     spki_sha256: str
+    not_before: datetime
     not_after: datetime
+    logged: datetime
 
 
 @dataclass(frozen=True)
-class Record:
-    path: Path
-    document: str | None
-    born: str | None
-    sender: str | None
-    floor: int | None
-
-
-@dataclass(frozen=True)
-class Attested:
+class Pointer:
+    log: str
+    index: int
     spki_sha256: str
-    key_id: str
+    boot: str
+
+    def name(self):
+        return f"{self.log}/{self.index}"
+
+
+@dataclass(frozen=True)
+class Verified:
+    log: str
+    index: int
+    boot: str
+    spki_sha256: str
+    born: str
+    sender: str | None
+    floor: int
+    made: datetime
+
+    def name(self):
+        return f"{self.log}/{self.index}"
+
+    @property
+    def pair(self):
+        return (self.boot, self.spki_sha256)
+
+    @property
+    def origin(self):
+        return (self.born, self.sender, self.floor)
 
 
 @dataclass(frozen=True)
@@ -80,7 +135,7 @@ class Live:
 @dataclass(frozen=True)
 class Boot:
     first_seen: datetime | None
-    spki_sha256: str
+    spkis: tuple
 
     def young(self, now):
         return self.first_seen is not None and now - self.first_seen < LIVE_GRACE
@@ -92,6 +147,10 @@ class Boot:
 
 
 class Unenforced(str):
+    pass
+
+
+class Note(str):
     pass
 
 
@@ -116,31 +175,49 @@ def spki_sha256(key):
     return hashlib.sha256(key.public_bytes(serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo)).hexdigest()
 
 
-def parse_certificate(source, der):
+def parse_certificate(source, der, logged):
     cert = x509.load_der_x509_certificate(der)
     try:
         names = cert.extensions.get_extension_for_class(x509.SubjectAlternativeName).value.get_values_for_type(x509.DNSName)
     except x509.ExtensionNotFound:
         names = []
     names += [a.value for a in cert.subject.get_attributes_for_oid(NameOID.COMMON_NAME)]
-    return Certificate(source, list(dict.fromkeys(names)), spki_sha256(cert.public_key()), cert.not_valid_after_utc)
+    try:
+        scts = [s.timestamp.replace(tzinfo=timezone.utc) for s in cert.extensions.get_extension_for_class(x509.PrecertificateSignedCertificateTimestamps).value]
+    except x509.ExtensionNotFound:
+        scts = []
+    # A log's embedded SCT, or the time the CT source saw the precertificate, is when the certificate became public.
+    # With neither, notBefore stands in, which a CA may set in the past, so the 20 minutes start early.
+    when = min(scts) if scts else logged or cert.not_valid_before_utc
+    return Certificate(source, list(dict.fromkeys(names)), spki_sha256(cert.public_key()), cert.not_valid_before_utc, cert.not_valid_after_utc, when)
+
+
+def crtsh_time(row):
+    try:
+        return datetime.fromisoformat(row["entry_timestamp"]).replace(tzinfo=timezone.utc)
+    except (KeyError, TypeError, ValueError):
+        return None
 
 
 def read_ct(source, name):
     if source == "crt.sh":
         rows = json.loads(fetch(CRTSH_URL.format(name.split(".", 1)[1])))
-        ids = sorted({r["id"] for r in rows if any(covers(n, name) for n in r["name_value"].split("\n"))})
-        return [(f"crt.sh {i}", x509.load_pem_x509_certificate(fetch(CRTSH_CERT_URL.format(i))).public_bytes(serialization.Encoding.DER)) for i in ids]
+        logged = {}
+        for r in rows:
+            if any(covers(n, name) for n in r["name_value"].split("\n")):
+                t = crtsh_time(r)
+                logged[r["id"]] = min(t, logged[r["id"]]) if t and logged.get(r["id"]) else t or logged.get(r["id"])
+        return [(f"crt.sh {i}", x509.load_pem_x509_certificate(fetch(CRTSH_CERT_URL.format(i))).public_bytes(serialization.Encoding.DER), logged[i]) for i in sorted(logged)]
     if source == "certspotter":
         entries, after = [], None
         while True:
             page = json.loads(fetch(CERTSPOTTER_URL.format(name) + (f"&after={after}" if after else "")))
             if not page:
                 return entries
-            entries += [(f"certspotter {i['id']}", base64.b64decode(i["cert_der"])) for i in page]
+            entries += [(f"certspotter {i['id']}", base64.b64decode(i["cert_der"]), None) for i in page]
             after = page[-1]["id"]
     with open(source) as f:
-        return [(f"{source} {i['id']}", base64.b64decode(i["cert_der"])) for i in json.load(f)]
+        return [(f"{source} {i['id']}", base64.b64decode(i["cert_der"]), None) for i in json.load(f)]
 
 
 def p256_spki(public_key):
@@ -155,6 +232,10 @@ def p256_spki(public_key):
 
 def git(directory, *args):
     return subprocess.run(["git", "-C", str(directory), *args], check=True, capture_output=True, text=True).stdout
+
+
+def descends(directory, seen):
+    return subprocess.run(["git", "-C", str(directory), "merge-base", "--is-ancestor", seen, "HEAD"], capture_output=True).returncode == 0
 
 
 def read_pins_history(pins_dir):
@@ -200,20 +281,17 @@ def hpke_key_id(payload, environment):
 
 
 def canonical_time(born):
-    match = re.fullmatch(r"(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)(?:\.(\d{1,9}))?(Z|[+-]\d\d:\d\d)", born, re.ASCII)
-    if not match:
-        raise Refused(f"origin.born {born!r} is not an RFC 3339 time")
-    try:
-        utc = datetime.fromisoformat(match[1] + ("+00:00" if match[3] == "Z" else match[3])).astimezone(timezone.utc)
-    except (ValueError, OverflowError) as e:
-        raise Refused(f"origin.born {born!r} is not a time UTC can hold: {e}") from e
-    fraction = (match[2] or "").rstrip("0")
+    utc, fraction = rekor.rfc3339(born, "origin.born")
     return utc.strftime("%Y-%m-%dT%H:%M:%S") + (f".{fraction}" if fraction else "") + "Z"
 
 
 def origin_nonce(spki_sha256, born, sender, floor):
     statement = {"origin": {"born": canonical_time(born), "floor": floor, "from": sender and sender.lower()}, "spki_sha256": spki_sha256, "type": ORIGIN_TYPE}
     return hashlib.sha256(json.dumps(statement, separators=(",", ":"), sort_keys=True).encode()).digest()
+
+
+def record_digest(spki):
+    return hashlib.sha256(f"{RECORD_TYPE}\n{spki}\n".encode()).digest()
 
 
 def image_refusal(payload, environment, history):
@@ -224,140 +302,290 @@ def image_refusal(payload, environment, history):
     return f"morse-pins lists no unrevoked {environment} image with the document's PCRs at {made.isoformat(timespec='seconds')}, when the document was made"
 
 
-def attest(record, environment, history):
-    if record.document is None:
-        raise Refused("the record is not a JSON object with a document and an origin of born, from and an integer floor")
+def der_octet_string(raw):
+    if len(raw) < 2 or raw[0] != 0x04:
+        raise ValueError("the record extension is not one OCTET STRING")
+    length, start = raw[1], 2
+    if length & 0x80:
+        width = length & 0x7F
+        if width < 1 or width > 4 or len(raw) < 2 + width or raw[2] == 0:
+            raise ValueError("the record extension's length is not DER")
+        length, start = int.from_bytes(raw[2:2 + width], "big"), 2 + width
+        if length < 0x80 or length < 1 << (8 * (width - 1)):
+            raise ValueError("the record extension's length is not DER")
+    if len(raw) != start + length:
+        raise ValueError("the record extension is not one OCTET STRING")
+    return raw[start:]
+
+
+def read_record(certificate):
+    """The record a record certificate carries. Neither the certificate's signature nor its dates prove anything."""
+    cert = x509.load_der_x509_certificate(certificate)
+    ext = next((e for e in cert.extensions if e.oid.dotted_string == RECORD_OID), None)
+    if ext is None:
+        raise ValueError("the certificate carries no record extension")
+    record = rekor.only(rekor.strict_json(der_octet_string(ext.value.value)), "type", "environment", "document", "spki_sha256", "origin",
+                  required=("type", "environment", "document", "spki_sha256", "origin"))
+    origin = rekor.only(record["origin"], "born", "from", "floor", required=("born", "floor"))
+    if "from" not in origin:
+        raise ValueError("the origin has no from")
+    if not isinstance(record["type"], str) or not isinstance(record["environment"], str) or not isinstance(record["spki_sha256"], str):
+        raise ValueError("type, environment or spki_sha256 is not a string")
+    sender, floor = origin["from"], origin["floor"]
+    if not isinstance(origin["born"], str) or not (sender is None or isinstance(sender, str) and re.fullmatch(r"[0-9a-fA-F]{16}", sender, re.ASCII)):
+        raise ValueError("origin.born is not a string or origin.from is not null or a boot's 16 hex digits")
+    if type(floor) is not int or not 0 <= floor < 1 << 64:
+        raise ValueError("origin.floor is not an unsigned integer")
+    return record, rekor.b64(record["document"], "the document"), origin["born"], sender and sender.lower(), floor
+
+
+def verify_record(logged, environment, history):
+    """The boot record a logged entry carries, verified as a watcher must: by its Nitro document, at the document's
+    own time and against the pins in force then, never by the entry's certificate or K's signature."""
     try:
-        payload = verified(base64.b64decode(record.document, validate=True))
+        record, document, born, sender, floor = read_record(logged.body.certificate)
+        if record["type"] != RECORD_TYPE or record["environment"] != environment:
+            raise ValueError(f"the record is a {record['environment']} {record['type']}, not a {environment} {RECORD_TYPE}")
+        born = canonical_time(born)
+    except (ValueError, TypeError, UnicodeDecodeError, Refused) as e:
+        raise Refusal("record", str(e)) from e
+    try:
+        payload = verified(document)
         key_id = hpke_key_id(payload, environment)
         refusal = image_refusal(payload, environment, history)
         if refusal:
             raise Refused(refusal)
         spki = p256_spki(payload.get("public_key"))
-        if payload.get("nonce") != origin_nonce(spki, record.born, record.sender, record.floor):
-            raise Refused("the document's nonce is not the origin statement of its SPKI and the record's origin, so the enclave did not attest this origin")
-    except Refused:
-        raise
+        made = datetime.fromtimestamp(payload["timestamp"] / 1000, timezone.utc)
+    except Refused as e:
+        raise Refusal("document", str(e)) from e
     except Exception as e:
-        raise Refused(f"the record does not parse: {e!r}") from e
-    return Attested(spki, key_id)
+        raise Refusal("document", f"the document does not parse: {e!r}") from e
+    if record["spki_sha256"] != spki:
+        raise Refusal("spki", f"the record's spki_sha256 is {record['spki_sha256']!r}, and the document attests SPKI {spki}")
+    if logged.body.digest != record_digest(spki):
+        raise Refusal("digest", f"the entry's digest is not H for SPKI {spki}, which the document attests")
+    if payload.get("nonce") != origin_nonce(spki, born, sender, floor):
+        raise Refusal("nonce", "the document's nonce is not the origin statement of its SPKI and the record's origin, so the enclave did not attest this origin")
+    return Verified(logged.origin, logged.index, key_id, spki, born, sender, floor, made)
 
 
-def read_record(path):
+def verify_entry(raw, shards, policy, environment, history):
+    return verify_record(rekor.verify_logged(raw, shards, policy), environment, history)
+
+
+def entry_json(shard, checkpoint, index, body, proof):
+    return json.dumps({
+        "logIndex": str(index), "logId": {"keyId": rekor.b64_string(shard.log_id)}, "kindVersion": {"kind": "hashedrekord", "version": "0.0.2"},
+        "inclusionProof": {"logIndex": str(index), "rootHash": rekor.b64_string(checkpoint.root), "treeSize": str(checkpoint.size),
+                           "hashes": [rekor.b64_string(h) for h in proof], "checkpoint": {"envelope": checkpoint.note}},
+        "canonicalizedBody": rekor.b64_string(body),
+    }).encode()
+
+
+def read_pointers(records_dir, environment):
+    path = records_dir / f"{environment}.jsonl"
+    if not path.exists():
+        return [], []
+    pointers, notes = {}, []
+    for n, line in enumerate(path.read_text().splitlines(), 1):
+        if not line.strip():
+            continue
+        try:
+            p = rekor.only(rekor.strict_json(line), "log", "index", "spki_sha256", "boot", required=("log", "index", "spki_sha256", "boot"))
+            if not isinstance(p["log"], str) or not rekor.HOST.fullmatch(p["log"]) or type(p["index"]) is not int or p["index"] < 0 \
+                    or not isinstance(p["spki_sha256"], str) or not HEX64.fullmatch(p["spki_sha256"]) or not isinstance(p["boot"], str) or not HEX16.fullmatch(p["boot"]):
+                raise ValueError("its log, index, spki_sha256 or boot is not in the pointer format")
+        except ValueError as e:
+            notes.append(Note(f"{path.name} line {n} is not a pointer: {e}"))
+            continue
+        pointers.setdefault((p["log"], p["index"]), Pointer(p["log"], p["index"], p["spki_sha256"], p["boot"]))
+    return list(pointers.values()), notes
+
+
+def read_trusted_root(cache):
+    from tuf.ngclient import Updater
+
+    metadata = cache / "tuf"
+    metadata.mkdir(parents=True, exist_ok=True)
+    bootstrap = None
+    if not (metadata / "root.json").exists():
+        bootstrap = fetch(f"{TUF_URL}/{TUF_ROOT}.root.json")
+        if hashlib.sha256(bootstrap).hexdigest() != TUF_ROOT_SHA256:
+            raise Refused(f"Sigstore's {TUF_ROOT}.root.json is not the root the door's image embeds")
+    updater = Updater(str(metadata), TUF_URL, str(metadata), f"{TUF_URL}/targets/", TUF_FETCHER, bootstrap=bootstrap)
+    updater.refresh()
+    info = updater.get_targetinfo("trusted_root.json")
+    if info is None:
+        raise Refused("Sigstore's TUF repository lists no trusted_root.json")
+    return Path(updater.find_cached_target(info) or updater.download_target(info)).read_bytes()
+
+
+def saved_checkpoint(origin, saved):
     try:
-        record = json.loads(path.read_bytes())
-        document, origin = record["document"], record["origin"]
-        born, sender, floor = origin["born"], origin["from"], origin["floor"]
-    except (ValueError, KeyError, TypeError):
-        return Record(path, None, None, None, None)
-    if not isinstance(document, str) or not isinstance(born, str) or not isinstance(sender, (str, type(None))) or type(floor) is not int:
-        return Record(path, None, None, None, None)
-    return Record(path, document, born, sender, floor)
+        return rekor.Checkpoint(origin, int(saved["size"]), base64.b64decode(saved["root"], validate=True), saved["note"], (), ())
+    except (KeyError, TypeError, ValueError, binascii.Error):
+        return None
+
+
+def advance(shard, saved, policy, retired):
+    """The shard's newest checkpoint, if it verifies under policy and extends the one an earlier run accepted, and why not.
+    The newest checkpoint is returned either way, when its log signature verifies, so check 8 can read its cosigners.
+    A retired shard an earlier run tracked keeps its accepted checkpoint, with a Note, when its newest cannot be shown."""
+    def missing(why):
+        return Note(f"{shard.origin} is retired, so this run keeps the checkpoint an earlier run accepted: {why}") if retired else why
+    try:
+        note = fetch(f"{shard.base_url}/api/v2/checkpoint").decode()
+    except (OSError, UnicodeDecodeError) as e:
+        return saved, None, missing(f"{shard.origin}'s checkpoint could not be read: {e!r}")
+    try:
+        newest = rekor.verify_note(note, shard, policy)
+    except Refusal as e:
+        try:
+            text, signatures = rekor.parse_note(note)
+            origin, size, root = rekor.parse_checkpoint_text(text)
+            seen = rekor.Checkpoint(origin, size, root, note, tuple(policy.count(text, signatures)), tuple(n for n, _, _ in signatures)) if e.reason == "witnesses" else None
+        except ValueError:
+            seen = None
+        return saved, seen, missing(f"{shard.origin}'s newest checkpoint does not verify: {e}")
+    if saved is not None:
+        if newest.size < saved.size:
+            return saved, newest, f"{shard.origin}'s newest checkpoint holds {newest.size} entries, fewer than the {saved.size} an earlier run accepted"
+        try:
+            proof = rekor.Tiles(shard, newest.size, fetch).consistency(saved.size)
+            ok = rekor.consistent(saved.size, newest.size, saved.root, newest.root, proof)
+        except (OSError, ValueError) as e:
+            return saved, newest, missing(f"{shard.origin}'s tiles could not prove its tree of {newest.size} extends the tree of {saved.size} an earlier run accepted: {e!r}")
+        if not ok:
+            return saved, newest, f"{shard.origin}'s tree of {newest.size} is not consistent with the tree of {saved.size} an earlier run accepted, so the log forked or rewrote its history"
+    return newest, newest, None
+
+
+def prove(pointer, shard, accepted, cache_dir, records_dir, shards, policy):
+    """A pointer's entry: from this watcher's cache, else from the shard's tiles against the accepted checkpoint,
+    else from the leaf archive in morse-records. Each is checked in full, the way verify_logged checks any entry."""
+    cached = cache_dir / pointer.log / f"{pointer.index}.json"
+    archived = records_dir / "leaves" / pointer.log / f"{pointer.index}.json"
+    tried = []
+    if cached.exists():
+        try:
+            return rekor.verify_logged(cached.read_bytes(), shards, policy)
+        except Refusal as e:
+            tried.append(f"the cached entry: {e}")
+    if shard is not None and accepted is not None and pointer.index < accepted.size:
+        try:
+            tiles = rekor.Tiles(shard, accepted.size, fetch)
+            raw = entry_json(shard, accepted, pointer.index, tiles.entry(pointer.index), tiles.inclusion(pointer.index))
+            logged = rekor.verify_logged(raw, shards, policy)
+            cached.parent.mkdir(parents=True, exist_ok=True)
+            cached.write_bytes(raw)
+            return logged
+        except (OSError, ValueError, Refusal) as e:
+            tried.append(f"the shard's tiles: {e}")
+    elif shard is not None and accepted is not None:
+        tried.append(f"the newest checkpoint this watcher accepted holds {accepted.size} entries, so not index {pointer.index} yet")
+    if archived.exists():
+        try:
+            return rekor.verify_logged(archived.read_bytes(), shards, policy)
+        except Refusal as e:
+            tried.append(f"the archived leaf: {e}")
+    raise Refusal("unread", "; ".join(tried) or f"this watcher has no checkpoint of {pointer.log} and morse-records archives no such leaf")
 
 
 @dataclass
 class Evidence:
     name: str
     environment: str
-    records_dir: Path
     certificates: list
-    records: list
-    attested: dict
+    ct_counts: dict
+    pointers: list
+    verified: list
+    notes: list
+    shard_failures: list
     caa_history: list
     caa_accounts: set
     live: list
-    seen_sequence: int
-    ct_counts: dict
-    tip: str
-    seen_tip: str | None
-    rewound: bool
+    tips: dict
+    rewound: dict
+    witnesses: dict
+    trust: object
+    records_visibility: str | None
+    policy: rekor.Policy
     boots: dict = field(default_factory=dict)
     last_run: datetime | None = None
     now: datetime = field(default_factory=lambda: utcnow())
 
     def recorded(self):
-        return {a.spki_sha256 for a in self.attested.values() if isinstance(a, Attested)}
+        return {v.spki_sha256 for v in self.verified}
 
-    def carried(self):
-        return {a.key_id for a in self.attested.values() if isinstance(a, Attested)}
-
-    def pending(self):
-        live = {seen.spki_sha256 for seen in self.live if isinstance(seen, Live) and seen.unpinned is None}
-        young = {}
-        for boot in self.boots.values():
-            young[boot.spki_sha256] = young.get(boot.spki_sha256, True) and boot.young(self.now)
-        return {spki for spki in live if young.get(spki)}
+    def pairs(self):
+        pairs = {}
+        for v in self.verified:
+            pairs.setdefault(v.pair, []).append(v)
+        return pairs
 
 
 def check_certificates(ev):
-    recorded = ev.recorded() | ev.pending()
-    empty = [
-        f"{source} returned no certificate covering {ev.name}, though morse-pins has {len(ev.records)} records"
-        for source, count in ev.ct_counts.items()
-        if count == 0 and ev.records
-    ]
-    return empty + [
-        f"{c.source} names {', '.join(c.names)} with SPKI {c.spki_sha256}, which no record's document attests"
-        for c in ev.certificates
-        if c.spki_sha256 not in recorded
-    ]
+    recorded, born = ev.recorded(), {}
+    for v in ev.verified:
+        t = rekor.rfc3339(v.born, "origin.born")[0]
+        born[v.spki_sha256] = min(born.get(v.spki_sha256, t), t)
+    failures = []
+    for source, count in ev.ct_counts.items():
+        others = {other: n for other, n in ev.ct_counts.items() if n}
+        if count == 0 and (others or recorded):
+            failures.append(f"{source} returned no certificate covering {ev.name}, though " + (", ".join(f"{o} returned {n}" for o, n in others.items()) if others else f"{len(recorded)} SPKIs have verified records"))
+    for c in ev.certificates:
+        if c.spki_sha256 not in recorded:
+            if ev.now - c.logged < POINTER_LATE:
+                failures.append(Note(f"{c.source} names {', '.join(c.names)} with SPKI {c.spki_sha256}, which no verified record attests yet. CT made it public at {c.logged.isoformat(timespec='seconds')}, and it fails once {POINTER_LATE // timedelta(minutes=1)} minutes have passed without a pointer"))
+            else:
+                failures.append(f"{c.source} names {', '.join(c.names)} with SPKI {c.spki_sha256}, which no verified record attests, and CT made it public at {c.logged.isoformat(timespec='seconds')}")
+        elif c.not_before > born[c.spki_sha256] + MAX_KEY_AGE:
+            failures.append(f"{c.source} names {', '.join(c.names)} with SPKI {c.spki_sha256} from {c.not_before.isoformat(timespec='seconds')}, after the key, born at {born[c.spki_sha256].isoformat(timespec='seconds')}, was {MAX_KEY_AGE.days} days old")
+    return failures
+
+
+def check_records(ev):
+    failures = list(ev.notes)
+    for repo, (seen, tip) in sorted(ev.rewound.items()):
+        failures.append(f"{repo} at {tip} does not descend from {seen}, which an earlier run saw, so its history was rewritten")
+    return failures
+
+
+def label(pair):
+    return f"boot {pair[0]} with SPKI {pair[1]}"
 
 
 def check_custody(ev):
-    by_key, failures = {}, []
-    for r, a in ev.attested.items():
-        if not isinstance(a, Attested):
+    pairs, failures = ev.pairs(), []
+    for pair, entries in sorted(pairs.items()):
+        origins = sorted({v.origin for v in entries}, key=repr)
+        if len(origins) > 1:
+            failures.append(f"{label(pair)} has entries with {len(origins)} origins ({', '.join(v.name() for v in entries)}), and a boot fixes one origin per key")
             continue
-        if a.key_id in by_key:
-            failures.append(f"{by_key[a.key_id].path.name} and {r.path.name} carry the same HPKE key {a.key_id}, and each boot has one record")
-        by_key.setdefault(a.key_id, r)
-    for record in ev.records:
-        link, seen = record, set()
+        link, seen = pair, set()
         while True:
-            a = ev.attested[link]
-            if not isinstance(a, Attested):
-                failures.append(f"{record.path.name}: custody link {link.path.name} does not verify: {a}")
-                break
-            if link.sender is None:
-                break
-            sender = by_key.get(link.sender)
+            _, sender, floor = pairs[link][0].origin
             if sender is None:
-                failures.append(f"{record.path.name}: {link.path.name} names sender {link.sender}, whose HPKE key no record that verifies carries")
                 break
-            if link.floor < sender.floor:
-                failures.append(f"{record.path.name}: the floor falls from {sender.floor} in {sender.path.name} to {link.floor} in {link.path.name}")
+            source = (sender, pair[1])
+            if source not in pairs:
+                failures.append(f"{label(pair)}: {label(link)} names sender {sender}, which has no verified record of that SPKI")
                 break
-            if sender in seen:
-                failures.append(f"{record.path.name}: custody loops at {sender.path.name}")
+            if pairs[source][0].floor > floor:
+                failures.append(f"{label(pair)}: the floor falls from {pairs[source][0].floor} at {label(source)} to {floor} at {label(link)}")
+                break
+            if source in seen or source == pair:
+                failures.append(f"{label(pair)}: custody loops at {label(source)}")
                 break
             seen.add(link)
-            link = sender
+            link = source
     return failures
 
 
-def read_statements(records_dir):
-    return sorted(((int(p.stem), json.loads(p.read_bytes())) for p in (records_dir / "statements").glob("*.json")), key=lambda s: s[0])
-
-
-def check_statements(ev):
-    statements = read_statements(ev.records_dir)
-    failures, listed = [], {}
-    latest = statements[-1][0] if statements else 0
-    if latest < ev.seen_sequence:
-        failures.append(f"the latest statement is sequence {latest}, and an earlier run saw sequence {ev.seen_sequence}")
-    if ev.rewound:
-        failures.append(f"morse-pins at {ev.tip} does not descend from {ev.seen_tip}, which an earlier run saw, so its history was rewritten")
-    for expected, (sequence, statement) in enumerate(statements, 1):
-        if sequence != expected:
-            return failures + [f"the statements skip sequence {expected}"]
-        if statement.get("type") != STATEMENT_TYPE or statement.get("environment") != ev.environment or statement.get("sequence") != sequence:
-            failures.append(f"statement {sequence} is not a {ev.environment} {STATEMENT_TYPE} statement at sequence {sequence}")
-        failures += [f"statement {sequence} drops or changes {path}, which statement {sequence - 1} lists" for path, digest in listed.items() if statement["records"].get(path) != digest]
-        listed = statement["records"]
-    files = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in ev.records_dir.glob("*.json")}
-    failures += [f"{path} is not in the latest statement as it is" for path, digest in files.items() if listed.get(path) != digest]
-    failures += [f"the latest statement lists {path}, which the repository does not have" for path in listed if path not in files]
-    return failures
+def check_logs(ev):
+    return list(ev.shard_failures)
 
 
 def caa_refusal(entry, accounts):
@@ -403,24 +631,24 @@ def live_boot(document, environment, history, now):
 
 
 def check_live(ev):
-    recorded, carried = ev.recorded(), ev.carried()
-    failures = []
+    pairs, failures, held = ev.pairs(), [], set()
     if ev.last_run is not None and ev.now < ev.last_run - MAX_AHEAD:
         failures.append(f"this run's clock reads {ev.now.isoformat(timespec='seconds')}, before {ev.last_run.isoformat(timespec='seconds')}, when the last run wrote --sequence-state, and a clock that goes backwards stretches a boot's 2 hours")
     for n, seen in enumerate(ev.live, 1):
         if not isinstance(seen, Live):
             failures.append(f"live document {n}: {seen}")
-        elif seen.unpinned:
-            failures.append(f"live document {n} is from an image no record can admit: {seen.unpinned}")
-        elif seen.spki_sha256 not in recorded:
-            failures.append(f"live document {n} attests SPKI {seen.spki_sha256}, which no record attests")
-    for key_id, boot in sorted(ev.boots.items()):
-        if key_id in carried:
             continue
-        if boot.spki_sha256 not in recorded:
-            failures.append(f"the boot with HPKE key {key_id} has no record, and its SPKI {boot.spki_sha256} is in no record either; {boot.seen()}")
-        elif not boot.young(ev.now):
-            failures.append(f"the boot with HPKE key {key_id} has no record, and {boot.seen()}")
+        held.add((seen.key_id, seen.spki_sha256))
+        if seen.unpinned:
+            failures.append(f"live document {n} is from an image no record can admit: {seen.unpinned}")
+        elif (seen.key_id, seen.spki_sha256) not in pairs and not ev.boots[seen.key_id].young(ev.now):
+            failures.append(f"live document {n}: the boot with HPKE key {seen.key_id} holds SPKI {seen.spki_sha256}, which no verified record of that boot attests, and {ev.boots[seen.key_id].seen()}")
+    for key_id, boot in sorted(ev.boots.items()):
+        if boot.young(ev.now):
+            continue
+        for spki in boot.spkis:
+            if (key_id, spki) not in held and (key_id, spki) not in pairs:
+                failures.append(f"the boot with HPKE key {key_id} has no verified record of SPKI {spki}, which it held live, and {boot.seen()}")
     if ev.last_run is None:
         return failures + [UNENFORCED]
     if ev.now - ev.last_run > RUN_GAP:
@@ -428,12 +656,78 @@ def check_live(ev):
     return failures
 
 
+def parse_trust(source):
+    """The witness list and k that an image's internal/door/trust.go compiles in."""
+    k = re.search(r"\bconst witnessK = (\d+)\n", source)
+    block = re.search(r"\nvar witnesses = \[\]struct\{ vkey, operator string \}\{\n(.*?)\n\}\n", source, re.S)
+    if not k or not block:
+        raise Refused("trust.go holds no witnessK or no witnesses list this watcher can read")
+    lines = [line.strip() for line in block[1].split("\n") if line.strip() and not line.strip().startswith("//")]
+    listed = [re.fullmatch(r'\{"([^"]+)", "([^"]+)"\},', line) for line in lines]
+    if not all(listed):
+        raise Refused(f"trust.go's witnesses list has a line this watcher cannot read: {lines[[bool(m) for m in listed].index(False)]!r}")
+    try:
+        return int(k[1]), [rekor.parse_witness(m[1], m[2]) for m in listed]
+    except ValueError as e:
+        raise Refused(f"trust.go lists a witness this watcher cannot read: {e}") from e
+
+
+def read_trust(enclave_dir, history, environment):
+    pins = history[-1][1] if history else []
+    tagged = []
+    for p in pins:
+        if p["environment"] != environment or p["revoked"] or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", p.get("tag") or "", re.ASCII):
+            continue
+        r = subprocess.run(["git", "-C", str(enclave_dir), "log", "-1", "--format=%ct", f"refs/tags/{p['tag']}"], capture_output=True, text=True)
+        if r.returncode == 0 and r.stdout.strip().isdigit():
+            tagged.append((int(r.stdout), p["tag"]))
+    if not tagged:
+        raise Refused(f"no unrevoked {environment} image in morse-pins names a tag in the morse-enclave checkout")
+    tag = max(tagged)[1]
+    k, witnesses = parse_trust(git(enclave_dir, "show", f"refs/tags/{tag}:internal/door/trust.go"))
+    return tag, k, witnesses
+
+
+def check_witnesses(ev):
+    failures = []
+    if isinstance(ev.trust, Exception):
+        failures.append(f"the newest pinned image's trust.go could not be read: {ev.trust}")
+        trust_names = set()
+    else:
+        tag, k, listed = ev.trust
+        trust_names = {w.name for w in listed}
+        if k < ev.policy.k:
+            failures.append(f"trust.go in {tag} needs {k} cosignatures, fewer than this watcher's {ev.policy.k}")
+        mine = {(w.name, w.key): w.operator for w in ev.policy.witnesses}
+        for w in listed:
+            if (w.name, w.key) not in mine:
+                failures.append(f"trust.go in {tag} lists the witness key {w.name}+{w.hash.hex()}, which this watcher's policy does not")
+            elif mine[(w.name, w.key)] != w.operator:
+                failures.append(f"trust.go in {tag} lists {w.name} under {w.operator}, and this watcher under {mine[(w.name, w.key)]}")
+    for origin, (lines, last_seen) in sorted(ev.witnesses.items()):
+        for name in sorted(set(lines) - ev.policy.names() - trust_names - {origin}):
+            failures.append(f"{origin}'s newest checkpoint carries a cosignature by {name}, which neither this watcher's policy nor the image's trust.go names")
+        for name in sorted(ev.policy.names()):
+            if ev.now - last_seen[name] > WITNESS_LAPSE:
+                failures.append(f"{name} has not cosigned a checkpoint of {origin} that this watcher read since {last_seen[name].isoformat(timespec='seconds')}, and with k = {ev.policy.k} of {len(ev.policy.names())} a missing witness leaves no margin")
+    return failures
+
+
+def check_records_public(ev):
+    if ev.records_visibility == "public":
+        return []
+    return [f"{RECORDS_REPO_URL}, read with no token, {ev.records_visibility}, so an outside watcher cannot read the pointers or the leaf archive"]
+
+
 CHECKS = [
-    ("Every certificate in CT for the door's name holds a key a record attests (checks 1 and 2)", check_certificates),
-    ("Every record's custody ends at a born record, and the floor never falls (check 3)", check_custody),
-    ("The records statements have no gaps and list every record (check 4)", check_statements),
+    ("Every certificate in CT for the door's name holds a key a verified record attests (check 1)", check_certificates),
+    ("Every pointer's entry verifies, and morse-pins and morse-records keep their history (check 2)", check_records),
+    ("Every record's custody ends at a born record, with one origin per key and a floor that never falls (check 3)", check_custody),
+    ("Each Rekor shard's checkpoint verifies and extends the last one this watcher accepted (check 4)", check_logs),
     ("CAA names only Morse's ACME accounts and dns-01 (check 5)", check_caa),
-    ("The door's live attestation names only recorded keys and boots (check 6)", check_live),
+    ("The door's live attestation names only boots with verified records (check 6)", check_live),
+    ("The shard's witnesses match this watcher's policy and the newest pinned image's (check 8)", check_witnesses),
+    ("morse-records is public (check 9)", check_records_public),
 ]
 
 
@@ -450,25 +744,28 @@ def sample_caa(name):
     return []
 
 
+def records_visibility():
+    try:
+        visibility = json.loads(fetch(RECORDS_REPO_URL)).get("visibility")
+    except urllib.error.HTTPError as e:
+        return f"answers {e.code}"
+    except (OSError, ValueError, AttributeError) as e:
+        return f"could not be read: {e!r}"
+    return "public" if visibility == "public" else f"answers visibility {visibility!r}"
+
+
 def gather(args):
     attestation = fetch(args.attestation) if args.attestation.startswith("https://") else Path(args.attestation).read_bytes()
     now = utcnow()
-    pins_dir = Path(args.pins)
-    history = read_pins_history(pins_dir)
-    records_dir = pins_dir / "records" / args.environment
-    records = [read_record(p) for p in sorted(records_dir.glob("*.json"))]
-    attested = {}
-    for record in records:
-        try:
-            attested[record] = attest(record, args.environment, history)
-        except Refused as e:
-            attested[record] = e
+    state_path = Path(args.sequence_state)
+    saved, last_run, boots = read_state(state_path)
+    cache = Path(args.cache) if args.cache else state_path.with_name(state_path.name + ".cache")
 
     seen, certificates, ct_counts = set(), [], {}
     for source in args.ct or ["crt.sh", "certspotter"]:
         ct_counts[source] = 0
-        for label, der in read_ct(source, args.name):
-            cert = parse_certificate(label, der)
+        for label_, der, logged in read_ct(source, args.name):
+            cert = parse_certificate(label_, der, logged)
             if not any(covers(n, args.name) for n in cert.names):
                 continue
             ct_counts[source] += 1
@@ -477,6 +774,68 @@ def gather(args):
             seen.add(hashlib.sha256(der).digest())
             if args.since is None or cert.not_after >= args.since:
                 certificates.append(cert)
+
+    pins_dir, records_dir = Path(args.pins), Path(args.records)
+    history = read_pins_history(pins_dir)
+    pointers, notes = read_pointers(records_dir, args.environment)
+    tips, rewound = {}, {}
+    for repo, directory in (("morse-pins", pins_dir), ("morse-records", records_dir)):
+        tip, seen_tip = git(directory, "rev-parse", "HEAD").strip(), saved["tips"].get(repo)
+        if seen_tip is not None and not descends(directory, seen_tip):
+            rewound[repo] = (seen_tip, tip)
+        tips[repo] = seen_tip if repo in rewound else tip
+
+    policy = rekor.make_policy(WITNESS_K, WITNESSES)
+    shard_failures, checkpoints, witnesses = [], {}, {}
+    try:
+        shards, skipped = rekor.read_shards(read_trusted_root(cache))
+        notes += [Note(s) for s in skipped]
+    except Exception as e:
+        shards = {}
+        shard_failures.append(f"Sigstore's trusted root could not be read through TUF: {e!r}")
+    by_origin = {s.origin: s for s in shards.values()}
+    for shard in sorted(by_origin.values(), key=lambda s: s.origin):
+        retired = shard.end is not None and shard.end < now
+        if retired and shard.origin not in saved["checkpoints"]:
+            continue
+        kept = saved["checkpoints"].get(shard.origin, {})
+        last = saved_checkpoint(shard.origin, kept) if kept else None
+        accepted, newest, failure = advance(shard, last, policy, retired and last is not None)
+        if isinstance(failure, Note):
+            notes.append(failure)
+        elif failure:
+            shard_failures.append(failure)
+        last_seen = {name: datetime.fromisoformat(kept.get("cosigners", {}).get(name) or kept.get("tracked_since") or now.isoformat()) for name in policy.names()}
+        counted = {c.name for c in newest.cosigners} if newest else set()
+        last_seen.update({name: now for name in counted})
+        if shard.end is None or shard.end >= now:
+            witnesses[shard.origin] = (newest.lines if newest else (), last_seen)
+        counts = kept.get("counts", {})
+        if newest:
+            day = counts.setdefault(now.strftime("%Y-%m-%d"), {})
+            day[str(len(counted))] = day.get(str(len(counted)), 0) + 1
+        checkpoints[shard.origin] = {"accepted": accepted, "cosigners": {n: t.isoformat() for n, t in sorted(last_seen.items())},
+                                     "counts": counts, "tracked_since": kept.get("tracked_since") or now.isoformat()}
+    for origin, kept in saved["checkpoints"].items():
+        checkpoints.setdefault(origin, {"kept": kept})
+
+    verified_ = {}
+    for p in sorted(pointers, key=lambda p: (p.log, p.index)):
+        shard = by_origin.get(p.log)
+        accepted = checkpoints.get(p.log, {}).get("accepted")
+        try:
+            v = verify_record(prove(p, shard, accepted, cache / "leaves", records_dir, shards, policy), args.environment, history)
+        except Refusal as e:
+            notes.append(Note(f"the entry at {p.name()} does not verify, so this run ignores it: {e}"))
+            continue
+        if (v.boot, v.spki_sha256) != (p.boot, p.spki_sha256):
+            notes.append(Note(f"the pointer {p.name()} names boot {p.boot} and SPKI {p.spki_sha256}, and its entry attests boot {v.boot} and SPKI {v.spki_sha256}"))
+        verified_[(v.log, v.index)] = v
+
+    try:
+        trust = read_trust(Path(args.enclave), history, args.environment)
+    except (Refused, subprocess.CalledProcessError, OSError) as e:
+        trust = Refused(str(e.stderr.strip()) if isinstance(e, subprocess.CalledProcessError) else str(e))
 
     if not args.no_caa_sample:
         sample = {"time": datetime.now(timezone.utc).isoformat(timespec="seconds"), "caa": sample_caa(args.name)}
@@ -492,35 +851,56 @@ def gather(args):
         except Refused as e:
             live.append(e)
     accounts = {tuple(a.split("=", 1)) for a in args.caa_account}
-    saved, last_run, boots = read_state(Path(args.sequence_state))
-    boots = {key: boot if boot.first_seen is None or boot.first_seen <= now + MAX_AHEAD else Boot(None, boot.spki_sha256) for key, boot in boots.items()}
+    boots = {key: boot if boot.first_seen is None or boot.first_seen <= now + MAX_AHEAD else Boot(None, boot.spkis) for key, boot in boots.items()}
     dated = last_run if last_run is not None and last_run <= now + MAX_AHEAD else None
-    for seen in live:
-        if isinstance(seen, Live):
-            boots.setdefault(seen.key_id, Boot(dated, seen.spki_sha256))
-    tip = git(pins_dir, "rev-parse", "HEAD").strip()
-    seen_tip = saved.get("tip")
-    rewound = seen_tip is not None and subprocess.run(["git", "-C", str(pins_dir), "merge-base", "--is-ancestor", seen_tip, "HEAD"], capture_output=True).returncode != 0
-    return Evidence(args.name, args.environment, records_dir, certificates, records, attested, caa_history, accounts, live, saved.get("sequence", 0), ct_counts, tip, seen_tip, rewound, boots, last_run, now)
+    for seen_ in live:
+        if isinstance(seen_, Live):
+            boot = boots.get(seen_.key_id, Boot(dated, ()))
+            boots[seen_.key_id] = Boot(boot.first_seen, tuple(sorted({*boot.spkis, seen_.spki_sha256})))
+    ev = Evidence(args.name, args.environment, certificates, ct_counts, pointers, list(verified_.values()), notes, shard_failures, caa_history, accounts,
+                  live, tips, rewound, witnesses, trust, records_visibility(), policy, boots, last_run, now)
+    ev.checkpoints = checkpoints
+    return ev
 
 
 def read_state(state):
     if not state.exists():
-        return {}, None, {}
+        return {"checkpoints": {}, "tips": {}}, None, {}
     saved = json.loads(state.read_text())
     last_run = None if saved.get("last_run") is None else datetime.fromisoformat(saved["last_run"])
-    boots = {key: Boot(None if b["first_seen"] is None else datetime.fromisoformat(b["first_seen"]), b["spki_sha256"]) for key, b in saved.get("boots", {}).items()}
+    # A state file from before a boot kept every SPKI it was seen live with held one in "spki_sha256".
+    boots = {key: Boot(None if b["first_seen"] is None else datetime.fromisoformat(b["first_seen"]), tuple(sorted(set(b["spkis"] if "spkis" in b else [b["spki_sha256"]]))))
+             for key, b in saved.get("boots", {}).items()}
     if any(t is not None and t.tzinfo is None for t in [last_run, *(b.first_seen for b in boots.values())]):
         raise ValueError(f"{state} holds a time with no zone")
-    return saved, last_run, boots
+    # A state file from before the watcher read Rekor kept the morse-pins tip it saw in "tip".
+    tips = dict(saved.get("tips") or ({"morse-pins": saved["tip"]} if saved.get("tip") else {}))
+    return {"checkpoints": saved.get("checkpoints") or {}, "tips": tips}, last_run, boots
+
+
+def write_state(path, ev):
+    checkpoints = {}
+    for origin, c in sorted(ev.checkpoints.items()):
+        if "kept" in c:
+            checkpoints[origin] = c["kept"]
+            continue
+        out = {k: c[k] for k in ("cosigners", "counts", "tracked_since")}
+        if c["accepted"] is not None:
+            out |= {"size": c["accepted"].size, "root": rekor.b64_string(c["accepted"].root), "note": c["accepted"].note}
+        checkpoints[origin] = out
+    boots = {key: {"first_seen": b.first_seen and b.first_seen.isoformat(), "spkis": list(b.spkis)} for key, b in sorted(ev.boots.items())}
+    path.write_text(json.dumps({"checkpoints": checkpoints, "tips": ev.tips, "last_run": ev.now.isoformat(), "boots": boots}))
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--pins", required=True, help="a full-history checkout of morse-pins, with enclave_pins.json and records/")
+    parser.add_argument("--pins", required=True, help="a full-history checkout of morse-pins, for its enclave_pins.json history")
+    parser.add_argument("--records", required=True, help="a full-history checkout of trymorse/morse-records, with <environment>.jsonl pointers and leaves/")
     parser.add_argument("--caa-history", required=True, help="a JSON lines file of CAA samples; each run appends one")
     parser.add_argument("--caa-account", action="append", default=[], metavar="CA=URI", help="an ACME account CAA may name, such as letsencrypt.org=https://acme-v02.api.letsencrypt.org/acme/acct/1")
-    parser.add_argument("--sequence-state", required=True, help="a JSON file holding the highest records statement sequence any run has seen and the morse-pins commit it saw, which each run raises, when this watcher last ran, and every boot it has seen live with when it first saw it")
+    parser.add_argument("--sequence-state", required=True, help="a JSON file holding each Rekor shard's last accepted checkpoint and its witnesses, the morse-pins and morse-records commits the last run saw, when this watcher last ran, and every boot it has seen live with each SPKI it held and when it first saw it")
+    parser.add_argument("--cache", help="a directory for the TUF metadata and the entries already proven; beside --sequence-state if omitted")
+    parser.add_argument("--enclave", required=True, help="a checkout of trymorse/morse-enclave with its tags, for check 8's reading of the newest pinned image's trust.go")
     parser.add_argument("--ct", action="append", metavar="SOURCE", help="crt.sh, certspotter, or a JSON file of certspotter issuances with cert_der; both CT services if omitted")
     parser.add_argument("--attestation", default=ATTESTATION_URL, help="the door's /v1/attestation URL, or a file holding its answer")
     parser.add_argument("--no-caa-sample", action="store_true", help="check the CAA history without adding a sample")
@@ -534,7 +914,7 @@ def main(argv=None):
     except Exception as e:
         print(f"FAIL: could not read the evidence: {e!r}")
         sys.exit(1)
-    print(f"{len(ev.certificates)} certificates in CT cover {ev.name}. morse-pins has {len(ev.records)} {ev.environment} records.\n")
+    print(f"{len(ev.certificates)} certificates in CT cover {ev.name}. morse-records has {len(ev.pointers)} {ev.environment} pointers, and {len(ev.verified)} of their entries verify.\n")
 
     failed, unenforced = False, False
     for title, check in CHECKS:
@@ -544,15 +924,13 @@ def main(argv=None):
         except Exception as e:
             failures = [f"the check could not run: {e!r}"]
         for failure in failures:
-            print(f"  {'NOT ENFORCED' if isinstance(failure, Unenforced) else 'FAIL'}: {failure}")
-        if not failures:
+            print(f"  {'NOT ENFORCED' if isinstance(failure, Unenforced) else 'NOTE' if isinstance(failure, Note) else 'FAIL'}: {failure}")
+        if not [f for f in failures if not isinstance(f, Note)]:
             print("  OK")
         print()
-        failed = failed or any(not isinstance(f, Unenforced) for f in failures)
+        failed = failed or any(not isinstance(f, (Unenforced, Note)) for f in failures)
         unenforced = unenforced or any(isinstance(f, Unenforced) for f in failures)
-    latest = max([s for s, _ in read_statements(ev.records_dir)], default=0)
-    boots = {key: {"first_seen": b.first_seen and b.first_seen.isoformat(), "spki_sha256": b.spki_sha256} for key, b in sorted(ev.boots.items())}
-    Path(args.sequence_state).write_text(json.dumps({"sequence": max(latest, ev.seen_sequence), "tip": ev.seen_tip if ev.rewound else ev.tip, "last_run": ev.now.isoformat(), "boots": boots}))
+    write_state(Path(args.sequence_state), ev)
     sys.exit(1 if failed else 2 if unenforced else 0)
 
 

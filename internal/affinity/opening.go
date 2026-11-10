@@ -11,7 +11,7 @@ import (
 
 const openingTextCap = 64 << 10
 
-// DigestOf is the conversation digest of a request as its caller sent it (ROUTING.md 3.1). A prompt_cache_key names
+// DigestOf is the conversation digest of a request as its caller sent it. A prompt_cache_key names
 // the conversation first, and an empty one opts out. A session_id comes next. Otherwise the messages up to and
 // including the first user message name it. Each source hashes under its own tag, so a key whose bytes equal some
 // opening's encoding still names a different conversation.

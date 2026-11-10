@@ -235,3 +235,18 @@ func TestOutputWithinIsTheMostOutputWhoseHoldTheMicrosCover(t *testing.T) {
 		}
 	}
 }
+
+func TestAVeilRateChargesEachCallAndRoundsItsTokensUp(t *testing.T) {
+	r := money.VeilRate{PerCall: 200, PerMTok: 800_000}
+	for _, c := range []struct {
+		calls, tokens int
+		want          money.Micros
+	}{{1, 1000, 1000}, {2, 0, 400}, {1, 1, 201}, {0, 0, 0}, {-1, -5, 0}, {3, 1_000_000, 800_600}} {
+		if got := r.Of(c.calls, c.tokens); got != c.want {
+			t.Errorf("Of(%d, %d) = %d, want %d", c.calls, c.tokens, got, c.want)
+		}
+	}
+	if !(money.VeilRate{}).Zero() || r.Zero() {
+		t.Error("Zero reads the rate wrong")
+	}
+}

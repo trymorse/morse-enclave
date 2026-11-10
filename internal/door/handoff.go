@@ -73,12 +73,12 @@ func (d *Door) admit(ctx context.Context, pins Pins) (admitted, *Refusal) {
 	if err != nil {
 		return admitted{}, refuse(http.StatusServiceUnavailable, "unattested", "this enclave could not read its time: %v", err)
 	}
-	st, logged, err := pinsig.Verify(pins.Statement, pins.Bundle, d.trust.Root, d.trust.Identity)
+	st, signed, err := pinsig.Verify(pins.Statement, pins.Bundle, d.trust.Root, d.trust.Identity, d.trust.Witnesses)
 	if err != nil {
 		return admitted{}, refuse(http.StatusUnprocessableEntity, "pins_unverified", "%v", err)
 	}
 	c, refused := d.update(func(c *custody) (*custody, *Refusal) {
-		if err := pinsig.Admit(st, d.environment, c.floor, logged, now, PinsMaxAge); err != nil {
+		if err := pinsig.Admit(st, d.environment, c.floor, signed, now, PinsMaxAge); err != nil {
 			return nil, refuse(http.StatusUnprocessableEntity, "pins_refused", "%v", err)
 		}
 		if st.Sequence == c.floor {
