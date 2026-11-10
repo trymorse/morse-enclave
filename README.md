@@ -1,16 +1,21 @@
 # Morse enclave
 
-This is the source of the image that runs Morse's AWS Nitro enclave. The enclave holds the worker that opens sealed requests, calls the model vendor, and seals the reply. Morse's relay sits between your app and the enclave. It cannot read a sealed request.
+[![License: AGPL-3.0](https://img.shields.io/github/license/trymorse/morse-enclave)](LICENSE)
+[![CodeQL](https://github.com/trymorse/morse-enclave/actions/workflows/github-code-scanning/codeql/badge.svg)](https://github.com/trymorse/morse-enclave/actions/workflows/github-code-scanning/codeql)
 
-Morse exports this code from its private monorepo on each release. The export holds exactly the files the image build reads, so rebuilding it gives the image Morse runs. You can check that yourself.
+Quick check: `npx @askmorse/verify` checks the enclaves serving Morse's API against this source and the pins in [morse-pins](https://github.com/trymorse/morse-pins). [morse-verifier](https://github.com/trymorse/morse-verifier) says what it checks and how, and lists its releases if you want to pin one.
+
+This is the source of the image that runs Morse's AWS Nitro enclave. The enclave holds the worker that opens sealed requests, calls the model vendor, and seals the reply. Morse's relay passes requests between your app and the enclave, and cannot read a sealed one.
+
+Morse exports this code from its private monorepo on each release. The export holds exactly the files the image build reads, so rebuilding it gives the image Morse runs. The sections below show how to check that.
 
 ## How this repository is published
 
-Morse publishes this repository from its private monorepo. Each commit here is one image Morse pinned for production. A bot makes the commit when the deploy pins the image, and the commit message lists the image's PCR0, PCR1, and PCR2. The bot tags the commit with the release, such as `v2026.10.1`. An image rebuilt with newer pins for the same release gets its own tag, such as `v2026.10.5-pins-6ab5d36`. Morse does not publish its day-to-day commits.
+Each commit here is one image Morse pinned for production. A bot makes the commit when the deploy pins the image, and the commit message lists the image's PCR0, PCR1, and PCR2. The bot tags the commit with the release, such as `v2026.10.1`. Newer tags also get a GitHub Release that lists the same PCRs. The earliest tags have no Release, and carry the PCRs only in their commit message. An image rebuilt with newer pins for the same release gets its own tag, such as `v2026.10.5-pins-6ab5d36`. Morse does not publish its day-to-day commits.
 
 The first release here is `v2026.10.1`. [morse-pins](https://github.com/trymorse/morse-pins) also lists older prod images, `v0.6.26` to `v0.6.34`, that ran before Morse published this source. This repository has no source for them. An entry marked `revoked: true` is an image the app no longer accepts. If Morse revoked an image before it deployed, its tag may be missing here too.
 
-This repository does not take pull requests. To report a bug, open an issue. To report a security problem, follow `SECURITY.md`.
+This repository does not take pull requests. To report a bug, open an issue. To report a security problem, follow `SECURITY.md`. `CONTRIBUTING.md` says more.
 
 ## What is here
 
@@ -73,7 +78,7 @@ Only the enclave can read a request and its reply, so the enclave counts the tok
 
 ## Rebuild the image
 
-You need an arm64 or x86_64 Linux machine with Docker and `jq`. The image is arm64. The Nitro CLI step takes its kernel from its own architecture, so on x86_64 `build.sh` takes the arm64 kernel from the arm64 package of the same Nitro CLI release, checks that package's SHA-256, and builds for arm64. Either machine builds the same PCRs. An older release's `deploy/enclave/build.sh` has no `amazonlinux_amd64=` line and builds only on arm64, or on x86_64 after you turn on arm64 emulation with `docker run --privileged --rm tonistiigi/binfmt --install arm64`, which makes the build slower.
+You need an arm64 or x86_64 Linux machine with Docker and `jq`. The image is arm64. The Nitro CLI step takes its kernel from its own architecture, so on x86_64 `build.sh` takes the arm64 kernel from the arm64 package of the same Nitro CLI release, checks that package's SHA-256, and builds for arm64. Either machine builds the same PCRs. An older release's `deploy/enclave/build.sh` has no `amazonlinux_amd64=` line and builds only on arm64. To build one on x86_64, first turn on arm64 emulation with `docker run --privileged --rm tonistiigi/binfmt --install arm64`. The build is then slower.
 
 1. Check out the tag of the release you want to compare.
 2. Make a tar of the source. It must be this repo's files and nothing else:

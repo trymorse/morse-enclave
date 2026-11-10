@@ -14,7 +14,7 @@ import (
 const vendorStatementType = "morse-vendor-pins-v1"
 
 // VendorFiles are the pins repository files a vendor statement digests, by their path there. A statement
-// lists exactly these, as morse-core's VENDOR_FILES does.
+// lists exactly these, as the check in Morse's apps does.
 var VendorFiles = [...]string{
 	"v4/phala_pins.json",
 	"v4/near_pins.json",

@@ -52,7 +52,10 @@ type Chat struct {
 	Reasoning            chat.Reasoning
 	ReasoningUncapped    bool
 	SilentWhileReasoning bool
-	Counter              *tokenizer.Tokenizer
+	// IgnoresOutputLimit marks a host that generates past the output limit it is sent, whose reply the worker counts
+	// and ends at the limit (limitCut).
+	IgnoresOutputLimit bool
+	Counter            *tokenizer.Tokenizer
 }
 
 type ChatUpstream interface {

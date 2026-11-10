@@ -254,10 +254,10 @@ func (l *Loader) take(ctx context.Context, branch pinsbranch.Reader, commit stri
 	return nil
 }
 
-// publicPath is where trymorse/morse-pins holds the file a vendor statement lists under key. sign.yml says:
-// "The vendor statement names each file by its path in the private pins repository, v4/<name>, the key every
-// reader of the statement (pinsig.VendorFiles, morse-core's VENDOR_FILES) expects, and this repository holds
-// that file at its root." A key without the v4/ prefix is refused rather than guessed at.
+// publicPath is where trymorse/morse-pins holds the file a vendor statement lists under key. As its sign.yml
+// says, the vendor statement names each file by its path in the private pins repository, v4/<name>, the key
+// every reader of the statement (pinsig.VendorFiles and the check in Morse's apps) expects, and morse-pins
+// holds that file at its root. A key without the v4/ prefix is refused rather than guessed at.
 func publicPath(key string) (string, error) {
 	name, ok := strings.CutPrefix(key, "v4/")
 	if !ok {

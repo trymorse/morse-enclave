@@ -12,13 +12,15 @@ import (
 
 const ZDRValue = "required"
 
-// A Host is one OpenAI-compatible host. The zero Host sends the key alone and admits every call.
+// A Host is one OpenAI-compatible host. The zero Host sends the key alone, caps a reply with max_completion_tokens and
+// admits every call.
 type Host struct {
 	// Name is the host's provider in the routes file.
 	Name string
 	// ZDRHeader is the header every request to the host carries as ZDRValue, or "" for a host that needs none.
-	ZDRHeader string
-	admit     func(chat.Call) error
+	ZDRHeader  string
+	admit      func(chat.Call) error
+	limitField openaicompat.LimitField
 }
 
 var (
@@ -26,27 +28,27 @@ var (
 	// (https://docs.wafer.ai/serverless/zero-data-retention.md) and accepts Wafer-ZDR: required, refusing any other
 	// value. The proxy sends that header anyway, so zero retention never rests on the account's plan or a default that
 	// could change.
-	Wafer = Host{Name: "wafer", ZDRHeader: "Wafer-ZDR"}
+	Wafer = Host{Name: "wafer", ZDRHeader: "Wafer-ZDR", limitField: openaicompat.MaxTokens}
 	// Isoquant has no account setting for zero data retention. A request keeps nothing only when it carries
 	// Isoquant-ZDR: required, so that header is the one control standing between a prompt and Isoquant's logs.
-	Isoquant = Host{Name: "isoquant", ZDRHeader: "Isoquant-ZDR", admit: openaicompat.FunctionToolsTextAndImages}
+	Isoquant = Host{Name: "isoquant", ZDRHeader: "Isoquant-ZDR", admit: openaicompat.FunctionToolsTextAndImages, limitField: openaicompat.MaxTokens}
 	// Novita offers no per-request retention header. Its Terms of Service (https://novita.ai/legal/terms-of-service,
 	// section 10.2, Zero Data Retention) say it keeps nothing of a request beyond generating and delivering the output
-	// and trains on nothing, with carve-outs for law, support and automated safety screening. Daniel accepted that as
-	// zero data retention for Ling 3.0 Flash on 2026-11-05, so a private route on this host stands on the terms alone.
+	// and trains on nothing, with carve-outs for law, support and automated safety screening. That is zero data
+	// retention per Novita's terms, so a private route on this host stands on the terms alone.
+	// Novita ignores max_tokens and runs a reply past the hold the proxy reserved, but stops at max_completion_tokens,
+	// counting reasoning against it.
 	Novita = Host{Name: "novita"}
 	// Morph documents no per-request zero data retention header and no account setting for it. Zero retention rests on
-	// the ZDR addendum Morph signed with us, which Daniel confirmed with Morph on 2026-11-05 covers our account. So the
-	// key sent here must be the account the addendum covers, and Morph's other models and products stay out of the
-	// private tier.
-	Morph = Host{Name: "morph"}
+	// Morph's zero data retention terms for the account that holds the key. So the key sent here must be that
+	// account's, and Morph's other models and products stay out of the private tier.
+	Morph = Host{Name: "morph", limitField: openaicompat.MaxTokens}
 	// DeepInfra offers no per-request retention header. Its published data policy
 	// (https://docs.deepinfra.com/account/data-privacy, read 2026-11-05) says inputs live only in memory and are never
 	// stored to disk, outputs are deleted once sent, request content is not logged, and nothing submitted is used for
-	// training or shared, except for Google and Anthropic models and bulk inference, which no route here uses. Daniel
-	// accepted that policy as zero data retention on 2026-11-05 without a written agreement, so a private route on this
-	// host stands on the policy alone.
-	DeepInfra = Host{Name: "deepinfra"}
+	// training or shared, except for Google and Anthropic models and bulk inference, which no route here uses. That is
+	// zero data retention per DeepInfra's terms, so a private route on this host stands on the policy alone.
+	DeepInfra = Host{Name: "deepinfra", limitField: openaicompat.MaxTokens}
 )
 
 func Hosts() []Host { return []Host{Wafer, Isoquant, Novita, Morph, DeepInfra} }
@@ -67,7 +69,7 @@ func (h Host) NewChat(baseURL, key, model string, answersInReasoning bool, clien
 	return &openaicompat.Provider{
 		Sender:             openaicompat.HTTPSender{Endpoint: h.Endpoint(baseURL, key, client)},
 		Model:              model,
-		LimitField:         openaicompat.MaxTokens,
+		LimitField:         h.limitField,
 		Admit:              h.admit,
 		AnswersInReasoning: answersInReasoning,
 	}

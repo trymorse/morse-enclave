@@ -156,8 +156,15 @@ func TestAnEndpointWithoutAKeyStillSendsTheZDRHeader(t *testing.T) {
 	}
 }
 
-func TestAHostWithNoZDRHeaderIsSentTheKeyAloneAndEveryHostItsOwnModelAndMaxTokens(t *testing.T) {
+// limitFields is the field each host is sent the reply cap in.
+var limitFields = map[string]string{"wafer": "max_tokens", "isoquant": "max_tokens", "novita": "max_completion_tokens", "morph": "max_tokens", "deepinfra": "max_tokens"}
+
+func TestAHostWithNoZDRHeaderIsSentTheKeyAloneAndEveryHostItsOwnModelAndLimitField(t *testing.T) {
 	for _, h := range Hosts() {
+		field, ok := limitFields[h.Name]
+		if !ok {
+			t.Fatalf("%s has no limit field in limitFields", h.Name)
+		}
 		s := stub(t)
 		reply, _, err := h.NewChat(s.srv.URL, "k", "upstream-model-1017", false, s.srv.Client()).Complete(context.Background(), call(t, `{"model":"m","messages":[{"role":"user","content":"hello"}]}`))
 		if err != nil {
@@ -166,8 +173,8 @@ func TestAHostWithNoZDRHeaderIsSentTheKeyAloneAndEveryHostItsOwnModelAndMaxToken
 		var out bytes.Buffer
 		reply.WriteTo(&out)
 		r := s.requests()[0]
-		if !strings.Contains(r.body, `"model":"upstream-model-1017"`) || !strings.Contains(r.body, `"max_tokens":64`) {
-			t.Errorf("%s was sent %s, want its own model id and max_tokens", h.Name, r.body)
+		if !strings.Contains(r.body, `"model":"upstream-model-1017"`) || !strings.Contains(r.body, `"`+field+`":64`) {
+			t.Errorf("%s was sent %s, want its own model id and %s", h.Name, r.body, field)
 		}
 		if !strings.Contains(out.String(), `"hi"`) {
 			t.Errorf("%s: reply %s lost the content", h.Name, out.String())
@@ -178,6 +185,26 @@ func TestAHostWithNoZDRHeaderIsSentTheKeyAloneAndEveryHostItsOwnModelAndMaxToken
 		for name := range r.header {
 			if strings.HasSuffix(strings.ToLower(name), "-zdr") {
 				t.Errorf("%s, which has no ZDR header, was sent %s", h.Name, name)
+			}
+		}
+	}
+}
+
+func TestNovitaIsSentTheCapAsMaxCompletionTokensAndNeverMaxTokensWhateverTheCallerSent(t *testing.T) {
+	msgs := `"messages":[{"role":"user","content":"hello"}]`
+	for _, limit := range []string{``, `"max_tokens":999,`, `"max_completion_tokens":999,`, `"max_tokens":999,"max_completion_tokens":999,`} {
+		s := stub(t)
+		c := Novita.NewChat(s.srv.URL, "k", "qwen/qwen3.5-397b-a17b", false, s.srv.Client())
+		ctx := context.Background()
+		if _, err := c.Stream(ctx, call(t, `{"model":"m","stream":true,`+limit+msgs+`}`), func(chat.Chunk) error { return nil }); err != nil {
+			t.Fatalf("%s stream: %v", limit, err)
+		}
+		if _, _, err := c.Complete(ctx, call(t, `{"model":"m",`+limit+msgs+`}`)); err != nil {
+			t.Fatalf("%s complete: %v", limit, err)
+		}
+		for i, r := range s.requests() {
+			if strings.Count(r.body, `"max_completion_tokens":64`) != 1 || strings.Contains(r.body, `"max_tokens"`) || strings.Contains(r.body, `999`) {
+				t.Errorf("caller sent %q; request %d was %s, want one max_completion_tokens of 64 and no max_tokens", limit, i+1, r.body)
 			}
 		}
 	}

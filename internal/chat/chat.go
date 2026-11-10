@@ -555,6 +555,27 @@ func (c Chunk) MarkUnanswered() Chunk {
 	return c
 }
 
+// Ending is the chunk that ends choice 0 of c's reply with finish and says nothing more: c's id, object, created and
+// model, as the stream's other chunks carry them, and no usage.
+func (c Chunk) Ending(finish Finish) Chunk {
+	var head struct {
+		ID      string `json:"id"`
+		Object  string `json:"object"`
+		Created int64  `json:"created"`
+		Model   string `json:"model"`
+	}
+	json.Unmarshal(c.object, &head)
+	reason, _ := json.Marshal(finish.String())
+	ending, _ := json.Marshal(struct {
+		ID      string          `json:"id"`
+		Object  string          `json:"object"`
+		Created int64           `json:"created"`
+		Model   string          `json:"model"`
+		Choices json.RawMessage `json:"choices"`
+	}{head.ID, head.Object, head.Created, head.Model, json.RawMessage(`[{"index":0,"delta":{},"finish_reason":` + string(reason) + `}]`)})
+	return Chunk{object: ending}
+}
+
 type Finish uint8
 
 const (

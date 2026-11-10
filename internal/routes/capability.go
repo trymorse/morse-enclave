@@ -22,6 +22,9 @@ type capability struct {
 	hides bool
 	// The provider spends reasoning beyond the client's output limit, so a hold covers the route maximum.
 	uncapped bool
+	// The provider generates past the output limit it is sent, whichever field carries it, so the worker counts the reply
+	// and ends it at the limit itself, and the hold for the limit covers what the reply is billed.
+	ignoresLimit bool
 	// The model reasons at the vendor's default effort when the request names none, so only an effort of none the
 	// route lists stops it. Anthropic's models think only at an effort the request names.
 	reasonsUnasked bool
@@ -104,45 +107,48 @@ var capabilities = map[Provider]capability{
 		refusesDryAccount: true,
 	},
 	// Wafer documents no status for a dry account; its chat path takes apierr.SanitizedUpstreamError's default mapping
-	// of a 401 or 402 to upstream_unavailable. No dry account has answered a request yet.
+	// of a 401 or 402 to upstream_unavailable. No dry account has answered a request yet. Wafer ignores the output
+	// limit: on DeepSeek V4 Flash 0731 with a limit of 256 it sent 9,379 completion tokens for max_tokens and 1,448 for
+	// max_completion_tokens, each with finish_reason stop (probes of 2026-11-10).
 	ProviderWafer: {
 		kinds:             servedAt{catalog.KindChat: privateOnly},
 		zdrAt:             privateOnly,
 		zdrWhy:            "because Wafer keeps nothing of a request that carries Wafer-ZDR: required, which this provider sends on every request whatever the account's default",
 		needsKey:          true,
+		ignoresLimit:      true,
 		refusesDryAccount: true,
 	},
-	// Novita has no per-request retention header, so a route stands on its Terms of Service, section 10.2, which Daniel
-	// accepted as zero data retention for Ling 3.0 Flash on 2026-11-05 and for every Novita model on 2026-11-08.
+	// Novita has no per-request retention header, so a route stands on its Terms of Service, section 10.2, which give
+	// zero data retention for every Novita model.
 	// Novita documents 402 for an insufficient balance; its chat path takes apierr.SanitizedUpstreamError's default
 	// mapping of a 401 or 402 to upstream_unavailable.
 	ProviderNovita: {
 		kinds:                servedAt{catalog.KindChat: privateOnly},
 		zdrAt:                privateOnly,
-		zdrWhy:               "because Novita's Terms of Service, section 10.2 (https://novita.ai/legal/terms-of-service), keep nothing beyond generating and delivering the output and train on nothing, with carve-outs for law, support and automated safety screening, accepted by Daniel for every Novita model on 2026-11-08; no per-request header",
+		zdrWhy:               "because Novita's Terms of Service, section 10.2 (https://novita.ai/legal/terms-of-service), keep nothing beyond generating and delivering the output and train on nothing, with carve-outs for law, support and automated safety screening, which is zero data retention per Novita's terms for every Novita model; no per-request header",
 		needsKey:             true,
 		answersFromReasoning: true,
 		refusesDryAccount:    true,
 	},
-	// Morph documents no zero retention header or setting, so a Morph route stands on the ZDR addendum Morph signed with
-	// us, which covers the account that owns the route's key. Morph documents no status for a dry account; its chat
+	// Morph documents no zero retention header or setting, so a Morph route stands on Morph's zero data retention
+	// terms for the account that owns the route's key. Morph documents no status for a dry account; its chat
 	// path takes apierr.SanitizedUpstreamError's default mapping of a 401 or 402 to upstream_unavailable. No dry
 	// account has answered a request yet.
 	ProviderMorph: {
 		kinds:             servedAt{catalog.KindChat: privateOnly},
 		zdrAt:             privateOnly,
-		zdrWhy:            "because Morph documents no zero retention header or setting, so a Morph route stands on the ZDR addendum signed with Morph, which Daniel confirmed covers our account on 2026-11-05",
+		zdrWhy:            "because Morph documents no zero retention header or setting, so a Morph route stands on Morph's zero data retention terms for the account that owns the route's key",
 		needsKey:          true,
 		refusesDryAccount: true,
 	},
-	// DeepInfra has no per-request retention header, so a route stands on its published data policy alone, which Daniel
-	// accepted as zero data retention on 2026-11-05 without a written agreement. DeepInfra documents no status for a
-	// dry account; its chat path takes apierr.SanitizedUpstreamError's default mapping of a 401 or 402 to
-	// upstream_unavailable. No dry account has answered a request yet.
+	// DeepInfra has no per-request retention header, so a route stands on its published data policy alone, which gives
+	// zero data retention per DeepInfra's terms. DeepInfra documents no status for a dry account; its chat path takes
+	// apierr.SanitizedUpstreamError's default mapping of a 401 or 402 to upstream_unavailable. No dry account has
+	// answered a request yet.
 	ProviderDeepInfra: {
 		kinds:                servedAt{catalog.KindChat: privateOnly},
 		zdrAt:                privateOnly,
-		zdrWhy:               "because DeepInfra's published data policy (https://docs.deepinfra.com/account/data-privacy) keeps inputs in memory only, logs no content and trains on nothing, which Daniel accepted on 2026-11-05 without a written agreement, since DeepInfra offers no per-request header",
+		zdrWhy:               "because DeepInfra's published data policy (https://docs.deepinfra.com/account/data-privacy) keeps inputs in memory only, logs no content and trains on nothing, which is zero data retention per DeepInfra's terms, since DeepInfra offers no per-request header",
 		needsKey:             true,
 		answersFromReasoning: true,
 		refusesDryAccount:    true,
@@ -216,6 +222,8 @@ func (p Provider) Tiers(kind catalog.Kind) []catalog.Tier {
 }
 
 func (p Provider) ReasoningUncapped() bool { return capabilities[p].uncapped }
+
+func (p Provider) IgnoresOutputLimit() bool { return capabilities[p].ignoresLimit }
 
 // RetentionTerms is the recorded basis on which p keeps nothing of a request at tier t, the reason a route there must
 // set retention zdr, and false when this file records none for p at t.

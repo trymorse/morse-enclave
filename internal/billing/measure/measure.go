@@ -46,6 +46,10 @@ type Evidence struct {
 	ReasoningCap       int
 	Thinking           ThinkingTime
 	ReasonedAgain      bool
+	// AtLimit marks a reply the worker ended at OutputLimit on a host that generates past the limit it is sent. The host
+	// sent no usage, since it never reached its last chunk, and it may have generated a few tokens more than the client
+	// was shown. The completion is billed at most OutputLimit, which is what the hold reserved.
+	AtLimit bool
 }
 
 type ThinkingTime struct {
@@ -88,7 +92,7 @@ func (r Streamed) delivered(outputLimit int, replyBytesPerToken float64) Reading
 }
 
 func (r Buffered) delivered(int, float64) Reading {
-	return reading(bytesEstimate(r.Bytes), MethodReplyBytes)
+	return reading(BytesEstimate(r.Bytes), MethodReplyBytes)
 }
 
 func (r SealedEvents) delivered(int, float64) Reading {
@@ -104,7 +108,9 @@ const (
 	AttachmentTokens          = 4784
 )
 
-func bytesEstimate(bytes int) int {
+// BytesEstimate is the most tokens text of this many bytes can be: no real text is denser than
+// overestimateBytesPerToken.
+func BytesEstimate(bytes int) int {
 	return (max(bytes, 0) + overestimateBytesPerToken - 1) / overestimateBytesPerToken
 }
 
@@ -208,6 +214,9 @@ func (e Evidence) Measure() Measurement {
 	}
 	prompt := rung(reported.PromptTokens, e.Counted.Prompt, e.promptEstimate())
 	completion := rung(reported.CompletionTokens, e.Counted.Completion, e.Reply.delivered(e.OutputLimit, e.ReplyBytesPerToken))
+	if e.AtLimit {
+		completion.Tokens = min(completion.Tokens, e.OutputLimit)
+	}
 	hidden := e.hidden(reported, completion)
 	u := chat.Usage{PromptTokens: prompt.Tokens, CompletionTokens: completion.Tokens + hidden.Tokens}
 	if prompt.Method == MethodReported {
@@ -243,7 +252,7 @@ func (m Measurement) unmeasured() UsageSource {
 func (e Evidence) promptEstimate() Reading {
 	text := e.PromptBytes
 	if !e.Budgeted && !e.SealedWhole {
-		text = bytesEstimate(text)
+		text = BytesEstimate(text)
 	}
 	return reading(min(text+e.Attachments*AttachmentTokens, e.PromptBound), MethodRequestBytes)
 }
@@ -275,6 +284,6 @@ func (e Evidence) hidden(reported chat.Usage, visible Reading) Thinking {
 }
 
 func (e Evidence) NeedsCount() bool {
-	cut := e.Cut == CutByClient || e.Cut == CutByDeadline
-	return e.Outcome == Cancelled && cut && !e.Unsent && (e.Upstream.PromptTokens <= 0 || e.Upstream.CompletionTokens <= 0)
+	cut := e.Outcome == Cancelled && (e.Cut == CutByClient || e.Cut == CutByDeadline) || e.AtLimit
+	return cut && !e.Unsent && (e.Upstream.PromptTokens <= 0 || e.Upstream.CompletionTokens <= 0)
 }

@@ -35,6 +35,7 @@ type chatRoute struct {
 	Reasoning            chat.Reasoning
 	ReasoningUncapped    bool
 	SilentWhileReasoning bool
+	IgnoresOutputLimit   bool
 	Counter              *tokenizer.Tokenizer
 	model                catalog.ModelID
 	endpoint             catalog.EndpointID
@@ -52,7 +53,7 @@ type chatRoute struct {
 }
 
 func (c Chat) route(model catalog.ModelID, vendor Model) chatRoute {
-	return chatRoute{ChatTerms: c.ChatTerms, Upstream: c.Upstream, Reasoning: c.Reasoning, ReasoningUncapped: c.ReasoningUncapped, SilentWhileReasoning: c.SilentWhileReasoning, Counter: c.Counter, model: model, endpoint: vendor.Endpoint, attester: vendor.Attester, speaks: c.Upstream.Speaks(), tier: vendor.Tier, retention: vendor.Retention, order: vendor.Order}
+	return chatRoute{ChatTerms: c.ChatTerms, Upstream: c.Upstream, Reasoning: c.Reasoning, ReasoningUncapped: c.ReasoningUncapped, SilentWhileReasoning: c.SilentWhileReasoning, IgnoresOutputLimit: c.IgnoresOutputLimit, Counter: c.Counter, model: model, endpoint: vendor.Endpoint, attester: vendor.Attester, speaks: c.Upstream.Speaks(), tier: vendor.Tier, retention: vendor.Retention, order: vendor.Order}
 }
 
 func vendorFor(vendors []chatRoute, p protocol) chatRoute {
@@ -507,10 +508,11 @@ func (u Plain) serve(ctx context.Context, w *InProcess, o *openedChat, a attempt
 	var got served
 	retry := chat.BusyRetry{Provider: u.Provider, Waits: a.waits, HedgeAfter: a.hedgeAfter, StallAfter: a.stallAfter}
 	rv := a.veil
+	cut := newLimitCut(ctx, a.route, a.call)
 	if a.call.Stream {
-		got = stream(ctx, reply, http.NewResponseController(reply), retry, a.call, transcript, clock, w.keepaliveEvery, rv)
+		got = stream(ctx, reply, http.NewResponseController(reply), retry, a.call, transcript, clock, w.keepaliveEvery, rv, cut)
 	} else {
-		got = complete(ctx, reply, retry, a.call, transcript, clock, rv)
+		got = complete(ctx, reply, retry, a.call, transcript, clock, rv, cut)
 	}
 	got.transcript = transcript
 	return got
@@ -535,6 +537,7 @@ type served struct {
 	thought           thought
 	transcript        *chat.Transcript
 	unproven          *unproven
+	atLimit           bool
 }
 
 func (s served) evidence(end ending, a attempt, g ChatGrant) measure.Evidence {
@@ -563,6 +566,7 @@ func (s served) evidence(end ending, a attempt, g ChatGrant) measure.Evidence {
 		ReasoningCap:       g.ReasoningCap,
 		Thinking:           measure.ThinkingTime{Duration: s.thought.duration, Rate: g.Figures.ThinkingRate},
 		ReasonedAgain:      s.thought.interleaved,
+		AtLimit:            s.atLimit,
 	}
 }
 
@@ -614,14 +618,15 @@ func (t *thinkingClock) thought() thought {
 	return thought{duration: cmp.Or(t.firstAnswer, t.now()).Sub(t.firstEvent), interleaved: t.interleaved}
 }
 
-func stream(ctx context.Context, w http.ResponseWriter, rc *http.ResponseController, prov chat.BusyRetry, c chat.Call, transcript *chat.Transcript, clock *thinkingClock, keepalive time.Duration, rv *replyVeil) served {
+func stream(ctx context.Context, w http.ResponseWriter, rc *http.ResponseController, prov chat.BusyRetry, c chat.Call, transcript *chat.Transcript, clock *thinkingClock, keepalive time.Duration, rv *replyVeil, cut *limitCut) served {
 	sw := &sseWriter{eventStream: eventStream{w: w, rc: rc}, transcript: transcript, clock: clock, veil: rv}
 	stop := func() {}
 	if clock != nil {
 		stop = sw.keepAlive(ctx, keepalive)
 	}
-	reported, attempts, err := prov.Stream(ctx, c, sw.emit)
+	reported, attempts, err := prov.Stream(ctx, c, cut.wrap(sw.emit))
 	stop()
+	err = stopped(err)
 	if err == nil && sw.empty() {
 		err = errEmptyReply
 	}
@@ -633,12 +638,12 @@ func stream(ctx context.Context, w http.ResponseWriter, rc *http.ResponseControl
 		sw.closeVeil()
 		sw.errorEvent()
 	}
-	return served{reported: reported, attempts: attempts, reply: measure.Streamed{Events: sw.delivered, VisibleBytes: sw.visible}, finish: sw.finish, unanswered: unanswered(sw.finish, sw.sent), malformed: sw.calls.Malformed(sw.finish, c.Stops()), writeErr: sw.err, callErr: err, thought: clock.thought()}
+	return served{reported: reported, attempts: attempts, reply: measure.Streamed{Events: sw.delivered, VisibleBytes: sw.visible}, finish: sw.finish, unanswered: unanswered(sw.finish, sw.sent), malformed: sw.calls.Malformed(sw.finish, c.Stops()), writeErr: sw.err, callErr: err, thought: clock.thought(), atLimit: cut.atLimit()}
 }
 
-func complete(ctx context.Context, w http.ResponseWriter, prov chat.BusyRetry, c chat.Call, transcript *chat.Transcript, clock *thinkingClock, rv *replyVeil) served {
+func complete(ctx context.Context, w http.ResponseWriter, prov chat.BusyRetry, c chat.Call, transcript *chat.Transcript, clock *thinkingClock, rv *replyVeil, cut *limitCut) served {
 	clock.startAtCall()
-	body, tokens, attempts, err := prov.Complete(ctx, c)
+	body, tokens, attempts, err := whole(ctx, prov, c, cut)
 	if err != nil {
 		return served{reported: tokens, attempts: attempts, reply: measure.Buffered{}, callErr: err, thought: clock.thought()}
 	}
@@ -661,5 +666,5 @@ func complete(ctx context.Context, w http.ResponseWriter, prov chat.BusyRetry, c
 	if rv != nil && written > 0 {
 		measured = vendorBytes
 	}
-	return served{reported: tokens, attempts: attempts, reply: measure.Buffered{Bytes: measured}, finish: d.Finish, unanswered: unanswered(d.Finish, d.Delivered()), malformed: calls.Malformed(d.Finish, c.Stops()), writeErr: writeErr}
+	return served{reported: tokens, attempts: attempts, reply: measure.Buffered{Bytes: measured}, finish: d.Finish, unanswered: unanswered(d.Finish, d.Delivered()), malformed: calls.Malformed(d.Finish, c.Stops()), writeErr: writeErr, atLimit: cut.atLimit()}
 }

@@ -139,6 +139,13 @@ func (rt Route) ReasoningUncapped() bool {
 	return vendor && up.Provider.ReasoningUncapped()
 }
 
+// IgnoresOutputLimit is whether the route's provider generates past the output limit it is sent, so the worker ends
+// the reply at the limit itself.
+func (rt Route) IgnoresOutputLimit() bool {
+	up, vendor := rt.Upstream.(Vendor)
+	return vendor && up.Provider.IgnoresOutputLimit()
+}
+
 // Hedgeable is whether a first chunk that is late is the vendor's stall, so a second call may race the first. An
 // attested route never hedges: no measurement yet shows a second call escaping a TEE vendor's slow first chunk rather
 // than adding to a full queue.

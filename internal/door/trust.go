@@ -18,7 +18,7 @@ type Trust struct {
 
 // pinsSigner is the public sign.yml of trymorse/morse-pins. It signs image
 // statements and the vendor statement to Rekor v2 only, so the image never
-// trusts the private Watermark-Labs/pins signer and never accepts a v1
+// trusts the signer of Morse's private pins and never accepts a v1
 // statement. The IDs are the repository's and its owner's, from gh api
 // repos/trymorse/morse-pins on 2026-11-09, so a renamed or recreated
 // repository fails.

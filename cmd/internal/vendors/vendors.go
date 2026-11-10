@@ -221,7 +221,7 @@ func chatBy(newProvider newChatProvider) builder[routes.Chat] {
 		}
 		served.Upstream = worker.Plain{Provider: newProvider(rt, c, key, d), BusyWaits: chat.BusyWaits, Hedge: hedgeFor(rt)}
 		served.Reasoning, served.ReasoningUncapped = rt.Upstream.(routes.Vendor).Provider.Reasoning(c.ReasoningEfforts), rt.ReasoningUncapped()
-		served.SilentWhileReasoning = rt.SilentWhileReasoning()
+		served.SilentWhileReasoning, served.IgnoresOutputLimit = rt.SilentWhileReasoning(), rt.IgnoresOutputLimit()
 		return served, nil
 	}
 }
