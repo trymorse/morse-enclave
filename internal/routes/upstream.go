@@ -34,7 +34,7 @@ func (c common) upstream(tier catalog.Tier) (Upstream, error) {
 func (c common) checkProviderName(up Upstream) error {
 	switch {
 	case c.ProviderName == "":
-		return errors.New("has no provider_name; set it to the lowercase name a customer knows the provider by, such as together, and an attested route's is its attester")
+		return errors.New("has no provider_name; set it to the lowercase name a customer knows the provider by, such as deepinfra, and an attested route's is its attester")
 	case !providerNamePattern.MatchString(c.ProviderName):
 		return fmt.Errorf("has provider_name %q; a provider name is lowercase letters, digits, and hyphens", c.ProviderName)
 	}
@@ -78,7 +78,7 @@ func oneAttesterPerHost(routes []Route) error {
 }
 
 func checkBaseURL(raw string, tier catalog.Tier) (*url.URL, error) {
-	u, err := baseurl.Parse("base_url", "https://api.together.xyz", raw)
+	u, err := baseurl.Parse("base_url", "https://api.deepinfra.com", raw)
 	if err != nil {
 		return nil, err
 	}

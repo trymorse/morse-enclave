@@ -25,6 +25,7 @@ import (
 	"morse/backend/internal/jobs"
 	"morse/backend/internal/media"
 	"morse/backend/internal/seal"
+	"morse/backend/internal/taskseal"
 	"morse/backend/internal/upstream"
 )
 
@@ -121,7 +122,7 @@ func (c *Client) Open(ctx context.Context, o Opening) (Admission, error) {
 	req.Header.Set(headerMethod, o.Method)
 	req.Header.Set(headerPath, o.Path)
 	req.Header.Set(headerQuery, o.Query)
-	setOpening(req.Header, o.Cast, o.Framing, o.KeyCaller, o.KeyFloor, o.PrivacyVeil)
+	setOpening(req.Header, o.Cast, o.Framing, o.KeyCaller, o.KeyFloor, o.KeySettings, o.PrivacyVeil)
 	data, _, err := c.call(req)
 	if sent.err != nil {
 		return nil, sent.err
@@ -139,7 +140,7 @@ func (c *Client) OpenSealed(ctx context.Context, o SealedOpening) (SealedAdmissi
 		return SealedAdmission{}, err
 	}
 	req.Header.Set("Content-Type", seal.ContentType)
-	setOpening(req.Header, o.Cast, o.Framing, o.KeyCaller, o.KeyFloor, o.PrivacyVeil)
+	setOpening(req.Header, o.Cast, o.Framing, o.KeyCaller, o.KeyFloor, o.KeySettings, o.PrivacyVeil)
 	data, header, err := c.call(req)
 	switch {
 	case err != nil:
@@ -171,7 +172,11 @@ func (c *Client) Attestation(ctx context.Context) (Attested, error) {
 	if err := keyID.UnmarshalText([]byte(header.Get(headerKeyID))); err != nil {
 		return Attested{}, fmt.Errorf("worker: /attestation named no key: %w", err)
 	}
-	return Attested{Document: data, KeyID: keyID}, nil
+	var epoch taskseal.Epoch
+	if err := epoch.UnmarshalText([]byte(header.Get(headerTaskEpoch))); err != nil {
+		return Attested{}, fmt.Errorf("worker: /attestation named no task epoch: %w", err)
+	}
+	return Attested{Document: data, KeyID: keyID, TaskEpoch: epoch}, nil
 }
 
 func (c *Client) Run(ctx context.Context, h Handle, g Grant, reply http.ResponseWriter) Measured {
@@ -478,6 +483,77 @@ func (c *Client) send(ctx context.Context, path string, body any) (*http.Respons
 	}
 	req.Header.Set("Content-Type", "application/json")
 	return upstream.Do(c.http, req)
+}
+
+// maxTaskWire bounds a task endpoint's reply: /task-finish carries a result sealed to each of up to four keys, each
+// at most 256 KiB, in base64.
+const maxTaskWire = 4 << 20
+
+func (c *Client) TaskAdopt(ctx context.Context, h Handle, rev int64) (TaskAdopted, error) {
+	var adopted TaskAdopted
+	err := c.task(ctx, taskAdoptPath, taskAdoptRequest{Handle: h, Revision: rev}, &adopted)
+	return adopted, err
+}
+
+func (c *Client) TaskOpen(ctx context.Context, o TaskOpening) (TaskOpened, error) {
+	var opened taskOpenedWire
+	if err := c.task(ctx, taskOpenPath, o, &opened); err != nil {
+		return TaskOpened{}, err
+	}
+	step, err := stepOf(opened.taskStepWire)
+	if err != nil {
+		c.Cut(opened.Run, measure.CutByProxy)
+		return TaskOpened{}, err
+	}
+	return TaskOpened{Run: opened.Run, Step: step}, nil
+}
+
+func (c *Client) TaskNext(ctx context.Context, run Handle) (TaskStepped, error) {
+	var stepped taskSteppedWire
+	if err := c.task(ctx, taskNextPath, taskRunRequest{Run: run}, &stepped); err != nil {
+		return TaskStepped{}, err
+	}
+	if stepped.Done {
+		return TaskStepped{Done: true}, nil
+	}
+	if stepped.Kind == nil {
+		return TaskStepped{}, fmt.Errorf("%w: /task-next named no step", apierr.ErrUnavailable)
+	}
+	step, err := stepOf(taskStepWire{Kind: *stepped.Kind, Admission: stepped.Admission})
+	if err != nil {
+		c.Cut(run, measure.CutByProxy)
+		return TaskStepped{}, err
+	}
+	return TaskStepped{Step: step}, nil
+}
+
+func (c *Client) TaskFinish(ctx context.Context, run Handle) (TaskFinished, error) {
+	var finished TaskFinished
+	err := c.task(ctx, taskFinishPath, taskRunRequest{Run: run}, &finished)
+	return finished, err
+}
+
+func (c *Client) task(ctx context.Context, path string, body, into any) error {
+	resp, err := c.send(ctx, path, body)
+	if err != nil {
+		return fmt.Errorf("%w: %w", apierr.ErrUnavailable, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return wireRefusal(resp)
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxTaskWire)).Decode(into); err != nil {
+		return fmt.Errorf("%w: %w", apierr.ErrUnavailable, err)
+	}
+	return nil
+}
+
+func stepOf(w taskStepWire) (TaskStep, error) {
+	read, err := admissionOf(w.Admission)
+	if err != nil {
+		return TaskStep{}, fmt.Errorf("%w: %w", apierr.ErrUnavailable, err)
+	}
+	return TaskStep{Kind: w.Kind, Admission: read.Admission}, nil
 }
 
 var _ Worker = (*Client)(nil)

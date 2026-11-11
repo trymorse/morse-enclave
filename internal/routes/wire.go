@@ -61,6 +61,10 @@ type chatRoute struct {
 	OpenRouterID           string      `json:"openrouter_id"`
 	HidesReasoning         bool        `json:"hides_reasoning"`
 	AnswersInReasoning     bool        `json:"answers_in_reasoning"`
+	ReasoningInContent     bool        `json:"reasoning_in_content"`
+	ThinkingOffSwitch      bool        `json:"thinking_off_switch"`
+	ToolCallsFinishStop    bool        `json:"tool_calls_finish_stop"`
+	Tools                  *bool       `json:"tools"`
 	HiddenReasoningTPS     int         `json:"hidden_reasoning_tps"`
 	DecodeMaxTPS           int         `json:"decode_max_tps"`
 }

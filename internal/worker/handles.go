@@ -179,6 +179,9 @@ func unreached(reply http.ResponseWriter) Measured {
 }
 
 func (w *InProcess) Cut(h Handle, reason measure.Cut) {
+	if w.endRun(h, reason) {
+		return
+	}
 	w.mu.Lock()
 	e := w.opened[h]
 	if e == nil {

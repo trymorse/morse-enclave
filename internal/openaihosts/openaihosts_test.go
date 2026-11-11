@@ -94,7 +94,7 @@ func TestEveryRequestToAZDRHeaderHostCarriesTheHeaderWhateverTheCall(t *testing.
 	msgs := `"messages":[{"role":"user","content":"hello"}]`
 	for _, h := range zdrHosts(t) {
 		s := stub(t)
-		c := h.NewChat(s.srv.URL, "k", "m", false, s.srv.Client())
+		c := h.NewChat(s.srv.URL, "k", "m", Route{}, s.srv.Client())
 		ctx := context.Background()
 		if _, err := c.Stream(ctx, call(t, `{"model":"m","stream":true,"stream_options":{"include_usage":true},`+msgs+`}`), func(chat.Chunk) error { return nil }); err != nil {
 			t.Fatalf("%s: %v", h.Name, err)
@@ -166,7 +166,7 @@ func TestAHostWithNoZDRHeaderIsSentTheKeyAloneAndEveryHostItsOwnModelAndLimitFie
 			t.Fatalf("%s has no limit field in limitFields", h.Name)
 		}
 		s := stub(t)
-		reply, _, err := h.NewChat(s.srv.URL, "k", "upstream-model-1017", false, s.srv.Client()).Complete(context.Background(), call(t, `{"model":"m","messages":[{"role":"user","content":"hello"}]}`))
+		reply, _, err := h.NewChat(s.srv.URL, "k", "upstream-model-1017", Route{}, s.srv.Client()).Complete(context.Background(), call(t, `{"model":"m","messages":[{"role":"user","content":"hello"}]}`))
 		if err != nil {
 			t.Fatalf("%s: %v", h.Name, err)
 		}
@@ -194,7 +194,7 @@ func TestNovitaIsSentTheCapAsMaxCompletionTokensAndNeverMaxTokensWhateverTheCall
 	msgs := `"messages":[{"role":"user","content":"hello"}]`
 	for _, limit := range []string{``, `"max_tokens":999,`, `"max_completion_tokens":999,`, `"max_tokens":999,"max_completion_tokens":999,`} {
 		s := stub(t)
-		c := Novita.NewChat(s.srv.URL, "k", "qwen/qwen3.5-397b-a17b", false, s.srv.Client())
+		c := Novita.NewChat(s.srv.URL, "k", "qwen/qwen3.5-397b-a17b", Route{}, s.srv.Client())
 		ctx := context.Background()
 		if _, err := c.Stream(ctx, call(t, `{"model":"m","stream":true,`+limit+msgs+`}`), func(chat.Chunk) error { return nil }); err != nil {
 			t.Fatalf("%s stream: %v", limit, err)
@@ -221,7 +221,7 @@ func TestAModelWaferCannotServeUnderZDRIsAHostRefusalAndAnInvalidZDRHeaderIsNot(
 	} {
 		s := stub(t)
 		s.fail = refuseWith(tc.status, tc.body)
-		_, _, err := Wafer.NewChat(s.srv.URL, "k", "GLM-5.3-Flash", false, s.srv.Client()).Complete(context.Background(), call(t, `{"model":"m","messages":[{"role":"user","content":"hello"}]}`))
+		_, _, err := Wafer.NewChat(s.srv.URL, "k", "GLM-5.3-Flash", Route{}, s.srv.Client()).Complete(context.Background(), call(t, `{"model":"m","messages":[{"role":"user","content":"hello"}]}`))
 		var got apierr.Error
 		if !errors.As(err, &got) || got.Code != tc.want.Code || strings.Contains(got.Message, "vendor text") {
 			t.Errorf("%s: %v, want %s with no vendor text", name, err, tc.want.Code)
@@ -242,7 +242,7 @@ func TestAnIsoquantAccountRefusalIsNotARequestRefusalThatStands(t *testing.T) {
 	} {
 		s := stub(t)
 		s.fail = refuseWith(tc.status, tc.body)
-		_, _, err := Isoquant.NewChat(s.srv.URL, "k", "glm-5.3-flash", false, s.srv.Client()).Complete(context.Background(), call(t, `{"model":"m","messages":[{"role":"user","content":"hello"}]}`))
+		_, _, err := Isoquant.NewChat(s.srv.URL, "k", "glm-5.3-flash", Route{}, s.srv.Client()).Complete(context.Background(), call(t, `{"model":"m","messages":[{"role":"user","content":"hello"}]}`))
 		var got apierr.Error
 		if !errors.As(err, &got) || got.Code != tc.want.Code || strings.Contains(got.Message, "vendor text") {
 			t.Errorf("%s: %v, want %s with no vendor text", name, err, tc.want.Code)
@@ -271,7 +271,7 @@ func TestAReplyNovitaStreamedAllAsReasoningReachesTheClientAsContent(t *testing.
 	t.Cleanup(srv.Close)
 	var content string
 	var finished bool
-	_, err := Novita.NewChat(srv.URL, "sk-nv", "inclusionai/ling-3.0-flash", true, srv.Client()).Stream(context.Background(), call(t, `{"model":"m","stream":true,"messages":[{"role":"user","content":"hi"}]}`), func(ch chat.Chunk) error {
+	_, err := Novita.NewChat(srv.URL, "sk-nv", "inclusionai/ling-3.0-flash", Route{AnswersInReasoning: true}, srv.Client()).Stream(context.Background(), call(t, `{"model":"m","stream":true,"messages":[{"role":"user","content":"hi"}]}`), func(ch chat.Chunk) error {
 		d := ch.Delta()
 		if finished && d.Content != "" {
 			t.Errorf("content %q arrived after the finishing chunk", d.Content)
@@ -290,7 +290,7 @@ func TestAReplyNovitaCompletedAllAsReasoningReachesTheClientAsContent(t *testing
 		io.WriteString(w, `{"id":"gen-1","choices":[{"index":0,"message":{"role":"assistant","content":"","reasoning":"*She smiles.* \"Follow me.\""},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":9,"total_tokens":12}}`)
 	}))
 	t.Cleanup(srv.Close)
-	chunk, _, err := Novita.NewChat(srv.URL, "sk-nv", "inclusionai/ling-3.0-flash", true, srv.Client()).Complete(context.Background(), call(t, `{"model":"m","messages":[{"role":"user","content":"hi"}]}`))
+	chunk, _, err := Novita.NewChat(srv.URL, "sk-nv", "inclusionai/ling-3.0-flash", Route{AnswersInReasoning: true}, srv.Client()).Complete(context.Background(), call(t, `{"model":"m","messages":[{"role":"user","content":"hi"}]}`))
 	if d := chunk.Delta(); err != nil || d.Content != `*She smiles.* "Follow me."` || d.Finish != chat.FinishStop {
 		t.Fatalf("content %q finish %s err %v, want the reasoning as content", d.Content, d.Finish, err)
 	}

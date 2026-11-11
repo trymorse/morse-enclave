@@ -67,10 +67,12 @@ func (r chatRoute) chat(defaultMarkup money.Markup) (Chat, error) {
 		ChatTerms: catalog.ChatTerms{
 			MaxOutputTokens: r.MaxOutputTokens, DefaultMaxTokens: r.DefaultMaxTokens, DefaultReasoningEffort: r.DefaultReasoningEffort, ReasoningEfforts: r.ReasoningEfforts,
 			Inputs: inputs, ContextTokens: r.ContextTokens, CompactAtTokens: compactAt, HidesReasoning: r.HidesReasoning,
+			NoTools: r.Tools != nil && !*r.Tools,
 		},
 		Price: price, Markup: markup, DecodeMaxTPS: r.DecodeMaxTPS,
 		Tokenizer: r.Tokenizer, HiddenReasoningTPS: r.HiddenReasoningTPS,
 		OpenRouterID: cmp.Or(r.OpenRouterID, r.UpstreamModel), AnswersInReasoning: r.AnswersInReasoning,
+		ReasoningInContent: r.ReasoningInContent, ThinkingOffSwitch: r.ThinkingOffSwitch, ToolCallsFinishStop: r.ToolCallsFinishStop,
 	}, nil
 }
 

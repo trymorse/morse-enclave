@@ -12,7 +12,6 @@ import (
 	"morse/backend/internal/chat"
 	"morse/backend/internal/completions"
 	"morse/backend/internal/fal"
-	"morse/backend/internal/fireworks"
 	"morse/backend/internal/gemini"
 	"morse/backend/internal/media"
 	"morse/backend/internal/openaicompat"
@@ -63,7 +62,6 @@ var chatProviders = withOpenAIHosts(map[routes.Provider]newChatProvider{
 	routes.ProviderGemini:          translating(gemini.NewChat),
 	routes.ProviderXAI:             xaiProvider,
 	routes.ProviderVenice:          veniceProvider,
-	routes.ProviderFireworks:       fireworksProvider,
 })
 
 var openAIHosts = func() map[routes.Provider]openaihosts.Host {
@@ -252,12 +250,11 @@ func veniceProvider(rt routes.Route, _ routes.Chat, key string, d Deps) chat.Pro
 	return venice.NewChat(rt.BaseURL, key, rt.UpstreamModel, d.Client)
 }
 
-func fireworksProvider(rt routes.Route, _ routes.Chat, key string, d Deps) chat.Provider {
-	return fireworks.NewChat(rt.BaseURL, key, rt.UpstreamModel, d.Client)
-}
-
 func openAIHostProvider(rt routes.Route, c routes.Chat, key string, d Deps) chat.Provider {
-	return openAIHosts[rt.Upstream.(routes.Vendor).Provider].NewChat(rt.BaseURL, key, rt.UpstreamModel, c.AnswersInReasoning, d.Client)
+	return openAIHosts[rt.Upstream.(routes.Vendor).Provider].NewChat(rt.BaseURL, key, rt.UpstreamModel, openaihosts.Route{
+		AnswersInReasoning: c.AnswersInReasoning, ReasoningInContent: c.ReasoningInContent, ThinkingOff: c.ThinkingOffSwitch,
+		ToolCallsFinishStop: c.ToolCallsFinishStop, NoTools: c.NoTools,
+	}, d.Client)
 }
 
 func attestedChat(rt routes.Route, attested routes.Attested, key string, d Deps) (worker.Serving, error) {

@@ -28,6 +28,7 @@ import (
 // or whose answer was lost after it began, panics with http.ErrAbortHandler, so the relay's server drops the
 // client's connection, and the relay settles at the hold, or by the job once the vendor accepted it.
 type Worker interface {
+	TaskWorker
 	Open(ctx context.Context, o Opening) (Admission, error)
 	OpenSealed(ctx context.Context, o SealedOpening) (SealedAdmission, error)
 	Run(ctx context.Context, h Handle, g Grant, reply http.ResponseWriter) Measured
@@ -80,7 +81,9 @@ type Opening struct {
 	KeyFloor  catalog.Tier
 	// PrivacyVeil is the relay's word on a chat's Veil. A sealed chat's own ask comes from its head, in veilHead and
 	// veilPartition, where the relay can't reach it.
-	PrivacyVeil   VeilOpening
+	PrivacyVeil VeilOpening
+	// KeySettings is whether the calling API key lets its chats' request settings reach the model host.
+	KeySettings   bool
 	cek           *[32]byte
 	veilHead      json.RawMessage
 	veilPartition string

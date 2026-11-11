@@ -58,6 +58,10 @@ func NewServer(inner *InProcess, routesDigest string) *Server {
 	s.mux.HandleFunc("POST /late", s.late)
 	s.mux.HandleFunc("POST /cut", s.cut)
 	s.mux.HandleFunc("POST /poll", s.poll)
+	s.mux.HandleFunc("POST "+taskAdoptPath, s.taskAdopt)
+	s.mux.HandleFunc("POST "+taskOpenPath, s.taskOpen)
+	s.mux.HandleFunc("POST "+taskNextPath, s.taskNext)
+	s.mux.HandleFunc("POST "+taskFinishPath, s.taskFinish)
 	s.mux.HandleFunc("GET /routes", s.serveRoutes)
 	s.mux.HandleFunc("GET /attestation", s.attestation)
 	s.mux.HandleFunc("GET /unpinned", s.serveUnpinned)
@@ -119,7 +123,7 @@ func (s *Server) opening(header http.Header) (Opening, error) {
 	if err != nil {
 		return Opening{}, err
 	}
-	return Opening{Cast: s.casts.of(o.Prompts, o.Rules), Framing: Framing{Launch: o.Launch, Own: o.Own, Writing: o.Writing}, KeyCaller: o.KeyCaller, KeyFloor: o.keyFloor, PrivacyVeil: o.Veil}, nil
+	return Opening{Cast: s.casts.of(o.Prompts, o.Rules), Framing: Framing{Launch: o.Launch, Own: o.Own, Writing: o.Writing}, KeyCaller: o.KeyCaller, KeyFloor: o.keyFloor, KeySettings: o.KeySettings, PrivacyVeil: o.Veil}, nil
 }
 
 func (s *Server) open(w http.ResponseWriter, r *http.Request) {
@@ -148,7 +152,7 @@ func (s *Server) openSealed(w http.ResponseWriter, r *http.Request) {
 		apierr.WriteError(w, apierr.ErrRequestTooLarge)
 		return
 	}
-	opened, err := s.inner.OpenSealed(r.Context(), SealedOpening{Body: body, Cast: o.Cast, Framing: o.Framing, KeyCaller: o.KeyCaller, KeyFloor: o.KeyFloor, PrivacyVeil: o.PrivacyVeil})
+	opened, err := s.inner.OpenSealed(r.Context(), SealedOpening{Body: body, Cast: o.Cast, Framing: o.Framing, KeyCaller: o.KeyCaller, KeyFloor: o.KeyFloor, KeySettings: o.KeySettings, PrivacyVeil: o.PrivacyVeil})
 	if refused, ok := errors.AsType[SealedRefusal](err); ok {
 		w.Header().Set("Content-Type", seal.ContentType)
 		w.Write(refused.Reply)
@@ -340,8 +344,10 @@ func (s *Server) attestation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	keyID, _ := attested.KeyID.MarshalText()
+	epoch, _ := attested.TaskEpoch.MarshalText()
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set(headerKeyID, string(keyID))
+	w.Header().Set(headerTaskEpoch, string(epoch))
 	w.Write(attested.Document)
 }
 
@@ -403,4 +409,88 @@ func (c *chunkedReply) FlushError() error {
 	}
 	c.writeHeaderLocked(http.StatusOK)
 	return http.NewResponseController(c.ResponseWriter).Flush()
+}
+
+func (s *Server) taskAdopt(w http.ResponseWriter, r *http.Request) {
+	var req taskAdoptRequest
+	if !decodeWire(w, r, &req) {
+		return
+	}
+	adopted, err := s.inner.TaskAdopt(r.Context(), req.Handle, req.Revision)
+	if err != nil {
+		writeTaskRefusal(w, err)
+		return
+	}
+	apierr.WriteJSON(w, http.StatusOK, adopted)
+}
+
+func (s *Server) taskOpen(w http.ResponseWriter, r *http.Request) {
+	var req TaskOpening
+	if !decodeWire(w, r, &req) {
+		return
+	}
+	opened, err := s.inner.TaskOpen(r.Context(), req)
+	if err != nil {
+		writeTaskRefusal(w, err)
+		return
+	}
+	step, err := stepWire(opened.Step)
+	if err != nil {
+		s.inner.Cut(opened.Run, measure.CutByProxy)
+		apierr.WriteError(w, apierr.ErrUnavailable)
+		return
+	}
+	apierr.WriteJSON(w, http.StatusOK, taskOpenedWire{Run: opened.Run, taskStepWire: step})
+}
+
+func (s *Server) taskNext(w http.ResponseWriter, r *http.Request) {
+	var req taskRunRequest
+	if !decodeWire(w, r, &req) {
+		return
+	}
+	stepped, err := s.inner.TaskNext(r.Context(), req.Run)
+	if err != nil {
+		writeTaskRefusal(w, err)
+		return
+	}
+	if stepped.Done {
+		apierr.WriteJSON(w, http.StatusOK, taskSteppedWire{Done: true})
+		return
+	}
+	step, err := stepWire(stepped.Step)
+	if err != nil {
+		s.inner.Cut(req.Run, measure.CutByProxy)
+		apierr.WriteError(w, apierr.ErrUnavailable)
+		return
+	}
+	apierr.WriteJSON(w, http.StatusOK, taskSteppedWire{Kind: &step.Kind, Admission: step.Admission})
+}
+
+func (s *Server) taskFinish(w http.ResponseWriter, r *http.Request) {
+	var req taskRunRequest
+	if !decodeWire(w, r, &req) {
+		return
+	}
+	finished, err := s.inner.TaskFinish(r.Context(), req.Run)
+	if err != nil {
+		writeTaskRefusal(w, err)
+		return
+	}
+	apierr.WriteJSON(w, http.StatusOK, finished)
+}
+
+func stepWire(step TaskStep) (taskStepWire, error) {
+	admission, err := admissionWire(step.Admission, "")
+	return taskStepWire{Kind: step.Kind, Admission: admission}, err
+}
+
+// writeTaskRefusal answers a task endpoint's refusal: task_epoch_unknown names the epoch the worker holds, as
+// sealed_key_unknown names its key, and anything that carries no refusal of its own is the worker being unable to.
+func writeTaskRefusal(w http.ResponseWriter, err error) {
+	if unknown, ok := errors.AsType[TaskEpochUnknown](err); ok {
+		apierr.WriteEnvelope(w, ErrTaskEpochUnknown.Status, ErrTaskEpochUnknown.EnvelopeWith("epoch", unknown.Holds))
+		return
+	}
+	refusal, _ := apierr.Refusal(err, apierr.ErrUnavailable)
+	apierr.WriteError(w, refusal)
 }

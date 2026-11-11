@@ -19,6 +19,7 @@ import (
 	"morse/backend/internal/plugins"
 	"morse/backend/internal/research"
 	"morse/backend/internal/seal"
+	"morse/backend/internal/taskseal"
 	"morse/backend/internal/web"
 )
 
@@ -37,10 +38,32 @@ var (
 	errSealedUnavailable = apierr.Error{Status: http.StatusServiceUnavailable, Type: "server_error", Code: "sealed_unavailable", Message: "This proxy holds no sealing key."}
 )
 
+// Sealing is what a worker opens sealed requests and task bundles with, and attests its keys by. A zero Keys seals
+// nothing.
 type Sealing struct {
-	Identity *seal.Identity
-	Attest   func(ctx context.Context) ([]byte, error)
+	Keys
+	Attest func(ctx context.Context) ([]byte, error)
 }
+
+// Keys is the worker's per-boot HPKE identity and the task key whose epoch names the bundles it adopts. HoldKeys is
+// the only way to hold either and refuses one without the other, so a worker holds both or neither.
+type Keys struct {
+	identity *seal.Identity
+	tasks    *taskseal.Key
+}
+
+var errKeysPartial = errors.New("worker: a worker holds both its sealing identity and its task key, or neither")
+
+func HoldKeys(identity *seal.Identity, tasks *taskseal.Key) (Keys, error) {
+	if identity == nil || tasks == nil {
+		return Keys{}, errKeysPartial
+	}
+	return Keys{identity: identity, tasks: tasks}, nil
+}
+
+func (k Keys) Identity() *seal.Identity { return k.identity }
+
+func (k Keys) Tasks() *taskseal.Key { return k.tasks }
 
 type SealedOpening struct {
 	Body []byte
@@ -49,6 +72,7 @@ type SealedOpening struct {
 	KeyCaller   bool
 	KeyFloor    catalog.Tier
 	PrivacyVeil VeilOpening
+	KeySettings bool
 }
 
 type SealedAdmission struct {
@@ -61,8 +85,9 @@ type SealedRefusal struct{ Reply []byte }
 func (SealedRefusal) Error() string { return "worker: refused a sealed request" }
 
 type Attested struct {
-	Document []byte
-	KeyID    seal.KeyID
+	Document  []byte
+	KeyID     seal.KeyID
+	TaskEpoch taskseal.Epoch
 }
 
 // KeyUnknown is ErrSealedKeyUnknown with Holds, the key the worker opens with now, so the relay can tell a list
@@ -77,27 +102,28 @@ type sealedState struct {
 	Sealing
 	started time.Time
 	replays seal.Replays
+	floors  bundleFloors
 }
 
 func (w *InProcess) Attestation(ctx context.Context) (Attested, error) {
-	if w.sealing.Identity == nil {
+	if w.sealing.identity == nil {
 		return Attested{}, errSealedUnavailable
 	}
 	document, err := w.sealing.Attest(ctx)
 	if err != nil {
 		return Attested{}, err
 	}
-	return Attested{Document: document, KeyID: w.sealing.Identity.KeyID()}, nil
+	return Attested{Document: document, KeyID: w.sealing.identity.KeyID(), TaskEpoch: w.sealing.tasks.Epoch()}, nil
 }
 
 func (w *InProcess) OpenSealed(ctx context.Context, o SealedOpening) (SealedAdmission, error) {
-	if w.sealing.Identity == nil {
+	if w.sealing.identity == nil {
 		return SealedAdmission{}, errSealedUnavailable
 	}
-	req, err := w.sealing.Identity.Open(o.Body)
+	req, err := w.sealing.identity.Open(o.Body)
 	switch {
 	case errors.Is(err, seal.ErrKeyUnknown):
-		return SealedAdmission{}, KeyUnknown{Holds: w.sealing.Identity.KeyID()}
+		return SealedAdmission{}, KeyUnknown{Holds: w.sealing.identity.KeyID()}
 	case err != nil:
 		return SealedAdmission{}, ErrSealedInvalid
 	}
@@ -123,7 +149,7 @@ func (w *InProcess) OpenSealed(ctx context.Context, o SealedOpening) (SealedAdmi
 		header.Set(name, value)
 	}
 	cek := req.CEK
-	admitted, err := w.Open(ctx, Opening{Method: req.Method, Path: target.Path, Query: target.RawQuery, Header: ContentHeaders(header), Body: bytes.NewReader(req.Body), Cast: o.Cast, Framing: o.Framing, KeyCaller: o.KeyCaller, KeyFloor: o.KeyFloor,
+	admitted, err := w.Open(ctx, Opening{Method: req.Method, Path: target.Path, Query: target.RawQuery, Header: ContentHeaders(header), Body: bytes.NewReader(req.Body), Cast: o.Cast, Framing: o.Framing, KeyCaller: o.KeyCaller, KeyFloor: o.KeyFloor, KeySettings: o.KeySettings,
 		PrivacyVeil: o.PrivacyVeil, cek: &cek, veilHead: req.PrivacyVeil, veilPartition: req.PrivacyVeilPartition})
 	if err != nil {
 		refusal := refusalWire(contentRefusal(err))

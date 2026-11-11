@@ -24,7 +24,6 @@ const (
 	ProviderParallel
 	ProviderGemini
 	ProviderVenice
-	ProviderFireworks
 	ProviderIsoquant
 	ProviderWafer
 	ProviderNovita
@@ -42,7 +41,6 @@ var providerNames = enum.Names[Provider]{
 	ProviderParallel:        "parallel",
 	ProviderGemini:          "gemini",
 	ProviderVenice:          "venice",
-	ProviderFireworks:       "fireworks",
 	ProviderIsoquant:        "isoquant",
 	ProviderWafer:           "wafer",
 	ProviderNovita:          "novita",
@@ -185,6 +183,15 @@ type Chat struct {
 	// AnswersInReasoning marks a model that can send a whole answer as reasoning and stop with no content, as Ling
 	// 3.0 Flash does on every host it runs on. Its provider shows that reasoning to the client as the answer.
 	AnswersInReasoning bool
+	// ReasoningInContent marks a host that writes the model's reasoning at the head of content, ended by </think>, as
+	// Novita does for Qwen3.5 27B. Its provider moves that reasoning into reasoning_content.
+	ReasoningInContent bool
+	// ThinkingOffSwitch sends the host's switch that turns thinking off, Novita's enable_thinking false, on a call that
+	// forwards the effort none or no effort.
+	ThinkingOffSwitch bool
+	// ToolCallsFinishStop marks a host that finishes a reply that calls a tool with stop, as DeepInfra does for
+	// DeepSeek V3. Its provider reports tool_calls.
+	ToolCallsFinishStop bool
 }
 
 func (c Chat) reasons() bool { return len(c.ReasoningEfforts) > 0 }

@@ -168,6 +168,15 @@ func (w *InProcess) openChat(o Opening, compaction bool) (Admission, error) {
 			return nil, err
 		}
 	}
+	var settings []string
+	if p.scheme == nil && o.KeyCaller && !compaction {
+		if settings, err = openaicompat.SettingsOf(req, o.KeySettings); err != nil {
+			return nil, err
+		}
+		if routes, err = forwardingSettings(routes, settings); err != nil {
+			return nil, err
+		}
+	}
 	if o.Launch != nil && !o.Cast.Casts(*o.Launch) {
 		return nil, errLaunchNotCast
 	}
@@ -182,7 +191,7 @@ func (w *InProcess) openChat(o Opening, compaction bool) (Admission, error) {
 		}
 	}
 	route := routes[0]
-	oc := &openedChat{cuts: newCuts(), routes: routes, first: route, protocol: p, call: chat.Call{Request: req, RouteEffort: route.DefaultReasoningEffort, Efforts: route.ReasoningEfforts}, launch: o.Launch, own: o.Own, writing: o.Writing}
+	oc := &openedChat{cuts: newCuts(), routes: routes, first: route, protocol: p, call: chat.Call{Request: req, RouteEffort: route.DefaultReasoningEffort, Efforts: route.ReasoningEfforts, Settings: settings}, launch: o.Launch, own: o.Own, writing: o.Writing}
 	if compaction {
 		err = oc.compact(o.Cast)
 	} else {
@@ -206,6 +215,23 @@ func (w *InProcess) openChat(o Opening, compaction bool) (Admission, error) {
 		admission.PrivacyVeil = oc.veil.admission()
 	}
 	return admission, nil
+}
+
+// forwardingSettings keeps the routes whose provider sends a call's settings to its host, or every route when the call
+// has none, and refuses the call when no route sends them.
+func forwardingSettings(routes []chatRoute, settings []string) ([]chatRoute, error) {
+	if len(settings) == 0 {
+		return routes, nil
+	}
+	kept := slices.DeleteFunc(slices.Clone(routes), func(r chatRoute) bool {
+		plain, ok := r.Upstream.(Plain)
+		_, forwards := plain.Provider.(openaicompat.SettingsForwarder)
+		return !ok || !forwards
+	})
+	if len(kept) == 0 {
+		return nil, openaicompat.SettingsRefusal(settings[0])
+	}
+	return kept, nil
 }
 
 func promptCounted(c chat.Call) bool {

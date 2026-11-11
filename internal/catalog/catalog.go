@@ -174,6 +174,8 @@ type ChatTerms struct {
 	ContextTokens          int
 	CompactAtTokens        int
 	HidesReasoning         bool
+	// NoTools is a model served without tools: its requests reach the host with none, and GET /v1/models says so.
+	NoTools bool
 }
 
 type Inputs uint8

@@ -48,6 +48,12 @@ var sealableRoutes = []struct {
 	{PluginCallPattern, pluginOpener(plugins.KindCall)},
 	{PluginTokenPattern, pluginOpener(plugins.KindToken)},
 	{PluginRevokePattern, pluginOpener(plugins.KindRevoke)},
+	{TasksPattern, func(w *InProcess, o Opening, _ func(string) string) (Admission, error) {
+		return w.openTask(o, bundleRoute{})
+	}},
+	{TaskBundlePattern, func(w *InProcess, o Opening, pathValue func(string) string) (Admission, error) {
+		return w.openTask(o, bundleRoute{replaces: true, pathID: pathValue("id")})
+	}},
 }
 
 var SealablePatterns = func() []string {

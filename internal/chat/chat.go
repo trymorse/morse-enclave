@@ -38,6 +38,9 @@ type Call struct {
 	RouteEffort string
 	// Efforts are the efforts the route's model accepts, which every plaintext provider forwards Effort through.
 	Efforts []string
+	// Settings are the request fields an API key lets reach the host beside the ones every chat sends, such as
+	// temperature; nil sends none.
+	Settings []string
 }
 
 var (

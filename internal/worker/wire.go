@@ -17,6 +17,7 @@ import (
 	"morse/backend/internal/chat"
 	"morse/backend/internal/enum"
 	"morse/backend/internal/seal"
+	"morse/backend/internal/taskseal"
 )
 
 const (
@@ -29,6 +30,7 @@ const (
 	headerContentLength = "Worker-Content-Length"
 	headerVendorStatus  = "Worker-Vendor-Status"
 	headerKeyID         = "Worker-Key-Id"
+	headerTaskEpoch     = "Worker-Task-Epoch"
 )
 
 func (h Handle) MarshalJSON() ([]byte, error) { return json.Marshal(h.id) }
@@ -44,10 +46,11 @@ const (
 	admitsRead
 	admitsLookup
 	admitsPlugin
+	admitsTask
 )
 
 var admissionKindNames = enum.Names[admissionKind]{
-	admitsChat: "chat", admitsMedia: "media", admitsCall: "call", admitsRead: "read", admitsLookup: "lookup", admitsPlugin: "plugin",
+	admitsChat: "chat", admitsMedia: "media", admitsCall: "call", admitsRead: "read", admitsLookup: "lookup", admitsPlugin: "plugin", admitsTask: "task",
 }
 
 func (k admissionKind) MarshalText() ([]byte, error) { return admissionKindNames.MarshalText(k) }
@@ -114,6 +117,7 @@ var admissionOfKind = map[admissionKind]func(envelope[admissionKind]) (Admission
 	admitsRead:   decodeAdmission[ReadAdmission, *ReadAdmission],
 	admitsLookup: decodeAdmission[LookupAdmission, *LookupAdmission],
 	admitsPlugin: decodeAdmission[PluginAdmission, *PluginAdmission],
+	admitsTask:   decodeAdmission[TaskAdmission, *TaskAdmission],
 }
 
 var grantOfKind = map[grantKind]func(envelope[grantKind]) (Grant, error){
@@ -157,6 +161,11 @@ func grantOf(data []byte) (Handle, Grant, error) {
 
 type handleRequest struct {
 	Handle Handle `json:"handle"`
+}
+
+type taskAdoptRequest struct {
+	Handle   Handle `json:"handle"`
+	Revision int64  `json:"revision"`
 }
 
 type submitRequest struct {
@@ -221,19 +230,20 @@ type sessionsWire struct {
 }
 
 type openingWire struct {
-	Prompts   []chat.PromptHash `json:"prompts,omitempty"`
-	Rules     string            `json:"rules,omitempty"`
-	Launch    *chat.Launch      `json:"launch,omitempty"`
-	Own       *chat.OwnFrame    `json:"own,omitempty"`
-	Writing   *chat.Writing     `json:"writing,omitempty"`
-	KeyCaller bool              `json:"key_caller,omitempty"`
-	KeyFloor  string            `json:"key_floor,omitempty"`
-	Veil      VeilOpening       `json:"privacy_veil,omitzero"`
-	keyFloor  catalog.Tier
+	Prompts     []chat.PromptHash `json:"prompts,omitempty"`
+	Rules       string            `json:"rules,omitempty"`
+	Launch      *chat.Launch      `json:"launch,omitempty"`
+	Own         *chat.OwnFrame    `json:"own,omitempty"`
+	Writing     *chat.Writing     `json:"writing,omitempty"`
+	KeyCaller   bool              `json:"key_caller,omitempty"`
+	KeyFloor    string            `json:"key_floor,omitempty"`
+	KeySettings bool              `json:"key_settings,omitempty"`
+	Veil        VeilOpening       `json:"privacy_veil,omitzero"`
+	keyFloor    catalog.Tier
 }
 
-func setOpening(header http.Header, c chat.Cast, f Framing, keyCaller bool, keyFloor catalog.Tier, veil VeilOpening) {
-	o := openingWire{Prompts: c.Prompts(), Rules: c.Rules(), Launch: f.Launch, Own: f.Own, Writing: f.Writing, KeyCaller: keyCaller, Veil: veil}
+func setOpening(header http.Header, c chat.Cast, f Framing, keyCaller bool, keyFloor catalog.Tier, keySettings bool, veil VeilOpening) {
+	o := openingWire{Prompts: c.Prompts(), Rules: c.Rules(), Launch: f.Launch, Own: f.Own, Writing: f.Writing, KeyCaller: keyCaller, KeySettings: keySettings, Veil: veil}
 	if keyFloor.Valid() {
 		o.KeyFloor = keyFloor.String()
 	}
@@ -270,7 +280,8 @@ func wireRefusal(resp *http.Response) error {
 			Message, Type, Code, Reason string
 			Param                       *string
 		} `json:"error"`
-		KeyID *seal.KeyID `json:"key_id"`
+		KeyID *seal.KeyID     `json:"key_id"`
+		Epoch *taskseal.Epoch `json:"epoch"`
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, apierr.MaxErrorBody)).Decode(&e); err != nil || e.Error.Type == "" {
 		return fmt.Errorf("worker: status %d with no refusal envelope", resp.StatusCode)
@@ -280,6 +291,12 @@ func wireRefusal(resp *http.Response) error {
 			return errors.New("worker: sealed_key_unknown without the key the worker holds")
 		}
 		return KeyUnknown{Holds: *e.KeyID}
+	}
+	if e.Error.Code == ErrTaskEpochUnknown.Code {
+		if e.Epoch == nil {
+			return errors.New("worker: task_epoch_unknown without the epoch the worker holds")
+		}
+		return TaskEpochUnknown{Holds: *e.Epoch}
 	}
 	refusal := apierr.Error{Status: resp.StatusCode, Type: e.Error.Type, Code: e.Error.Code, Message: e.Error.Message, Reason: e.Error.Reason}
 	if e.Error.Param != nil {

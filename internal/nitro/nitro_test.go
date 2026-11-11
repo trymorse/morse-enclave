@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"errors"
+	"morse/backend/internal/seal"
 	"os"
 	"strings"
 	"testing"
@@ -124,22 +125,35 @@ func TestOffAnEnclaveTheAttesterIsTheStandIn(t *testing.T) {
 
 func TestTheDevKeyFixesTheKeyOffAnEnclaveAndIsRefusedOnOne(t *testing.T) {
 	devKey := strings.Repeat("a1", 32)
-	a, err := Key(Dev{}, devKey)
+	a, aTasks, err := Key(Dev{}, devKey)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, _ := Key(Dev{}, devKey)
+	b, bTasks, _ := Key(Dev{}, devKey)
 	if !bytes.Equal(a.PublicKey(), b.PublicKey()) {
 		t.Error("one dev key gave two keys")
 	}
-	fresh, _ := Key(Dev{}, "")
+	if aTasks.Epoch() != bTasks.Epoch() {
+		t.Errorf("one dev key gave task epochs %x and %x; tasks adopted before a dev restart would strand", aTasks.Epoch(), bTasks.Epoch())
+	}
+	fresh, freshTasks, _ := Key(Dev{}, "")
 	if bytes.Equal(fresh.PublicKey(), a.PublicKey()) {
 		t.Error("no dev key gave the dev key's key")
 	}
-	if _, err := Key(NSM{}, devKey); err == nil || !strings.Contains(err.Error(), "PROXY_HPKE_DEV_KEY") {
+	if freshTasks.Epoch() == aTasks.Epoch() {
+		t.Error("no dev key gave the dev key's task epoch")
+	}
+	_, againTasks, _ := Key(Dev{}, "")
+	if againTasks.Epoch() == freshTasks.Epoch() {
+		t.Error("two boots without a dev key share a task epoch")
+	}
+	if seal.KeyID(freshTasks.Epoch()) == fresh.KeyID() || seal.KeyID(aTasks.Epoch()) == a.KeyID() {
+		t.Error("a task epoch is the worker's HPKE key id")
+	}
+	if _, _, err := Key(NSM{}, devKey); err == nil || !strings.Contains(err.Error(), "PROXY_HPKE_DEV_KEY") {
 		t.Errorf("a dev key on an enclave: %v, want a refusal naming the variable", err)
 	}
-	if _, err := Key(Dev{}, "abc"); err == nil {
+	if _, _, err := Key(Dev{}, "abc"); err == nil {
 		t.Error("a short dev key was taken")
 	}
 }

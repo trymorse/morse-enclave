@@ -28,6 +28,8 @@ var Routes = []Route{
 	{Pattern: "POST /v1/plugins/call", Sealed: true},
 	{Pattern: "POST /v1/plugins/token", Sealed: true},
 	{Pattern: "POST /v1/plugins/revoke", Sealed: true},
+	{Pattern: "POST /v1/tasks", Sealed: true},
+	{Pattern: "POST /v1/tasks/{id}/bundle", Sealed: true},
 	{Pattern: "GET /v1/models"},
 	{Pattern: "GET /v1/attestation"},
 	{Pattern: "GET /v1/receipts/{id}"},

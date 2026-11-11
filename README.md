@@ -32,27 +32,28 @@ This repository does not take pull requests. To report a bug, open an issue. To 
 
 The worker calls these services.
 
-Model and media vendors:
+Model and media vendors that serve the developer API, and the Morse Chat app too:
 
-- Anthropic, `api.anthropic.com`
 - DeepInfra, `api.deepinfra.com`
-- fal, `queue.fal.run`
-- Fireworks AI, `api.fireworks.ai`
-- Google, `generativelanguage.googleapis.com`
 - Isoquant, `api.isoquant.ai`
-- Meta, `api.meta.ai`
 - Morph, `api.morphllm.com`
 - NEAR AI, `cloud-api.near.ai`
 - Novita AI, `api.novita.ai`
-- OpenAI, `api.openai.com`
-- Parallel, `api.parallel.ai`
 - Phala, `inference.phala.com`
-- Runware, `api.runware.ai`
 - Tinfoil, `inference.tinfoil.sh`
 - Tinfoil's privacy filter, `pii-filter.tinfoil.sh`, which reads the text of a chat that asks for the Privacy Veil, over TLS pinned to the key its attested report binds
-- Together AI, `api.together.xyz`
-- Venice, `api.venice.ai`
 - Wafer, `pass.wafer.ai`
+
+Model and media vendors that only the Morse Chat app reaches. An API key cannot list or call their models:
+
+- Anthropic, `api.anthropic.com`
+- fal, `queue.fal.run`
+- Google, `generativelanguage.googleapis.com`
+- Meta, `api.meta.ai`
+- OpenAI, `api.openai.com`
+- Parallel, `api.parallel.ai`
+- Runware, `api.runware.ai`
+- Venice, `api.venice.ai`
 - xAI, `api.x.ai`
 
 Lookup tools:

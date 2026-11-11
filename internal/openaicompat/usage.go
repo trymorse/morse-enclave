@@ -19,7 +19,7 @@ type clientUsage struct {
 }
 
 // uniformUsage is the usage a client sees, the same fields in the same order whichever host sent it, or nil when the
-// reply carries none. Hosts add fields of their own (audio_tokens, output_tokens_details, a cache write count) and
+// reply carries none. Hosts add fields of their own (audio_tokens, a cache write count) and
 // differ in their order, which would tell a client which host served. What the proxy bills is read from the host's
 // usage before this runs.
 func (r *reply) uniformUsage() json.RawMessage {

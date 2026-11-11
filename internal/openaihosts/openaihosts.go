@@ -18,9 +18,25 @@ type Host struct {
 	// Name is the host's provider in the routes file.
 	Name string
 	// ZDRHeader is the header every request to the host carries as ZDRValue, or "" for a host that needs none.
-	ZDRHeader  string
-	admit      func(chat.Call) error
-	limitField openaicompat.LimitField
+	ZDRHeader      string
+	admit          func(chat.Call) error
+	limitField     openaicompat.LimitField
+	thinkingSwitch string
+}
+
+// Route is how one route on a host departs from the OpenAI protocol, each a field the route sets in routes.json.
+type Route struct {
+	// AnswersInReasoning shows a reply that is all reasoning as its answer too (answers_in_reasoning).
+	AnswersInReasoning bool
+	// ReasoningInContent moves reasoning the host writes into content, ended by </think>, out of it
+	// (reasoning_in_content).
+	ReasoningInContent bool
+	// ThinkingOff sends the host's thinking switch as false on a call that asks for no reasoning (thinking_off_switch).
+	ThinkingOff bool
+	// ToolCallsFinishStop reports a reply that called a tool and finished stop as tool_calls (tool_calls_finish_stop).
+	ToolCallsFinishStop bool
+	// NoTools sends no tools (tools false).
+	NoTools bool
 }
 
 var (
@@ -38,7 +54,10 @@ var (
 	// retention per Novita's terms, so a private route on this host stands on the terms alone.
 	// Novita ignores max_tokens and runs a reply past the hold the proxy reserved, but stops at max_completion_tokens,
 	// counting reasoning against it.
-	Novita = Host{Name: "novita"}
+	// Novita documents enable_thinking, default true, which turns thinking off for a hybrid reasoning model when false
+	// (https://docs.novita.ai/api-reference/model-apis-llm-create-chat-completion, read 2026-11-11). It documents no
+	// reasoning_effort.
+	Novita = Host{Name: "novita", thinkingSwitch: "enable_thinking"}
 	// Morph documents no per-request zero data retention header and no account setting for it. Zero retention rests on
 	// Morph's zero data retention terms for the account that holds the key. So the key sent here must be that
 	// account's, and Morph's other models and products stay out of the private tier.
@@ -65,12 +84,22 @@ func (h Host) Endpoint(baseURL, key string, client *http.Client) upstream.Endpoi
 	return upstream.Endpoint{BaseURL: baseURL, Auth: auth, HTTP: client}
 }
 
-func (h Host) NewChat(baseURL, key, model string, answersInReasoning bool, client *http.Client) *openaicompat.Provider {
-	return &openaicompat.Provider{
-		Sender:             openaicompat.HTTPSender{Endpoint: h.Endpoint(baseURL, key, client)},
-		Model:              model,
-		LimitField:         h.limitField,
-		Admit:              h.admit,
-		AnswersInReasoning: answersInReasoning,
+// SwitchesThinking is whether h documents a request field that turns thinking off.
+func (h Host) SwitchesThinking() bool { return h.thinkingSwitch != "" }
+
+func (h Host) NewChat(baseURL, key, model string, r Route, client *http.Client) *openaicompat.Provider {
+	p := &openaicompat.Provider{
+		Sender:              openaicompat.HTTPSender{Endpoint: h.Endpoint(baseURL, key, client)},
+		Model:               model,
+		LimitField:          h.limitField,
+		Admit:               h.admit,
+		AnswersInReasoning:  r.AnswersInReasoning,
+		ReasoningInContent:  r.ReasoningInContent,
+		ToolCallsFinishStop: r.ToolCallsFinishStop,
+		NoTools:             r.NoTools,
 	}
+	if r.ThinkingOff {
+		p.ThinkingSwitch = h.thinkingSwitch
+	}
+	return p
 }

@@ -37,6 +37,8 @@ type capability struct {
 	// The provider shows a reply that is all reasoning as the answer for a model that sets answers_in_reasoning.
 	answersFromReasoning bool
 	refusesDryAccount    bool
+	openAIHost           bool
+	switchesThinking     bool
 }
 
 var (
@@ -85,16 +87,6 @@ var capabilities = map[Provider]capability{
 		needsKey:          true,
 		refusesDryAccount: true,
 	},
-	// Fireworks documents 402 for usage limits, and its chat path takes apierr.SanitizedUpstreamError's default mapping
-	// of a 402 to upstream_unavailable. Its 412 for a suspended account maps to invalid_request. No dry account has
-	// answered a request yet.
-	ProviderFireworks: {
-		kinds:             servedAt{catalog.KindChat: privateOnly},
-		zdrAt:             privateOnly,
-		zdrWhy:            "because Fireworks keeps no prompt or reply of an open model on /chat/completions",
-		needsKey:          true,
-		refusesDryAccount: true,
-	},
 	// Isoquant answers 402 when the balance cannot cover a request's max_tokens (the scout's report of 2026-11-05, not a
 	// captured reply), and its chat path takes apierr.SanitizedUpstreamError's default mapping of a 402 to
 	// upstream_unavailable. A model the key may not use answers 403 model_forbidden (captured 2026-11-05), which apierr
@@ -105,6 +97,7 @@ var capabilities = map[Provider]capability{
 		zdrWhy:            "because Isoquant keeps nothing only for a request that carries the Isoquant-ZDR header, and has no account setting for it",
 		needsKey:          true,
 		refusesDryAccount: true,
+		openAIHost:        true,
 	},
 	// Wafer documents no status for a dry account; its chat path takes apierr.SanitizedUpstreamError's default mapping
 	// of a 401 or 402 to upstream_unavailable. No dry account has answered a request yet. Wafer ignores the output
@@ -117,6 +110,7 @@ var capabilities = map[Provider]capability{
 		needsKey:          true,
 		ignoresLimit:      true,
 		refusesDryAccount: true,
+		openAIHost:        true,
 	},
 	// Novita has no per-request retention header, so a route stands on its Terms of Service, section 10.2, which give
 	// zero data retention for every Novita model.
@@ -129,6 +123,8 @@ var capabilities = map[Provider]capability{
 		needsKey:             true,
 		answersFromReasoning: true,
 		refusesDryAccount:    true,
+		openAIHost:           true,
+		switchesThinking:     true,
 	},
 	// Morph documents no zero retention header or setting, so a Morph route stands on Morph's zero data retention
 	// terms for the account that owns the route's key. Morph documents no status for a dry account; its chat
@@ -140,6 +136,7 @@ var capabilities = map[Provider]capability{
 		zdrWhy:            "because Morph documents no zero retention header or setting, so a Morph route stands on Morph's zero data retention terms for the account that owns the route's key",
 		needsKey:          true,
 		refusesDryAccount: true,
+		openAIHost:        true,
 	},
 	// DeepInfra has no per-request retention header, so a route stands on its published data policy alone, which gives
 	// zero data retention per DeepInfra's terms. DeepInfra documents no status for a dry account; its chat path takes
@@ -152,6 +149,7 @@ var capabilities = map[Provider]capability{
 		needsKey:             true,
 		answersFromReasoning: true,
 		refusesDryAccount:    true,
+		openAIHost:           true,
 	},
 	ProviderRunware: {kinds: servedAt{catalog.KindImage: anonOnly, catalog.KindVideo: anonOnly}, needsKey: true},
 	ProviderFal:     {kinds: servedAt{catalog.KindImage: anonOnly, catalog.KindVideo: anonOnly}, needsKey: true},
@@ -180,21 +178,12 @@ func attestedCapability(v *attester.Vendor) capability {
 	return capability{kinds: kinds, refusesDryAccount: v == attester.Phala}
 }
 
-// openAIHostsRefusingDryAccount is, for the hosts reached through the generic OpenAI provider, whether a dry account
-// at each is an account refusal. Together documents a 402 when the balance reaches its cut-off
-// (https://docs.together.ai/docs/error-codes, read 2026-11-04), which apierr.SanitizedUpstreamError maps to
-// upstream_unavailable; no dry Together account has answered yet. OpenAI's own status is undocumented.
-var openAIHostsRefusingDryAccount = map[string]bool{"together": true, "openai": false}
-
 // RefusesDryAccount is whether rt's provider maps a dry account at the vendor to an account refusal.
 func (rt Route) RefusesDryAccount() bool {
 	switch up := rt.Upstream.(type) {
 	case Attested:
 		return attestedCapability(up.Attester).refusesDryAccount
 	case Vendor:
-		if up.Provider == ProviderOpenAI {
-			return openAIHostsRefusingDryAccount[rt.ProviderName]
-		}
 		return capabilities[up.Provider].refusesDryAccount
 	}
 	return false
@@ -222,6 +211,12 @@ func (p Provider) Tiers(kind catalog.Kind) []catalog.Tier {
 }
 
 func (p Provider) ReasoningUncapped() bool { return capabilities[p].uncapped }
+
+// OpenAIHost is whether p is one of the hosts openaihosts serves, whose provider makes a route's protocol fixes.
+func (p Provider) OpenAIHost() bool { return capabilities[p].openAIHost }
+
+// SwitchesThinking is whether p's host documents a request field that turns thinking off.
+func (p Provider) SwitchesThinking() bool { return capabilities[p].switchesThinking }
 
 func (p Provider) IgnoresOutputLimit() bool { return capabilities[p].ignoresLimit }
 
@@ -272,7 +267,35 @@ func (c capability) check(up Upstream, rt Route) error {
 	if err := c.checkEfforts(up, chat); err != nil {
 		return err
 	}
+	if err := c.checkRouteFixes(up, rt, chat); err != nil {
+		return err
+	}
 	return c.reasoningShown(up, chat)
+}
+
+func (c capability) checkRouteFixes(up Upstream, rt Route, chat Chat) error {
+	var field string
+	switch {
+	case chat.ReasoningInContent:
+		field = "reasoning_in_content"
+	case chat.ToolCallsFinishStop:
+		field = "tool_calls_finish_stop"
+	case chat.NoTools:
+		field = "tools false"
+	case chat.ThinkingOffSwitch:
+		field = "thinking_off_switch"
+	default:
+		return nil
+	}
+	switch {
+	case !c.openAIHost:
+		return fmt.Errorf("sets %s, which only the shared OpenAI-compatible host provider makes, and %s is not one", field, up)
+	case chat.ThinkingOffSwitch && !c.switchesThinking:
+		return fmt.Errorf("sets thinking_off_switch, but %s documents no request field that turns thinking off", up)
+	case chat.NoTools && rt.Tier.Sealed():
+		return fmt.Errorf("sets tools false at tier %s, whose body is forwarded verbatim, so the proxy cannot drop its tools", rt.Tier)
+	}
+	return nil
 }
 
 func (c capability) reasoningShown(up Upstream, chat Chat) error {

@@ -13,6 +13,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	_ "time/tzdata"
 
 	"morse/backend/cmd/internal/vendors"
 	"morse/backend/internal/attestation"
@@ -76,7 +77,7 @@ func build(getenv func(string) string, log *logger) (built, error) {
 	if _, enclave := attester.(nitro.NSM); !enclave && environment == "prod" {
 		return built{}, errors.New("PROXY_ENVIRONMENT=prod needs /dev/nsm: off an enclave the worker could attest only with a stand-in document")
 	}
-	identity, err := nitro.Key(attester, getenv("PROXY_HPKE_DEV_KEY"))
+	identity, taskKey, err := nitro.Key(attester, getenv("PROXY_HPKE_DEV_KEY"))
 	if err != nil {
 		return built{}, err
 	}
@@ -130,6 +131,10 @@ func build(getenv func(string) string, log *logger) (built, error) {
 	if err != nil {
 		return built{}, err
 	}
+	sealingKeys, err := worker.HoldKeys(identity, taskKey)
+	if err != nil {
+		return built{}, err
+	}
 	var filter *tee.PrivacyFilter
 	var veil *worker.PrivacyVeil
 	if getenv(privacyFilterKeyEnv) != "" && (nitro.Name(attester) == "nsm" || environment == "dev") {
@@ -141,7 +146,7 @@ func build(getenv func(string) string, log *logger) (built, error) {
 		Lookup:      lookup.New(services, client, time.Now),
 		Plugins:     pluginRelay,
 		Reports:     log,
-		Sealing:     worker.Sealing{Identity: identity, Attest: gate.Attest},
+		Sealing:     worker.Sealing{Keys: sealingKeys, Attest: gate.Attest},
 		Unpinned:    gates.Unpinned,
 		PrivacyVeil: veil,
 	})

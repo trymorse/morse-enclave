@@ -41,6 +41,11 @@ type InProcess struct {
 	mu             sync.Mutex
 	last           uint64
 	opened         map[Handle]*entry
+	// tiers are every model's tier, which a task's routes are checked against.
+	tiers map[string]catalog.Tier
+	// runs are the scheduled task runs open now, under handles from the same count as opened's.
+	runs     map[Handle]*taskRun
+	taskLife time.Duration
 }
 
 // Reporter hears what the worker notices but does not answer. Nil is NopReporter, which a reporter that hears only
@@ -94,6 +99,7 @@ func NewInProcess(cfg Config) (*InProcess, error) {
 		endpoints: map[string]catalog.EndpointID{},
 		lookup:    cfg.Lookup, plugins: cfg.Plugins, reports: cfg.Reports, unpinned: cfg.Unpinned, privacyVeil: cfg.PrivacyVeil,
 		now: cfg.Now, keepaliveEvery: cmp.Or(cfg.Keepalive, keepalive), videoSubmit: cmp.Or(cfg.VideoSubmit, videoSubmitTimeout), proofBudget: cmp.Or(cfg.ProofBudget, proofBudget), opened: map[Handle]*entry{},
+		tiers: map[string]catalog.Tier{}, runs: map[Handle]*taskRun{}, taskLife: TaskRunLife,
 	}
 	if w.now == nil {
 		w.now = time.Now
@@ -104,6 +110,7 @@ func NewInProcess(cfg Config) (*InProcess, error) {
 	}
 	named := make([]catalog.Named, 0, len(cfg.Models))
 	for name, m := range cfg.Models {
+		w.tiers[name] = m.Tier
 		w.indexNonChat(name, m)
 		named = append(named, catalog.Named{Name: name, Model: m.ID, Tier: m.Tier, Order: m.Order})
 	}
