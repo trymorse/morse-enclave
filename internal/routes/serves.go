@@ -63,17 +63,28 @@ func (r chatRoute) chat(defaultMarkup money.Markup) (Chat, error) {
 	if err != nil {
 		return Chat{}, err
 	}
+	quantization, err := r.quantization()
+	if err != nil {
+		return Chat{}, err
+	}
 	return Chat{
 		ChatTerms: catalog.ChatTerms{
 			MaxOutputTokens: r.MaxOutputTokens, DefaultMaxTokens: r.DefaultMaxTokens, DefaultReasoningEffort: r.DefaultReasoningEffort, ReasoningEfforts: r.ReasoningEfforts,
 			Inputs: inputs, ContextTokens: r.ContextTokens, CompactAtTokens: compactAt, HidesReasoning: r.HidesReasoning,
-			NoTools: r.Tools != nil && !*r.Tools,
+			NoTools: r.Tools != nil && !*r.Tools, Quantization: quantization,
 		},
 		Price: price, Markup: markup, DecodeMaxTPS: r.DecodeMaxTPS,
 		Tokenizer: r.Tokenizer, HiddenReasoningTPS: r.HiddenReasoningTPS,
 		OpenRouterID: cmp.Or(r.OpenRouterID, r.UpstreamModel), AnswersInReasoning: r.AnswersInReasoning,
 		ReasoningInContent: r.ReasoningInContent, ThinkingOffSwitch: r.ThinkingOffSwitch, ToolCallsFinishStop: r.ToolCallsFinishStop,
 	}, nil
+}
+
+func (r chatRoute) quantization() (catalog.Quantization, error) {
+	if r.Quantization == "" {
+		return catalog.QuantizationUnknown, nil
+	}
+	return catalog.ParseQuantization(r.Quantization)
 }
 
 func (r chatRoute) compactAt() (int, error) {

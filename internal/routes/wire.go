@@ -67,6 +67,7 @@ type chatRoute struct {
 	Tools                  *bool       `json:"tools"`
 	HiddenReasoningTPS     int         `json:"hidden_reasoning_tps"`
 	DecodeMaxTPS           int         `json:"decode_max_tps"`
+	Quantization           string      `json:"quantization"`
 }
 
 type imageRoute struct {

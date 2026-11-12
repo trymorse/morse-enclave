@@ -155,7 +155,11 @@ func (w *InProcess) openChat(o Opening, compaction bool) (Admission, error) {
 	if err != nil {
 		return nil, err
 	}
-	if p.scheme == nil {
+	if p.scheme != nil {
+		if err = sealedQuantizations(req, p); err != nil {
+			return nil, err
+		}
+	} else {
 		if wantErr != nil {
 			return nil, wantErr
 		}

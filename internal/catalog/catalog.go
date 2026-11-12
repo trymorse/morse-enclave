@@ -177,6 +177,9 @@ type ChatTerms struct {
 	// NoTools is a model served without tools: an API key's chat that lets it call one is refused, every other request
 	// reaches the host with none, and GET /v1/models says so.
 	NoTools bool
+	// Quantization is the precision the endpoint's host publishes for the weights, which provider.quantizations
+	// filters on. Each host has its own, so endpoints of one tier may differ in it.
+	Quantization Quantization
 }
 
 type Inputs uint8

@@ -13,16 +13,18 @@ import (
 	"morse/backend/internal/billing/money"
 	"morse/backend/internal/catalog"
 	"morse/backend/internal/chat"
+	"morse/backend/internal/e2ee/near"
 )
 
 const floorField = "min_privacy"
 
 type providerAsk struct {
-	floor        catalog.Tier
-	zdr          bool
-	oneTier      bool
-	maxPrice     money.PriceCap
-	crossesTiers bool
+	floor         catalog.Tier
+	zdr           bool
+	oneTier       bool
+	maxPrice      money.PriceCap
+	quantizations catalog.Quantizations
+	crossesTiers  bool
 }
 
 var (
@@ -44,7 +46,7 @@ var providerKeys = map[string]func(*providerAsk, string, json.RawMessage) error{
 	"require_parameters":       ignored("true or false", isBool),
 	"only":                     refusedChoice,
 	"ignore":                   refusedChoice,
-	"quantizations":            refusedChoice,
+	"quantizations":            (*providerAsk).takeQuantizations,
 	"enforce_distillable_text": refusedChoice,
 }
 
@@ -145,6 +147,57 @@ func (a *providerAsk) takeMaxPrice(key string, raw json.RawMessage) error {
 	return nil
 }
 
+var errQuantizationsShape = mustBe("quantizations", "a non-empty array of precisions, each one of "+catalog.QuantizationNames())
+
+func (a *providerAsk) takeQuantizations(_ string, raw json.RawMessage) error {
+	if string(raw) == "null" {
+		return nil
+	}
+	var names []string
+	if json.Unmarshal(raw, &names) != nil || len(names) == 0 {
+		return errQuantizationsShape
+	}
+	for _, name := range names {
+		q, err := catalog.ParseQuantization(name)
+		if err != nil {
+			return apierr.InvalidParameter(fmt.Sprintf("provider.quantizations names %q, and each must be one of %s.", name, catalog.QuantizationNames()))
+		}
+		a.quantizations = a.quantizations.With(q)
+	}
+	return nil
+}
+
+func (a providerAsk) quantized(routes []chatRoute) ([]chatRoute, error) {
+	if !a.quantizations.Set() {
+		return routes, nil
+	}
+	kept := slices.DeleteFunc(slices.Clone(routes), func(r chatRoute) bool { return !a.quantizations.Admits(r.Quantization) })
+	if len(kept) > 0 {
+		return kept, nil
+	}
+	var served catalog.Quantizations
+	for _, r := range routes {
+		served = served.With(r.Quantization)
+	}
+	return nil, apierr.Invalid(http.StatusBadRequest, "quantization_unmet", fmt.Sprintf("No host this request may run on serves a precision in provider.quantizations (%s). This model's hosts at the tiers the request reaches serve %s. Add one of those to quantizations, or choose another model; GET /v1/models lists each tier's quantizations.", a.quantizations, served)).Naming("provider.quantizations")
+}
+
+// sealedQuantizations refuses a sealed body that names provider.quantizations, since no vendor whose sealed body the
+// worker reads admits the key: NEAR forwards its body verbatim and refuses any provider field, and Phala binds a sealed
+// body's provider to exactly its constraint. An EHBP body is sealed whole, so the worker never reads its provider.
+func sealedQuantizations(req *chat.Request, p protocol) error {
+	if _, named := sealedProviderField(req, "quantizations"); !named {
+		return nil
+	}
+	why := `a body sealed to Phala must carry provider exactly {"aci_verified":true,"zdr":true}`
+	vendor := "Phala"
+	if p.scheme == near.Scheme {
+		why = "a body sealed to NEAR is forwarded verbatim and may carry no provider field"
+		vendor = "NEAR"
+	}
+	return apierr.Invalid(http.StatusBadRequest, "quantization_unsupported", fmt.Sprintf(`The model %q cannot take provider.quantizations on an E2EE request sealed to %s: %s. Drop quantizations, or send the request in plaintext, where it filters by each host's precision.`, req.Model, vendor, why)).Naming("provider.quantizations")
+}
+
 // dollarsOf reads a price as OpenRouter spells it, a JSON number or a string holding one.
 func dollarsOf(raw json.RawMessage) (float64, bool) {
 	var dollars float64
@@ -207,6 +260,10 @@ func (a providerAsk) narrow(n chatName, routes []chatRoute, keyFloor catalog.Tie
 		}
 	}
 	routes = n.optIn(routes, max(a.floor, keyFloor))
+	routes, err := a.quantized(routes)
+	if err != nil {
+		return nil, err
+	}
 	if a.oneTier {
 		routes = atTier(routes, routes[0].tier)
 	}
@@ -215,11 +272,15 @@ func (a providerAsk) narrow(n chatName, routes []chatRoute, keyFloor catalog.Tie
 
 var errNoZDREndpoint = apierr.Invalid(http.StatusBadRequest, "privacy_floor_unmet", "No endpoint at the tiers this request may run at keeps no data, so provider.zdr and provider.data_collection deny cannot be met. The model name, provider.min_privacy, and the API key's min_privacy set those tiers. Drop zdr and data_collection deny, or send a model or floor whose tiers include a zero-retention endpoint.")
 
-func namesFloor(provider json.RawMessage) bool {
+// sealedProviderField is one field of a sealed body's provider object. The worker forwards a sealed body verbatim, so
+// it reads only the provider fields it acts on, min_privacy and quantizations to refuse them, and the
+// vendor gets every field as the client sealed it.
+func sealedProviderField(req *chat.Request, key string) (json.RawMessage, bool) {
+	raw, sent := req.Field("provider")
 	var fields map[string]json.RawMessage
-	if json.Unmarshal(provider, &fields) != nil {
-		return false
+	if !sent || json.Unmarshal(raw, &fields) != nil {
+		return nil, false
 	}
-	_, named := fields[floorField]
-	return named
+	value, named := fields[key]
+	return value, named
 }

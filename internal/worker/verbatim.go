@@ -165,7 +165,7 @@ func (Verbatim) count(attempt, measure.Evidence, served) *pendingCount { return 
 
 // admitVerbatim answers the output limit the request asks for.
 func admitVerbatim(rel chat.Relayer, maxOutputTokens int, params chat.E2EE, req *chat.Request) (int, error) {
-	if provider, sent := req.Field("provider"); sent && namesFloor(provider) {
+	if _, named := sealedProviderField(req, floorField); named {
 		return 0, errFloorSealed
 	}
 	for _, field := range req.FieldNames() {

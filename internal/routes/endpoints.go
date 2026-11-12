@@ -24,7 +24,7 @@ var ModelFields = []string{"label", "lab", "open_weights", "kind", "reasoning_ef
 
 // FallbackFields are the fields in which a later e2ee endpoint of a model may differ from the first, whose fallback it
 // is.
-var FallbackFields = []string{"attester", "base_url", "api_key_env", "provider_name"}
+var FallbackFields = []string{"attester", "base_url", "api_key_env", "provider_name", "quantization"}
 
 // RelayFields are the keys that live in relay.json, which routes.json refuses.
 var RelayFields = []string{"cost", "role", "spread_bps"}
@@ -421,7 +421,7 @@ var ownTerms = []string{"tier", "default_max_tokens", "default_reasoning_effort"
 func (e endpoint) checkOnBehalf(model catalog.ModelID) error {
 	for _, k := range slices.Sorted(maps.Keys(e.fields)) {
 		if k != "id" && !slices.Contains(OnBehalfFields, k) {
-			return fmt.Errorf("model %q endpoint %q is on behalf of endpoint %q and sets %q; it takes its host, upstream model, key, attester, window, and retention from that endpoint and sets only %s", model, e.id, e.onBehalfOf, k, strings.Join(OnBehalfFields, ", "))
+			return fmt.Errorf("model %q endpoint %q is on behalf of endpoint %q and sets %q; it takes its host, upstream model, key, attester, window, retention, and quantization from that endpoint and sets only %s", model, e.id, e.onBehalfOf, k, strings.Join(OnBehalfFields, ", "))
 		}
 	}
 	if e.tier() != catalog.OnBehalfTier.String() {
