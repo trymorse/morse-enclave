@@ -11,16 +11,20 @@ Usage: uv run test_check_door.py
 
 import base64
 import hashlib
+import http.client
 import json
 import sys
 import tempfile
 import unittest
 import unittest.mock
+import urllib.error
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from cryptography.hazmat.primitives import serialization
+from cryptography import x509
 from cryptography.hazmat.primitives.asymmetric import ec, ed25519, rsa
+from cryptography.x509.oid import ExtendedKeyUsageOID
 
 # check_door_fixtures.py sits beside this file. Nothing here writes bytecode, so a run leaves no __pycache__
 # among the files the export copies.
@@ -32,7 +36,7 @@ class CertificatesTest(Fixture):
     def test_a_clean_set_passes(self):
         out = self.passes("1 certificates in CT cover inference.trymorse.ai. morse-records has 2 prod pointers, and 2 of their entries verify.")
         self.assertNotIn("NOTE", out)
-        for check in ("check 1", "check 2", "check 3", "check 4", "check 5", "check 6", "check 8", "check 9"):
+        for check in ("check 1", "check 2", "check 3", "check 4", "check 5", "check 6", "check 7", "check 8", "check 9"):
             self.assertEqual(self.section(out, check), "  OK")
 
     def test_a_rogue_certificate_with_no_record_fails(self):
@@ -87,11 +91,167 @@ class CertificatesTest(Fixture):
         self.assertEqual(code, 0, out)
         self.assertIn(f"NOTE: crt.sh 2 names inference.trymorse.ai {self.unrecorded(tls)} yet. CT made it public at {(now - timedelta(minutes=5)).isoformat(timespec='seconds')}", out)
 
+    def crtsh_answers(self, *certs):
+        rows = [{"id": n, "name_value": "inference.trymorse.ai", "entry_timestamp": None} for n in range(len(certs))]
+        self.door.crtsh = {check_door.CRTSH_URL.format("trymorse.ai"): json.dumps(rows).encode()}
+        self.door.crtsh |= {check_door.CRTSH_CERT_URL.format(n): c.public_bytes(serialization.Encoding.PEM) for n, c in enumerate(certs)}
+
+    def crtsh_unreachable(self):
+        self.door.crtsh = {check_door.CRTSH_URL.format("trymorse.ai"): urllib.error.URLError(OSError(101, "Network is unreachable"))}
+        self.door.doh = lambda url: json.dumps({"Status": 0, "Answer": [{"type": 257, "data": e} for e in CAA]}).encode()
+        return "URLError(OSError(101, 'Network is unreachable'))"
+
+    def test_a_ct_source_that_cannot_be_read_is_a_note_and_check_1_is_judged_from_the_other(self):
+        error = self.crtsh_unreachable()
+        ct = self.door.root / "ct.json"
+        code, out = self.door.run("--ct", "crt.sh", "--ct", str(ct), sample=True)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.section(out, "check 1"), f"  NOTE: crt.sh could not be read, so this run judges check 1 from {ct} alone: {error}\n  OK")
+        self.assertEqual(len((self.door.root / "caa.jsonl").read_text().splitlines()), 2)
+        rogue = self.door.rogue(["inference.trymorse.ai"])
+        code, out = self.door.run("--ct", "crt.sh", "--ct", str(ct))
+        self.assertEqual(code, 1, out)
+        self.assertIn(f"FAIL: {ct} 2 names inference.trymorse.ai {self.unrecorded(rogue)}, and CT made it public at", out)
+
+    def test_no_ct_source_that_can_be_read_leaves_the_evidence_unread(self):
+        error = self.crtsh_unreachable()
+        missing = self.door.root / "missing.json"
+        code, out = self.door.run("--ct", "crt.sh", "--ct", str(missing), sample=True)
+        self.assertEqual(code, 1, out)
+        self.assertIn(f"FAIL: could not read the evidence: OSError(\"no CT source could be read: crt.sh: {error}; {missing}: FileNotFoundError(2, 'No such file or directory')\")", out)
+        self.assertNotIn("  FAIL: ", out)
+        self.assertEqual(len((self.door.root / "caa.jsonl").read_text().splitlines()), 1)
+
+    def test_a_certificate_that_does_not_parse_leaves_the_evidence_unread_while_the_other_source_answers(self):
+        self.crtsh_answers(self.door.ct[0])
+        bad = self.door.root / "bad.json"
+        bad.write_text(json.dumps([{"id": "0", "cert_der": base64.b64encode(b"not a certificate").decode()}]))
+        code, out = self.door.run("--ct", "crt.sh", "--ct", str(bad))
+        self.assertEqual(code, 1, out)
+        self.assertIn("FAIL: could not read the evidence: ValueError(", out)
+        self.assertNotIn("could not be read, so this run judges check 1", out)
+
+    def test_a_crtsh_certificate_that_does_not_parse_leaves_the_evidence_unread_while_the_other_source_answers(self):
+        self.crtsh_answers(self.door.ct[0])
+        self.door.crtsh[check_door.CRTSH_CERT_URL.format(0)] = b"not a certificate"
+        code, out = self.door.run("--ct", "crt.sh", "--ct", str(self.door.root / "ct.json"))
+        self.assertEqual(code, 1, out)
+        self.assertIn("FAIL: could not read the evidence: ValueError(", out)
+        self.assertNotIn("could not be read, so this run judges check 1", out)
+
+    def test_two_ct_sources_that_answer_leave_no_note(self):
+        self.crtsh_answers(self.door.ct[0])
+        out = self.door.run("--ct", "crt.sh", "--ct", str(self.door.root / "ct.json"))[1]
+        self.assertEqual(self.section(out, "check 1"), "  OK")
+
     def test_a_certificate_from_after_its_key_is_60_days_old_fails(self):
         self.door.needed(self.door.tls, not_before=BORN + timedelta(days=60))
         self.passes()
         self.door.ct[-1] = certificate(self.door.tls, self.door.ca, "inference.trymorse.ai", ["inference.trymorse.ai"], issuer_cn="test ca", not_before=BORN + timedelta(days=60, seconds=1))
         self.fails(f"with SPKI {spki_hex(self.door.tls)} from {(BORN + timedelta(days=60, seconds=1)).isoformat(timespec='seconds')}, after the key, born at {BORN.isoformat(timespec='seconds')}, was 60 days old")
+
+
+class RevocationTest(Fixture):
+    def setUp(self):
+        super().setUp()
+        self.ca = self.door.revoking
+
+    def wildcard(self, revoked=False, **kwargs):
+        cert = self.ca.issue(["trymorse.ai", "*.trymorse.ai"], **kwargs)
+        if revoked:
+            self.ca.revoke(cert)
+        self.door.ct.append(cert)
+        return f"{self.door.root / 'ct.json'} {len(self.door.ct) - 1} names trymorse.ai, *.trymorse.ai with SPKI {hashlib.sha256(spki(cert)).hexdigest()}, which no verified record attests"
+
+    def skipped(self, label, how):
+        out = self.passes(f"NOTE: revoked, skipped: {label}, and CT made it public at")
+        self.assertIn(f"Its CA revoked it, by {how}\n", out)
+        self.assertEqual(self.section(out, "check 1").splitlines()[-1], "  OK")
+        return out
+
+    def counted(self, label, why):
+        out = self.fails(f"FAIL: {label}, and CT made it public at")
+        self.assertIn(why, self.section(out, "check 1"))
+        return out
+
+    def test_a_certificate_its_ca_revoked_by_ocsp_is_skipped(self):
+        self.skipped(self.wildcard(revoked=True), f"OCSP {CA.OCSP}")
+        self.assertNotIn(CA.CRL, self.ca.asked)
+
+    def test_a_certificate_its_ca_has_not_revoked_fails(self):
+        self.counted(self.wildcard(), f"Its CA has not revoked it, by OCSP {CA.OCSP}")
+
+    def test_a_certificate_on_a_crl_with_no_ocsp_responder_is_skipped(self):
+        self.skipped(self.wildcard(revoked=True, ocsp=False), f"CRL {CA.CRL}")
+
+    def test_a_certificate_missing_from_its_crl_fails(self):
+        self.counted(self.wildcard(ocsp=False), f"Its CA has not revoked it, by CRL {CA.CRL}")
+
+    def test_the_crl_answers_when_the_ocsp_responder_does_not(self):
+        self.ca.down.add("ocsp.ca.test")
+        self.skipped(self.wildcard(revoked=True), f"CRL {CA.CRL}")
+
+    def test_a_certificate_whose_revocation_cannot_be_read_counts(self):
+        self.ca.down.add("ocsp.ca.test")
+        self.counted(self.wildcard(revoked=True, crl=False), f"Whether its CA revoked it is unknown, so it counts: the OCSP responder at {CA.OCSP} could not be read")
+        self.ca.down.add(CA.CRL)
+        self.counted(self.wildcard(revoked=True), f"; the CRL at {CA.CRL} could not be read")
+
+    def test_a_reply_cut_off_partway_counts_the_certificate_and_the_run_goes_on(self):
+        self.ca.broken["ocsp.ca.test"] = http.client.IncompleteRead(b"0", 100)
+        out = self.counted(self.wildcard(revoked=True, crl=False), f"Whether its CA revoked it is unknown, so it counts: the OCSP answer from {CA.OCSP} could not be read: IncompleteRead(")
+        self.assertIn("(check 9)", out)
+
+    def test_a_certificate_that_names_no_responder_and_no_crl_counts(self):
+        self.counted(self.wildcard(revoked=True, ocsp=False, crl=False), "Whether its CA revoked it is unknown, so it counts: it names neither an OCSP responder nor a CRL")
+
+    def test_an_unreachable_issuer_counts_the_certificate(self):
+        self.ca.down.add(CA.ISSUER)
+        self.counted(self.wildcard(revoked=True), f"Whether its CA revoked it is unknown, so it counts: its issuer at {CA.ISSUER} could not be read")
+
+    def test_an_issuer_that_did_not_sign_the_certificate_counts_it(self):
+        self.ca.served_issuer = CA().cert
+        self.counted(self.wildcard(revoked=True), f"Whether its CA revoked it is unknown, so it counts: {CA.ISSUER} holds no certificate that signed it")
+
+    def test_an_ocsp_answer_its_issuer_did_not_sign_counts_the_certificate(self):
+        impostor = ec.generate_private_key(ec.SECP256R1())
+        named_alike = certificate(impostor, impostor, "test revoking ca", ca=True)
+        self.ca.ocsp_signer = (impostor, named_alike, [named_alike])
+        self.counted(self.wildcard(revoked=True, crl=False), f"the OCSP responder at {CA.OCSP} answered with a signature its issuer did not make or delegate")
+
+    def test_a_delegated_responder_answers_only_with_the_ocsp_signing_usage(self):
+        self.ca.delegate_ocsp()
+        label = self.wildcard(revoked=True, crl=False)
+        self.skipped(label, f"OCSP {CA.OCSP}")
+        self.ca.delegate_ocsp(eku=ExtendedKeyUsageOID.SERVER_AUTH)
+        self.counted(label, "answered with a signature its issuer did not make or delegate")
+
+    def test_a_crl_its_issuer_did_not_sign_counts_the_certificate(self):
+        self.ca.crl_key = ec.generate_private_key(ec.SECP256R1())
+        self.counted(self.wildcard(revoked=True, ocsp=False), f"the CRL at {CA.CRL} is not signed by its issuer")
+
+    def test_a_certificate_on_hold_counts(self):
+        label = self.wildcard()
+        self.ca.revoke(self.door.ct[-1], x509.ReasonFlags.certificate_hold)
+        self.counted(label, f"Whether its CA revoked it is unknown, so it counts: its CA holds it, by OCSP {CA.OCSP}, and may release it")
+
+    def test_a_certificate_with_a_verified_record_asks_no_ca(self):
+        self.door.ct[0] = self.ca.issue(["inference.trymorse.ai"], key=self.door.tls)
+        self.ca.down.update({"ocsp.ca.test", CA.CRL})
+        self.passes()
+        self.assertEqual(self.ca.asked, [])
+
+    def test_a_certificate_inside_its_20_minutes_asks_no_ca(self):
+        now = NOW.replace(microsecond=0)
+        cert = self.ca.issue(["inference.trymorse.ai"], not_before=now - timedelta(minutes=5))
+        self.ca.revoke(cert)
+        self.door.ct.append(cert)
+        self.door.ran(now - timedelta(minutes=5))
+        code, out = self.at(now)
+        self.assertEqual(code, 0, out)
+        self.assertIn("which no verified record attests yet", out)
+        self.assertNotIn("revoked, skipped", out)
+        self.assertEqual(self.ca.asked, [])
 
 
 class RecordsTest(Fixture):

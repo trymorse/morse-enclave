@@ -3,6 +3,7 @@ package worker
 import (
 	"cmp"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -176,6 +177,12 @@ func (w *InProcess) openChat(o Opening, compaction bool) (Admission, error) {
 		if routes, err = forwardingSettings(routes, settings); err != nil {
 			return nil, err
 		}
+		if routes, err = takingTools(routes, req); err != nil {
+			return nil, err
+		}
+		if routes, err = readingImages(routes, req); err != nil {
+			return nil, err
+		}
 	}
 	if o.Launch != nil && !o.Cast.Casts(*o.Launch) {
 		return nil, errLaunchNotCast
@@ -232,6 +239,72 @@ func forwardingSettings(routes []chatRoute, settings []string) ([]chatRoute, err
 		return nil, openaicompat.SettingsRefusal(settings[0])
 	}
 	return kept, nil
+}
+
+// takingTools keeps the routes that send a key's chat its tools when the chat lets the model call one, and refuses the
+// chat when every route of its model is served without tools (tools false). Such a route drops a chat's tools, so the
+// model would answer in prose a call it was asked to make, and an agent waiting on a tool call would never see one. A
+// chat whose tool_choice is "none" lets the model call nothing, so its tools are dropped as before.
+func takingTools(routes []chatRoute, req *chat.Request) ([]chatRoute, error) {
+	if !callsTools(req) {
+		return routes, nil
+	}
+	kept := slices.DeleteFunc(slices.Clone(routes), func(r chatRoute) bool { return r.NoTools })
+	if len(kept) == 0 {
+		return nil, toolsRefusal(req.Model)
+	}
+	return kept, nil
+}
+
+// callsTools is whether a chat lets the model call a tool: it offers tools, or names a tool_choice that makes the model
+// call one, and its tool_choice is not "none". A tools or tool_choice of the wrong shape counts, and is refused later.
+func callsTools(req *chat.Request) bool {
+	var tools []json.RawMessage
+	var choice json.RawMessage
+	toolsErr := req.Decode("tools", &tools)
+	req.Decode("tool_choice", &choice)
+	switch string(choice) {
+	case `"none"`:
+		return false
+	case "", "null", `"auto"`:
+		return toolsErr != nil || len(tools) > 0
+	}
+	return true
+}
+
+func toolsRefusal(model string) error {
+	return apierr.Invalid(http.StatusBadRequest, "unsupported_parameter",
+		"tools is refused: "+model+" is served without tools (GET /v1/models lists it with tools false), so the model could call none of them. "+
+			"Send the request without tools, with tool_choice \"none\", or to a model that takes tools.").Naming("tools")
+}
+
+// readingImages keeps the routes whose model reads images when a key's chat sends one, and refuses the chat, naming
+// what the model reads, when none does: its host would refuse the image in words that name neither, or drop it.
+func readingImages(routes []chatRoute, req *chat.Request) ([]chatRoute, error) {
+	if !sendsImage(req) {
+		return routes, nil
+	}
+	kept := slices.DeleteFunc(slices.Clone(routes), func(r chatRoute) bool { return !r.Inputs.Reads(catalog.ModalityImage) })
+	if len(kept) == 0 {
+		return nil, apierr.Invalid(http.StatusBadRequest, "unsupported_input",
+			fmt.Sprintf("This request's messages carry an image, and %s reads %s only (its input_modalities in GET /v1/models). Send the request without image parts, or to a model whose input_modalities include image.", req.Model, routes[0].Inputs)).Naming("messages")
+	}
+	return kept, nil
+}
+
+func sendsImage(req *chat.Request) bool {
+	msgs, err := req.Messages()
+	if err != nil {
+		return false
+	}
+	for _, m := range msgs {
+		for _, p := range m.Parts() {
+			if p.Type == "image_url" || p.ImageURL() != nil {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func promptCounted(c chat.Call) bool {
@@ -406,6 +479,7 @@ func (o *openedChat) try(ctx context.Context, w *InProcess, a attempt, g ChatGra
 
 var (
 	errCompactionSealed        = apierr.Invalid(http.StatusBadRequest, "compaction_not_sealable", "Compaction is refused on e2ee models, because the proxy adds the compaction instruction and cannot read or change a sealed body. Fetch the instruction from GET /v1/compaction and send it as the last sealed user message of an ordinary chat request.")
+	errNoMessages              = apierr.InvalidParameter("messages must hold at least one message: a chat with none gives the model nothing to answer.").Naming("messages")
 	errOpenToolCall            = apierr.Invalid(http.StatusBadRequest, "compaction_open_tool_call", "The last message calls tools whose results are not in the request. Compact up to a turn whose tool calls all have results.")
 	errLaunchNotCast           = fmt.Errorf("%w: the launch prompt is not the cast's", apierr.ErrUnavailable)
 	errOwnNotCast              = fmt.Errorf("%w: the own character's rules are not the cast's", apierr.ErrUnavailable)
@@ -455,6 +529,9 @@ func (Plain) admit(o *openedChat, cast chat.Cast) error {
 	msgs, err := o.call.Messages()
 	if err != nil {
 		return err
+	}
+	if len(msgs) == 0 {
+		return errNoMessages
 	}
 	o.character = o.played(cast)
 	if o.character.Plays() && latestUserTextBytes(msgs) > limits.CharacterMessageBytes {

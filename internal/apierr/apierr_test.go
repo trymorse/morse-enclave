@@ -24,6 +24,7 @@ func TestSanitizedUpstreamErrorMapsStatusAndNeverCarriesVendorText(t *testing.T)
 		{400, `{"error":{"code":null,"message":"` + canary + `"}}`, 400, "invalid_request"},
 		{400, `{"error":{"code":"invalid_prompt","message":"` + canary + `"}}`, 400, "content_filter"},
 		{429, `{"error":{"code":"insufficient_quota","message":"` + canary + `"}}`, 502, "upstream_unavailable"},
+		{429, `{"error":{"code":"credit_balance_exhausted","message":"` + canary + `"}}`, 502, "upstream_unavailable"},
 		{401, `{"error":{"message":"key sk-...` + canary + `"}}`, 502, "upstream_unavailable"},
 		{402, `{"errors":[{"code":"insufficientCredits","message":"top up ` + canary + `"}]}`, 502, "upstream_unavailable"},
 		{403, ``, 502, "upstream_refused"},

@@ -1,6 +1,6 @@
 package money
 
-// RebateShare is the part of a charge's margin that the daily rebate returns to the account, in basis points.
+// RebateShare is the part of a charge's margin that the hourly rebate returns to the account, in basis points.
 // Each model publishes its own, and the charge keeps the one in force when it opened.
 type RebateShare int64
 

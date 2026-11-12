@@ -218,3 +218,53 @@ func (c AppCompose) launcher() (launcher, error) {
 	}
 	return l, nil
 }
+
+// composeVariable is a variable docker compose interpolates: $NAME, or ${NAME with an optional default, error, or
+// alternate after it. A $$ is a literal dollar sign and interpolates nothing.
+var composeVariable = regexp.MustCompile(`\$\$|\$\{?([A-Za-z_][A-Za-z0-9_]*)`)
+
+// interpolatedVariables lists the variables s interpolates, the ones inside a ${NAME:-default} too.
+func interpolatedVariables(s string) []string {
+	var names []string
+	for _, m := range composeVariable.FindAllStringSubmatch(s, -1) {
+		if m[1] != "" {
+			names = append(names, m[1])
+		}
+	}
+	return names
+}
+
+// checkDeployerImages refuses an app_compose in which a service's image interpolates a variable allowed_envs lets the
+// deployer set, since the deployer could then run any image under the same measured compose-hash.
+func checkDeployerImages(raw string) error {
+	fields, err := manifestFields(raw)
+	if err != nil {
+		return fmt.Errorf("app_compose is not JSON: %w", err)
+	}
+	var composeFile string
+	var allowedEnvs []string
+	for key, into := range map[string]any{"docker_compose_file": &composeFile, "allowed_envs": &allowedEnvs} {
+		if value, ok := fields[key]; ok {
+			if err := json.Unmarshal(value, into); err != nil {
+				return fmt.Errorf("app_compose %s: %w", key, err)
+			}
+		}
+	}
+	var file struct {
+		Services map[string]struct {
+			Image string `yaml:"image"`
+		} `yaml:"services"`
+	}
+	if err := yaml.Unmarshal([]byte(composeFile), &file); err != nil {
+		return fmt.Errorf("docker_compose_file is not YAML: %w", err)
+	}
+	for _, name := range slices.Sorted(maps.Keys(file.Services)) {
+		image := file.Services[name].Image
+		for _, v := range interpolatedVariables(image) {
+			if slices.Contains(allowedEnvs, v) {
+				return fmt.Errorf("service %s runs image %q, which interpolates %s, and allowed_envs lets the deployer set it", name, image, v)
+			}
+		}
+	}
+	return nil
+}

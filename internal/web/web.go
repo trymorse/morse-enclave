@@ -29,7 +29,7 @@ const (
 	MaxResults        = 10
 	MaxExcerptChars   = 8000
 	MaxTitleChars     = 300
-	MaxContentChars   = 12_000
+	MaxContentChars   = 100_000
 	dateLayout        = "2006-01-02"
 )
 

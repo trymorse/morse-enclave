@@ -18,6 +18,10 @@ var Settings = []string{"n", "response_format", "seed", "stop", "temperature", "
 // SettingsField is the key setting that lets Settings reach the host.
 const SettingsField = "forward_settings"
 
+// consoleKeys is the developer console's page of API keys, where a key's settings change. A key cannot change itself:
+// PATCH /v1/keys/{id} takes a login.
+const consoleKeys = "https://console.trymorse.ai/keys"
+
 // unhonoured are the fields that change the reply and that no host is sent, so an API key's chat that sets one is
 // refused. Each maps to whether a value leaves the reply as it would be without the field.
 var unhonoured = map[string]func(json.RawMessage) bool{
@@ -87,7 +91,7 @@ var errResponseFormat = apierr.Invalid(http.StatusBadRequest, "unsupported_param
 func settingOffRefusal(name string) error {
 	return apierr.Invalid(http.StatusBadRequest, "setting_not_forwarded",
 		name+" is refused: this API key does not let request settings reach the model host, so Morse would drop it. "+
-			"Turn on \"Let my settings reach the model host\" ("+SettingsField+") on the key's page in the Morse web app, or send the request without "+name+".").Naming(name)
+			"Turn on \"Let my settings reach the model host\" ("+SettingsField+") on the key in the Morse developer console, at "+consoleKeys+", or send the request without "+name+".").Naming(name)
 }
 
 func unhonouredRefusal(name string) error {

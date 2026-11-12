@@ -86,7 +86,7 @@ func New(baseURL, upstreamModel, apiKey string, client *http.Client, gate Gate, 
 		gate:     gate,
 		gpu:      gpu,
 		relay:    openaicompat.Relay{Endpoint: sealed, Model: upstreamModel, Receipt: openaicompat.ReceiptFromReplyID},
-		onBehalf: openaicompat.Provider{Sender: openaicompat.SealedSender{Endpoint: sealed, Sealer: sealer{gate}}, Model: upstreamModel, LimitField: openaicompat.MaxTokens, KeepEnvelope: true},
+		onBehalf: openaicompat.Provider{Sender: openaicompat.SealedSender{Endpoint: sealed, Sealer: sealer{gate}}, Model: upstreamModel, LimitField: openaicompat.MaxTokens},
 	}
 }
 

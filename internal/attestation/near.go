@@ -26,6 +26,7 @@ var (
 	ErrNearTLS            = errors.New("attestation: tls_cert_fingerprint is not a 32-byte SPKI digest")
 	ErrNearModel          = errors.New("attestation: the model attestation is not for the route's upstream model")
 	ErrNearComposeManager = errors.New("attestation: compose_manager_attestation is not the model TD's quote over its action log")
+	ErrNearDeployerImage  = errors.New("attestation: the measured app_compose lets the deployer choose an image through allowed_envs")
 )
 
 type nearReport struct {
@@ -187,6 +188,9 @@ func (p Policy) verifyNearTD(ctx context.Context, a nearAttestation, key []byte,
 	w, err := p.measure(ctx, dstackEvidence{Quote: a.Quote, EventLog: a.EventLog, AppCompose: tcb.AppCompose, VMConfig: a.Info.VMConfig}, nearReportData(sha256.Sum256(slices.Concat(key, fingerprint)), nonce), now, reportTCBStatus)
 	if err != nil {
 		return NearGateway{}, err
+	}
+	if err := checkDeployerImages(w.AppCompose); err != nil {
+		return NearGateway{}, fmt.Errorf("%w: %w", ErrNearDeployerImage, err)
 	}
 	return NearGateway{Workload: w, TLS: aci.SPKI(fingerprint)}, nil
 }

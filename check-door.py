@@ -8,15 +8,18 @@ Usage: uv run check-door.py --pins <morse-pins checkout> --records <morse-record
 
 It reads Certificate Transparency for inference.trymorse.ai and every wildcard that covers it, the enclave_pins.json
 history in morse-pins, the pointers in morse-records, each entry a pointer names in Sigstore's Rekor v2, with the log
-keys from Sigstore's TUF repository and the witnesses this script lists, the CAA record, and the door's live
-attestation, and runs the checks listed in CHECKS below. Check 7 is reserved for the check of the public image signer.
-It exits 1 if any check fails, and 2 if none fails but a check is not enforced.
+keys from Sigstore's TUF repository and the witnesses this script lists, the CAA record, the door's live
+attestation, and for the public image signer the statements branch of morse-pins and GitHub's record of who pushed
+its main and which sign.yml runs there were, and runs the checks listed in CHECKS below. GH_TOKEN, if set, raises
+GitHub's limit of 60 API requests an hour. It exits 1 if any check fails, and 2 if none fails but a check is not
+enforced.
 """
 
 import argparse
 import base64
 import binascii
 import hashlib
+import http.client
 import json
 import re
 import subprocess
@@ -41,6 +44,13 @@ Refused = nitro.Refused
 rekor = types.ModuleType("rekor")
 exec(compile(Path(__file__).with_name("rekor.py").read_text(), "rekor.py", "exec"), rekor.__dict__)
 Refusal = rekor.Refusal
+# revocation.py asks a certificate's CA, by OCSP or CRL, whether it revoked the certificate.
+revocation = types.ModuleType("revocation")
+exec(compile(Path(__file__).with_name("revocation.py").read_text(), "revocation.py", "exec"), revocation.__dict__)
+Revocation = revocation.Revocation
+# signer.py verifies the public image signer's statements, as the enclave's pinsig does.
+signer = types.ModuleType("signer")
+exec(compile(Path(__file__).with_name("signer.py").read_text(), "signer.py", "exec"), signer.__dict__)
 
 NAME = "inference.trymorse.ai"
 CRTSH_URL = "https://crt.sh/?q=%25.{}&output=json"
@@ -89,6 +99,7 @@ class Certificate:
     not_before: datetime
     not_after: datetime
     logged: datetime
+    der: bytes = field(repr=False)
 
 
 @dataclass(frozen=True)
@@ -189,7 +200,7 @@ def parse_certificate(source, der, logged):
     # A log's embedded SCT, or the time the CT source saw the precertificate, is when the certificate became public.
     # With neither, notBefore stands in, which a CA may set in the past, so the 20 minutes start early.
     when = min(scts) if scts else logged or cert.not_valid_before_utc
-    return Certificate(source, list(dict.fromkeys(names)), spki_sha256(cert.public_key()), cert.not_valid_before_utc, cert.not_valid_after_utc, when)
+    return Certificate(source, list(dict.fromkeys(names)), spki_sha256(cert.public_key()), cert.not_valid_before_utc, cert.not_valid_after_utc, when, der)
 
 
 def crtsh_time(row):
@@ -236,6 +247,12 @@ def git(directory, *args):
 
 def descends(directory, seen):
     return subprocess.run(["git", "-C", str(directory), "merge-base", "--is-ancestor", seen, "HEAD"], capture_output=True).returncode == 0
+
+
+# signer_watch.py holds check 7, the watch on the public image signer, with the names it shares with this file.
+signer_watch = types.ModuleType("signer_watch")
+signer_watch.__dict__.update(git=git, descends=descends, Note=Note, Unenforced=Unenforced, signer=signer, rekor=rekor)
+exec(compile(Path(__file__).with_name("signer_watch.py").read_text(), "signer_watch.py", "exec"), signer_watch.__dict__)
 
 
 def read_pins_history(pins_dir):
@@ -514,9 +531,20 @@ class Evidence:
     boots: dict = field(default_factory=dict)
     last_run: datetime | None = None
     now: datetime = field(default_factory=lambda: utcnow())
+    revocations: dict = field(default_factory=dict)
+    ct_unread: dict = field(default_factory=dict)
+    signer: list = field(default_factory=list)
+    signer_state: object = None
 
     def recorded(self):
         return {v.spki_sha256 for v in self.verified}
+
+    def born(self):
+        born = {}
+        for v in self.verified:
+            t = rekor.rfc3339(v.born, "origin.born")[0]
+            born[v.spki_sha256] = min(born.get(v.spki_sha256, t), t)
+        return born
 
     def pairs(self):
         pairs = {}
@@ -525,24 +553,43 @@ class Evidence:
         return pairs
 
 
+def unattested(c, recorded, born, now):
+    if c.spki_sha256 not in recorded:
+        if now - c.logged < POINTER_LATE:
+            return Note(f"{c.source} names {', '.join(c.names)} with SPKI {c.spki_sha256}, which no verified record attests yet. CT made it public at {c.logged.isoformat(timespec='seconds')}, and it fails once {POINTER_LATE // timedelta(minutes=1)} minutes have passed without a pointer")
+        return f"{c.source} names {', '.join(c.names)} with SPKI {c.spki_sha256}, which no verified record attests, and CT made it public at {c.logged.isoformat(timespec='seconds')}"
+    if c.not_before > born[c.spki_sha256] + MAX_KEY_AGE:
+        return f"{c.source} names {', '.join(c.names)} with SPKI {c.spki_sha256} from {c.not_before.isoformat(timespec='seconds')}, after the key, born at {born[c.spki_sha256].isoformat(timespec='seconds')}, was {MAX_KEY_AGE.days} days old"
+    return None
+
+
+def findings(ev):
+    recorded, born = ev.recorded(), ev.born()
+    return [(c, why) for c in ev.certificates if (why := unattested(c, recorded, born, ev.now))]
+
+
+def failing(ev):
+    return [c for c, why in findings(ev) if not isinstance(why, Note)]
+
+
 def check_certificates(ev):
-    recorded, born = ev.recorded(), {}
-    for v in ev.verified:
-        t = rekor.rfc3339(v.born, "origin.born")[0]
-        born[v.spki_sha256] = min(born.get(v.spki_sha256, t), t)
-    failures = []
+    recorded = ev.recorded()
+    failures = [Note(f"{source} could not be read, so this run judges check 1 from {', '.join(ev.ct_counts)} alone: {e!r}") for source, e in ev.ct_unread.items()]
     for source, count in ev.ct_counts.items():
         others = {other: n for other, n in ev.ct_counts.items() if n}
         if count == 0 and (others or recorded):
             failures.append(f"{source} returned no certificate covering {ev.name}, though " + (", ".join(f"{o} returned {n}" for o, n in others.items()) if others else f"{len(recorded)} SPKIs have verified records"))
-    for c in ev.certificates:
-        if c.spki_sha256 not in recorded:
-            if ev.now - c.logged < POINTER_LATE:
-                failures.append(Note(f"{c.source} names {', '.join(c.names)} with SPKI {c.spki_sha256}, which no verified record attests yet. CT made it public at {c.logged.isoformat(timespec='seconds')}, and it fails once {POINTER_LATE // timedelta(minutes=1)} minutes have passed without a pointer"))
-            else:
-                failures.append(f"{c.source} names {', '.join(c.names)} with SPKI {c.spki_sha256}, which no verified record attests, and CT made it public at {c.logged.isoformat(timespec='seconds')}")
-        elif c.not_before > born[c.spki_sha256] + MAX_KEY_AGE:
-            failures.append(f"{c.source} names {', '.join(c.names)} with SPKI {c.spki_sha256} from {c.not_before.isoformat(timespec='seconds')}, after the key, born at {born[c.spki_sha256].isoformat(timespec='seconds')}, was {MAX_KEY_AGE.days} days old")
+    for c, why in findings(ev):
+        if isinstance(why, Note):
+            failures.append(why)
+            continue
+        answer = ev.revocations.get(c.der, Revocation(None, "this run did not ask its CA"))
+        if answer.revoked:
+            failures.append(Note(f"revoked, skipped: {why}. Its CA revoked it, {answer.how}"))
+        elif answer.revoked is False:
+            failures.append(f"{why}. Its CA has not revoked it, {answer.how}")
+        else:
+            failures.append(f"{why}. Whether its CA revoked it is unknown, so it counts: {answer.how}")
     return failures
 
 
@@ -719,6 +766,7 @@ def check_records_public(ev):
     return [f"{RECORDS_REPO_URL}, read with no token, {ev.records_visibility}, so an outside watcher cannot read the pointers or the leaf archive"]
 
 
+
 CHECKS = [
     ("Every certificate in CT for the door's name holds a key a verified record attests (check 1)", check_certificates),
     ("Every pointer's entry verifies, and morse-pins and morse-records keep their history (check 2)", check_records),
@@ -726,6 +774,7 @@ CHECKS = [
     ("Each Rekor shard's checkpoint verifies and extends the last one this watcher accepted (check 4)", check_logs),
     ("CAA names only Morse's ACME accounts and dns-01 (check 5)", check_caa),
     ("The door's live attestation names only boots with verified records (check 6)", check_live),
+    ("Only the publisher pushes data to morse-pins main, the signer's code is on the allowlist, every statement verifies, and no sign.yml run is missing (check 7)", signer_watch.check),
     ("The shard's witnesses match this watcher's policy and the newest pinned image's (check 8)", check_witnesses),
     ("morse-records is public (check 9)", check_records_public),
 ]
@@ -761,11 +810,15 @@ def gather(args):
     saved, last_run, boots = read_state(state_path)
     cache = Path(args.cache) if args.cache else state_path.with_name(state_path.name + ".cache")
 
-    seen, certificates, ct_counts = set(), [], {}
+    seen, certificates, ct_counts, ct_unread = set(), [], {}, {}
     for source in args.ct or ["crt.sh", "certspotter"]:
+        try:
+            read = read_ct(source, args.name)
+        except (OSError, http.client.HTTPException, json.JSONDecodeError) as e:
+            ct_unread[source] = e
+            continue
         ct_counts[source] = 0
-        for label_, der, logged in read_ct(source, args.name):
-            cert = parse_certificate(label_, der, logged)
+        for der, cert in [(der, parse_certificate(label_, der, logged)) for label_, der, logged in read]:
             if not any(covers(n, args.name) for n in cert.names):
                 continue
             ct_counts[source] += 1
@@ -774,6 +827,8 @@ def gather(args):
             seen.add(hashlib.sha256(der).digest())
             if args.since is None or cert.not_after >= args.since:
                 certificates.append(cert)
+    if not ct_counts:
+        raise OSError("no CT source could be read: " + "; ".join(f"{source}: {e!r}" for source, e in ct_unread.items()))
 
     pins_dir, records_dir = Path(args.pins), Path(args.records)
     history = read_pins_history(pins_dir)
@@ -787,8 +842,10 @@ def gather(args):
 
     policy = rekor.make_policy(WITNESS_K, WITNESSES)
     shard_failures, checkpoints, witnesses = [], {}, {}
+    trusted_root = None
     try:
-        shards, skipped = rekor.read_shards(read_trusted_root(cache))
+        trusted_root = read_trusted_root(cache)
+        shards, skipped = rekor.read_shards(trusted_root)
         notes += [Note(s) for s in skipped]
     except Exception as e:
         shards = {}
@@ -858,24 +915,26 @@ def gather(args):
             boot = boots.get(seen_.key_id, Boot(dated, ()))
             boots[seen_.key_id] = Boot(boot.first_seen, tuple(sorted({*boot.spkis, seen_.spki_sha256})))
     ev = Evidence(args.name, args.environment, certificates, ct_counts, pointers, list(verified_.values()), notes, shard_failures, caa_history, accounts,
-                  live, tips, rewound, witnesses, trust, records_visibility(), policy, boots, last_run, now)
+                  live, tips, rewound, witnesses, trust, records_visibility(), policy, boots, last_run, now, ct_unread=ct_unread)
     ev.checkpoints = checkpoints
+    ev.revocations = {c.der: revocation.revocation(c.der, fetch) for c in failing(ev)}
+
+    ev.signer, ev.signer_state = signer_watch.watch(pins_dir, args, saved["signer"], now, trusted_root, shards, policy)
     return ev
 
 
 def read_state(state):
-    if not state.exists():
-        return {"checkpoints": {}, "tips": {}}, None, {}
-    saved = json.loads(state.read_text())
+    saved = json.loads(state.read_text()) if state.exists() else {}
     last_run = None if saved.get("last_run") is None else datetime.fromisoformat(saved["last_run"])
+    kept = signer_watch.SignerState.read(saved)
     # A state file from before a boot kept every SPKI it was seen live with held one in "spki_sha256".
     boots = {key: Boot(None if b["first_seen"] is None else datetime.fromisoformat(b["first_seen"]), tuple(sorted(set(b["spkis"] if "spkis" in b else [b["spki_sha256"]]))))
              for key, b in saved.get("boots", {}).items()}
-    if any(t is not None and t.tzinfo is None for t in [last_run, *(b.first_seen for b in boots.values())]):
+    if any(t is not None and t.tzinfo is None for t in [last_run, kept.unlisted_since, kept.runs_read_at, *(b.first_seen for b in boots.values())]):
         raise ValueError(f"{state} holds a time with no zone")
     # A state file from before the watcher read Rekor kept the morse-pins tip it saw in "tip".
     tips = dict(saved.get("tips") or ({"morse-pins": saved["tip"]} if saved.get("tip") else {}))
-    return {"checkpoints": saved.get("checkpoints") or {}, "tips": tips}, last_run, boots
+    return {"checkpoints": saved.get("checkpoints") or {}, "tips": tips, "signer": kept}, last_run, boots
 
 
 def write_state(path, ev):
@@ -889,7 +948,7 @@ def write_state(path, ev):
             out |= {"size": c["accepted"].size, "root": rekor.b64_string(c["accepted"].root), "note": c["accepted"].note}
         checkpoints[origin] = out
     boots = {key: {"first_seen": b.first_seen and b.first_seen.isoformat(), "spkis": list(b.spkis)} for key, b in sorted(ev.boots.items())}
-    path.write_text(json.dumps({"checkpoints": checkpoints, "tips": ev.tips, "last_run": ev.now.isoformat(), "boots": boots}))
+    path.write_text(json.dumps({"checkpoints": checkpoints, "tips": ev.tips, "last_run": ev.now.isoformat(), "boots": boots, **ev.signer_state.saved()}))
 
 
 def main(argv=None):
@@ -898,9 +957,10 @@ def main(argv=None):
     parser.add_argument("--records", required=True, help="a full-history checkout of trymorse/morse-records, with <environment>.jsonl pointers and leaves/")
     parser.add_argument("--caa-history", required=True, help="a JSON lines file of CAA samples; each run appends one")
     parser.add_argument("--caa-account", action="append", default=[], metavar="CA=URI", help="an ACME account CAA may name, such as letsencrypt.org=https://acme-v02.api.letsencrypt.org/acme/acct/1")
-    parser.add_argument("--sequence-state", required=True, help="a JSON file holding each Rekor shard's last accepted checkpoint and its witnesses, the morse-pins and morse-records commits the last run saw, when this watcher last ran, and every boot it has seen live with each SPKI it held and when it first saw it")
+    parser.add_argument("--sequence-state", required=True, help="a JSON file holding each Rekor shard's last accepted checkpoint and its witnesses, the morse-pins and morse-records commits the last run saw, when this watcher last ran, every boot it has seen live with each SPKI it held and when it first saw it, and for check 7 where it stopped in the activity of morse-pins main, the highest sign.yml run number judged and when its runs were last read, the runs still pending and the runs refused or missing not yet acknowledged, the statements already verified, the refused pushes not yet acknowledged, and since when main has been unlisted")
     parser.add_argument("--cache", help="a directory for the TUF metadata and the entries already proven; beside --sequence-state if omitted")
     parser.add_argument("--enclave", required=True, help="a checkout of trymorse/morse-enclave with its tags, for check 8's reading of the newest pinned image's trust.go")
+    signer_watch.add_arguments(parser)
     parser.add_argument("--ct", action="append", metavar="SOURCE", help="crt.sh, certspotter, or a JSON file of certspotter issuances with cert_der; both CT services if omitted")
     parser.add_argument("--attestation", default=ATTESTATION_URL, help="the door's /v1/attestation URL, or a file holding its answer")
     parser.add_argument("--no-caa-sample", action="store_true", help="check the CAA history without adding a sample")

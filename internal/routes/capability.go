@@ -26,7 +26,7 @@ type capability struct {
 	// and ends it at the limit itself, and the hold for the limit covers what the reply is billed.
 	ignoresLimit bool
 	// The model reasons at the vendor's default effort when the request names none, so only an effort of none the
-	// route lists stops it. Anthropic's models think only at an effort the request names.
+	// route lists stops it.
 	reasonsUnasked bool
 	// Gemini returns thought parts only to a request that sets includeThoughts, so the first chunk waits out the
 	// reasoning. A late first chunk is then not a stall to hedge, and only answer tokens follow it.
@@ -49,12 +49,12 @@ var (
 
 var capabilities = map[Provider]capability{
 	ProviderOpenAI: {kinds: servedAt{catalog.KindChat: anonAndPrivate, catalog.KindTranscription: anonAndPrivate}},
-	// OpenAI's status for an account out of credit is not documented, and none has been captured, so a dry account is
-	// no account refusal.
+	// Meta's muse routes share this provider, and their dry-account reply is undocumented, so a dry account is no
+	// account refusal.
 	ProviderOpenAIResponses: {kinds: servedAt{catalog.KindChat: anonOnly}, needsKey: true, hides: true, reasonsUnasked: true},
-	// An empty Anthropic prepaid balance has a documented message and no documented status, and a spend limit we set
-	// is a 400 that stands as a bad request, so a dry account is no account refusal.
-	ProviderAnthropic: {kinds: servedAt{catalog.KindChat: anonOnly}, needsKey: true, lacks: []string{chat.NoEffort}, hides: true, slowsTogether: true},
+	// An empty Anthropic prepaid balance is a 400 by report only, and a spend limit we set is a 400 that stands as a bad
+	// request, so a dry account is no account refusal.
+	ProviderAnthropic: {kinds: servedAt{catalog.KindChat: anonOnly}, needsKey: true, lacks: []string{chat.NoEffort}, hides: true, slowsTogether: true, reasonsUnasked: true},
 	// Gemini's docs name no status for a dry billing account, and its 403 PERMISSION_DENIED maps to upstream_refused,
 	// so a dry account is no account refusal.
 	ProviderGemini: {

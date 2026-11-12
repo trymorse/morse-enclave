@@ -160,7 +160,7 @@ func TestExtractAsksForTheFullPageOfOneURLAndCapsIt(t *testing.T) {
 	if c.method != http.MethodPost || c.path != "/v1/extract" || !slices.Equal(slices.Sorted(maps.Keys(c.body)), []string{"advanced_settings", "urls"}) {
 		t.Errorf("%s %s body %v", c.method, c.path, c.body)
 	}
-	if string(c.body["urls"]) != `["https://example.com/p?id=1"]` || string(c.body["advanced_settings"]) != `{"full_content":{"max_chars_per_result":12001},"fetch_policy":{"timeout_seconds":30}}` {
+	if string(c.body["urls"]) != `["https://example.com/p?id=1"]` || string(c.body["advanced_settings"]) != `{"full_content":{"max_chars_per_result":100001},"fetch_policy":{"timeout_seconds":30}}` {
 		t.Errorf("urls %s settings %s", c.body["urls"], c.body["advanced_settings"])
 	}
 	if c.header.Get("X-Api-Key") != apiKey || c.header.Get("Authorization") != "" {

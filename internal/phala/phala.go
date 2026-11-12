@@ -151,7 +151,7 @@ func New(baseURL, upstreamModel, apiKey string, clients Clients, keys Keys) *Rou
 	plaintext := sealed
 	plaintext.HTTP = clients.Plaintext
 	provider := func(sender openaicompat.Sender) openaicompat.Provider {
-		return openaicompat.Provider{Sender: sender, Model: upstreamModel, Force: maps.Clone(constraint), LimitField: openaicompat.MaxTokens, KeepEnvelope: true, ContinuousUsage: true}
+		return openaicompat.Provider{Sender: sender, Model: upstreamModel, Force: maps.Clone(constraint), LimitField: openaicompat.MaxTokens, ContinuousUsage: true}
 	}
 	return &Route{
 		Provider: provider(openaicompat.HTTPSender{Endpoint: plaintext}),

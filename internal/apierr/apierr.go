@@ -159,6 +159,7 @@ var vendorCodes = map[string]Error{
 	"server_is_overloaded":           ErrUpstreamBusy,
 	"overloaded_error":               ErrUpstreamBusy,
 	"insufficient_quota":             ErrUpstreamUnavailable,
+	"credit_balance_exhausted":       ErrUpstreamUnavailable,
 	"model_forbidden":                ErrUpstreamUnavailable,
 	"model_zdr_not_supported":        ErrUpstreamUnavailable,
 	"invalid_image":                  ErrInvalidRequest,

@@ -31,6 +31,7 @@ var Routes = []Route{
 	{Pattern: "POST /v1/tasks", Sealed: true},
 	{Pattern: "POST /v1/tasks/{id}/bundle", Sealed: true},
 	{Pattern: "GET /v1/models"},
+	{Pattern: "GET /v1/models/{id...}"},
 	{Pattern: "GET /v1/attestation"},
 	{Pattern: "GET /v1/receipts/{id}"},
 	{Pattern: "GET /v1/videos/{id}"},

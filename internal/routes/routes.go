@@ -95,7 +95,7 @@ type Route struct {
 	Order int
 	// AppOnly keeps the route from API keys: only a login or a guest may list or call it.
 	AppOnly bool
-	// RebateShare is the part of an API key's margin on the model that the daily rebate returns.
+	// RebateShare is the part of an API key's margin on the model that the hourly rebate returns.
 	RebateShare money.RebateShare
 }
 
