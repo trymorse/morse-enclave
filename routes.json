@@ -360,6 +360,9 @@
     {"id": "anthropic/claude-haiku-5.5", "app_only": true, "hides_reasoning": true, "input_modalities": ["text","image"], "lab": "Anthropic", "label": "Claude Haiku 5.5", "reasoning_efforts": ["low","medium","high","xhigh","max"], "prices": {"anon": {"prompt_micros_per_mtok":100000,"cached_prompt_micros_per_mtok":10000,"cache_write_prompt_micros_per_mtok":125000,"completion_micros_per_mtok":500000,"long_context":{"from_prompt_tokens":100001,"prompt_micros_per_mtok":500000,"cached_prompt_micros_per_mtok":50000,"cache_write_prompt_micros_per_mtok":625000,"completion_micros_per_mtok":2500000}}}, "endpoints": [
       {"id": "anthropic", "api_key_env": "ANTHROPIC_API_KEY", "base_url": "https://api.anthropic.com", "context_tokens": 1000000, "decode_max_tps": 250, "default_max_tokens": 128000, "hidden_reasoning_tps": 140, "included": {"from":"free","quota":"messages"}, "max_output_tokens": 128000, "openrouter_id": "anthropic/claude-haiku-5.5", "owned_by": "Anthropic", "provider": "anthropic", "provider_name": "anthropic", "tier": "anon", "upstream_model": "claude-haiku-5-5"}
     ]},
+    {"id": "google/gemini-4-carbon", "app_only": true, "hides_reasoning": true, "input_modalities": ["text","image"], "lab": "Google", "label": "Gemini 4 Carbon", "reasoning_efforts": ["low","medium","high"], "prices": {"anon": {"prompt_micros_per_mtok":2000000,"cached_prompt_micros_per_mtok":100000,"completion_micros_per_mtok":10000000}}, "endpoints": [
+      {"id": "gemini", "api_key_env": "GEMINI_API_KEY", "base_url": "https://generativelanguage.googleapis.com", "context_tokens": 1048576, "decode_max_tps": 270, "default_max_tokens": 65536, "hidden_reasoning_tps": 145, "max_output_tokens": 65536, "openrouter_id": "google/gemini-4-carbon", "owned_by": "Google", "provider": "gemini", "provider_name": "gemini", "tier": "anon", "upstream_model": "gemini-4-carbon"}
+    ]},
     {"id": "google/gemini-4-argon", "app_only": true, "hides_reasoning": true, "input_modalities": ["text","image"], "lab": "Google", "label": "Gemini 4 Argon", "reasoning_efforts": ["low","medium","high"], "prices": {"anon": {"prompt_micros_per_mtok":2000000,"cached_prompt_micros_per_mtok":100000,"completion_micros_per_mtok":10000000}}, "endpoints": [
       {"id": "gemini", "api_key_env": "GEMINI_API_KEY", "base_url": "https://generativelanguage.googleapis.com", "context_tokens": 1048576, "decode_max_tps": 270, "default_max_tokens": 65536, "hidden_reasoning_tps": 145, "max_output_tokens": 65536, "openrouter_id": "google/gemini-4-argon", "owned_by": "Google", "provider": "gemini", "provider_name": "gemini", "tier": "anon", "upstream_model": "gemini-4-argon"}
     ]},
@@ -545,6 +548,7 @@
     {"name": "claude-opus-5-5", "model": "anthropic/claude-opus-5.5", "endpoint": "anthropic"},
     {"name": "claude-sonnet-5-5", "model": "anthropic/claude-sonnet-5.5", "endpoint": "anthropic"},
     {"name": "claude-haiku-5-5", "model": "anthropic/claude-haiku-5.5", "endpoint": "anthropic"},
+    {"name": "gemini-4-carbon", "model": "google/gemini-4-carbon", "endpoint": "gemini"},
     {"name": "gemini-4-argon", "model": "google/gemini-4-argon", "endpoint": "gemini"},
     {"name": "gemini-3.8-flash", "model": "google/gemini-3.8-flash", "endpoint": "gemini"},
     {"name": "muse-wonder-1.0", "model": "meta/muse-wonder-1.0", "endpoint": "openai-responses"},
