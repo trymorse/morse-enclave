@@ -13,28 +13,6 @@ import (
 	"time"
 )
 
-// testdata/next_runs.json holds the cases the web app's src/lib/schedule must agree with Go on, in the shape
-// contracts.md section E.7 gives:
-//
-//	{"cases": [
-//	  {"name": ..., "spec": {"kind", "cron"?, "once_local"?, "tz"}, "now": ..., "next": [...]},
-//	  {"name": ..., "spec": {...}, "now": ..., "error": "<code>"},
-//	  ...
-//	]}
-//
-// One case to a line. name is unique and says what the case shows. spec is the spec as the bundle and the task
-// routes carry it, each field a string read as written: a field left out is absent, and so is one that is "", so a
-// case may hold an unknown kind or an empty cron. now is RFC 3339 in UTC to the second, both Parse's now and where
-// next starts. next is 1 to 10 instants in RFC 3339 UTC, Next applied from now and then from each run before (a
-// once case lists its one instant); error is the code of E.5 Parse refuses the spec with, in next's place.
-//
-// The cases cover the six zones design.md names across both of their changes of clock in 2026 and 2027, with
-// hourly, daily, and custom crons and one-time runs on the wall times each change skips or repeats; every preset
-// and the cron subset's corners; and every code, with cases where two codes apply to pin their order.
-//
-// TestNextRunsJSONIsWhatTheseCasesCompute rebuilds the file from vectorInputs and fails when it differs; go test
-// ./internal/schedule -run NextRunsJSON -update rewrites it. The app keeps a byte-for-byte copy at
-// src/lib/schedule/testdata/next_runs.json.
 const nextRunsFile = "testdata/next_runs.json"
 
 var update = flag.Bool("update", false, "rewrite "+nextRunsFile+" from the cases in this test")
@@ -78,8 +56,6 @@ func onceSpec(local, tz string) vectorSpec {
 	return vectorSpec{Kind: "once", OnceLocal: &local, TZ: tz}
 }
 
-// vectorInput is a case before its runs are computed: runs is how many next lists, and want the code a refused spec
-// must carry, so building the file checks every refusal it records.
 type vectorInput struct {
 	name string
 	spec vectorSpec
@@ -88,9 +64,6 @@ type vectorInput struct {
 	want Code
 }
 
-// clockChange is one of the 2026 and 2027 changes of clock in the contract's zones, with a wall time it skips or
-// repeats: its local date, hour, and minute. pair is a custom cron's hours, that one and its neighbour. now is a few
-// hours before the change.
 type clockChange struct {
 	tz, place string
 	forward   bool
@@ -406,8 +379,6 @@ func TestNextRunsJSONIsWhatTheseCasesCompute(t *testing.T) {
 	}
 }
 
-// Each stored case read back on its own terms: its fields by E.7's rules, its error or its runs from Parse and Next
-// directly, and every cron case's runs from the slow search too.
 func TestEveryStoredCaseIsWhatParseAndNextSayAndTheSlowSearchAgrees(t *testing.T) {
 	names := map[string]bool{}
 	for _, c := range readNextRuns(t).Cases {
@@ -460,8 +431,6 @@ func TestEveryStoredCaseIsWhatParseAndNextSayAndTheSlowSearchAgrees(t *testing.T
 	}
 }
 
-// The file covers what E.7 asks: every code, every kind, the six zones, and each 2026 and 2027 change of clock in
-// them with at least three cron cases running across it and a one-time run within two hours of it.
 func TestNextRunsJSONCoversEveryCodeKindZoneAndChangeOfClock(t *testing.T) {
 	file := readNextRuns(t)
 	codes, kinds, zones := map[Code]int{}, map[string]bool{}, map[string]bool{}

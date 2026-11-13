@@ -71,12 +71,11 @@ func (r chatRoute) chat(defaultMarkup money.Markup) (Chat, error) {
 		ChatTerms: catalog.ChatTerms{
 			MaxOutputTokens: r.MaxOutputTokens, DefaultMaxTokens: r.DefaultMaxTokens, DefaultReasoningEffort: r.DefaultReasoningEffort, ReasoningEfforts: r.ReasoningEfforts,
 			Inputs: inputs, ContextTokens: r.ContextTokens, CompactAtTokens: compactAt, HidesReasoning: r.HidesReasoning,
-			NoTools: r.Tools != nil && !*r.Tools, Quantization: quantization,
+			Quantization: quantization, Fixes: r.withTools(), NoCharacters: r.Characters != nil && !*r.Characters,
 		},
 		Price: price, Markup: markup, DecodeMaxTPS: r.DecodeMaxTPS,
 		Tokenizer: r.Tokenizer, HiddenReasoningTPS: r.HiddenReasoningTPS,
-		OpenRouterID: cmp.Or(r.OpenRouterID, r.UpstreamModel), AnswersInReasoning: r.AnswersInReasoning,
-		ReasoningInContent: r.ReasoningInContent, ThinkingOffSwitch: r.ThinkingOffSwitch, ToolCallsFinishStop: r.ToolCallsFinishStop,
+		OpenRouterID: cmp.Or(r.OpenRouterID, r.UpstreamModel),
 	}, nil
 }
 
@@ -85,6 +84,12 @@ func (r chatRoute) quantization() (catalog.Quantization, error) {
 		return catalog.QuantizationUnknown, nil
 	}
 	return catalog.ParseQuantization(r.Quantization)
+}
+
+func (r chatRoute) withTools() catalog.Fixes {
+	f := r.Fixes
+	f.NoTools = r.Tools != nil && !*r.Tools
+	return f
 }
 
 func (r chatRoute) compactAt() (int, error) {
@@ -106,9 +111,6 @@ func (r chatRoute) compactAt() (int, error) {
 	return r.CompactAtTokens, nil
 }
 
-// ParsePrice parses a token-rate object as routes.json writes a tier's price: prompt, cached, and completion rates per
-// million tokens, a cache-write rate that defaults to the prompt rate, and an optional long_context with its
-// from_prompt_tokens. field names the object in errors.
 func ParsePrice(raw json.RawMessage, field string) (money.Price, error) {
 	var tp *tokenPrice
 	if err := decodeStrict(raw, &tp); err != nil {
@@ -117,8 +119,6 @@ func ParsePrice(raw json.RawMessage, field string) (money.Price, error) {
 	return tp.parse(field)
 }
 
-// ParseMicrosPerCall parses {"micros_per_call": n} as routes.json writes a per-call price, from 1 to
-// money.MaxMicrosPerUnit. field names the object in errors.
 func ParseMicrosPerCall(raw json.RawMessage, field string) (money.Micros, error) {
 	var cp *callPrice
 	if err := decodeStrict(raw, &cp); err != nil {

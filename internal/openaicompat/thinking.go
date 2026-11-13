@@ -13,15 +13,13 @@ const (
 	thinkClose = "</think>"
 )
 
-// asksNoReasoning is whether c forwards the effort none or no effort at all: a call with no effort on a route with no
-// default reasons only on a host that thinks unasked, and the thinking switch stops that host too.
 func asksNoReasoning(c chat.Call) bool {
 	effort, ok := c.ForwardedEffort()
 	return !ok || effort == chat.NoEffort
 }
 
-func (p *Provider) splitsThinking(c chat.Call) bool {
-	return p.ReasoningInContent && !(p.ThinkingSwitch != "" && asksNoReasoning(c))
+func (p *Provider) turnsThinkingOff(c chat.Call) bool {
+	return p.Fixes.ThinkingOffSwitch && p.ThinkingField != "" && asksNoReasoning(c)
 }
 
 type thinkStage uint8
@@ -33,16 +31,12 @@ const (
 	answering
 )
 
-// thinkSplit moves the reasoning a host writes at the head of content, ended by </think> and perhaps opened by
-// <think>, into reasoning_content, as Novita does for Qwen3.5 27B and 122B A10B: the chat template opens the think
-// block in the prompt, so the reply starts mid-thought and the first </think> ends it.
 type thinkSplit struct {
 	stage        thinkStage
 	pending      string
 	hostSplitsIt bool
 }
 
-// answerPart is the field of a choice that carries its text: delta in a stream, message in a whole reply.
 type answerPart string
 
 const (

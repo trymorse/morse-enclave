@@ -21,12 +21,12 @@ import (
 const nearSigningAlgo = "ed25519"
 
 var (
-	ErrNearReport         = errors.New("attestation: the NEAR report is not a gateway attestation with model attestations")
-	ErrNearSigningKey     = errors.New("attestation: the NEAR signing key is not the 32-byte ed25519 key its signing_address names")
-	ErrNearTLS            = errors.New("attestation: tls_cert_fingerprint is not a 32-byte SPKI digest")
-	ErrNearModel          = errors.New("attestation: the model attestation is not for the route's upstream model")
-	ErrNearComposeManager = errors.New("attestation: compose_manager_attestation is not the model TD's quote over its action log")
-	ErrNearDeployerImage  = errors.New("attestation: the measured app_compose lets the deployer choose an image through allowed_envs")
+	ErrNearReport           = errors.New("attestation: the NEAR report is not a gateway attestation with model attestations")
+	ErrNearSigningKey       = errors.New("attestation: the NEAR signing key is not the 32-byte ed25519 key its signing_address names")
+	ErrNearTLS              = errors.New("attestation: tls_cert_fingerprint is not a 32-byte SPKI digest")
+	ErrNearModel            = errors.New("attestation: the model attestation is not for the route's upstream model")
+	ErrNearComposeManager   = errors.New("attestation: compose_manager_attestation is not the model TD's quote over its action log")
+	ErrNearDeployerVariable = errors.New("attestation: the measured app_compose interpolates a variable allowed_envs lets the deployer set outside an environment or label value")
 )
 
 type nearReport struct {
@@ -189,8 +189,8 @@ func (p Policy) verifyNearTD(ctx context.Context, a nearAttestation, key []byte,
 	if err != nil {
 		return NearGateway{}, err
 	}
-	if err := checkDeployerImages(w.AppCompose); err != nil {
-		return NearGateway{}, fmt.Errorf("%w: %w", ErrNearDeployerImage, err)
+	if err := checkDeployerVariables(w.AppCompose, nearReviewedInterpolations); err != nil {
+		return NearGateway{}, fmt.Errorf("%w: %w", ErrNearDeployerVariable, err)
 	}
 	return NearGateway{Workload: w, TLS: aci.SPKI(fingerprint)}, nil
 }

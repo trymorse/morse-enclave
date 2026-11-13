@@ -14,6 +14,7 @@ import json
 import sys
 import unittest
 import unittest.mock
+import urllib.error
 from datetime import timedelta
 
 sys.dont_write_bytecode = True
@@ -601,6 +602,60 @@ class RealBundleTest(unittest.TestCase):
 
     def test_a_certificate_with_no_fulcio_ca_is_refused(self):
         self.refused("the certificate does not chain to a Fulcio CA", "prod", authorities=[])
+
+
+class GitHubBlipTest(unittest.TestCase):
+    def fetch(self, *answers, read=lambda: check_door.signer_watch.fetch_github(check_door.signer_watch.RUNS_URL)):
+        url = check_door.signer_watch.RUNS_URL
+        calls = []
+
+        def urlopen(request, timeout):
+            calls.append(request.full_url)
+            answer = answers[len(calls) - 1]
+            if isinstance(answer, Exception):
+                raise answer
+            reply = unittest.mock.MagicMock()
+            reply.__enter__.return_value = reply
+            reply.headers = {"Link": f'<{url}&page=2>; rel="next"'}
+            reply.read.return_value = answer
+            return reply
+
+        with unittest.mock.patch("urllib.request.urlopen", urlopen), unittest.mock.patch.object(check_door.time, "sleep") as slept:
+            try:
+                return read(), len(calls), [c.args[0] for c in slept.call_args_list]
+            except Exception as e:
+                return e, len(calls), [c.args[0] for c in slept.call_args_list]
+
+    def refusal(self, code):
+        return urllib.error.HTTPError(check_door.signer_watch.RUNS_URL, code, "refused", {}, None)
+
+    def test_a_502_then_an_answer_reads_the_answer(self):
+        for blip in (self.refusal(502), self.refusal(503), self.refusal(429), urllib.error.URLError(ConnectionResetError(54, "reset")), urllib.error.URLError(ConnectionRefusedError(61, "refused")), ConnectionResetError(54, "reset")):
+            got, calls, slept = self.fetch(blip, b"{}")
+            self.assertEqual(got, (b"{}", f"{check_door.signer_watch.RUNS_URL}&page=2"), blip)
+            self.assertEqual((calls, slept), (2, [2]), blip)
+
+    def test_a_403_fails_at_once(self):
+        for code in (401, 403, 404):
+            got, calls, slept = self.fetch(self.refusal(code), b"{}")
+            self.assertIsInstance(got, urllib.error.HTTPError)
+            self.assertEqual((got.code, calls, slept), (code, 1, []))
+
+    def test_a_timeout_fails_at_once(self):
+        for hang in (TimeoutError("timed out"), urllib.error.URLError(TimeoutError("timed out"))):
+            got, calls, slept = self.fetch(hang, b"{}")
+            self.assertIs(got, hang)
+            self.assertEqual((calls, slept), (1, []))
+
+    def test_three_502s_fail_after_two_waits(self):
+        got, calls, slept = self.fetch(self.refusal(502), self.refusal(502), self.refusal(502), b"{}")
+        self.assertIsInstance(got, urllib.error.HTTPError)
+        self.assertEqual((got.code, calls, slept), (502, 3, [2, 5]))
+
+    def test_morse_records_visibility_reads_through_a_502_but_not_a_404(self):
+        public = json.dumps({"visibility": "public"}).encode()
+        self.assertEqual(self.fetch(self.refusal(502), public, read=check_door.records_visibility), ("public", 2, [2]))
+        self.assertEqual(self.fetch(self.refusal(404), public, read=check_door.records_visibility), ("answers 404", 1, []))
 
 
 if __name__ == "__main__":

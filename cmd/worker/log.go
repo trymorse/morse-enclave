@@ -68,7 +68,7 @@ var messages = [...]struct {
 	upstreamAttested:      {"upstream attested", slog.LevelInfo},
 	upstreamDrifted:       {"upstream attested with drift", slog.LevelWarn},
 	upstreamRefused:       {"upstream refused", slog.LevelWarn},
-	upstreamUnpinned:      {"upstream unpinned", slog.LevelError},
+	upstreamUnpinned:      {"upstream unpinned", slog.LevelWarn},
 	upstreamRefreshFailed: {"upstream attestation refresh failed", slog.LevelWarn},
 	doorListening:         {"door listening", slog.LevelInfo},
 	doorServeFailed:       {"door serve failed", slog.LevelError},

@@ -21,6 +21,7 @@ import (
 	"morse/backend/internal/seal"
 	"morse/backend/internal/taskseal"
 	"morse/backend/internal/web"
+	"morse/backend/internal/worker/taskrun"
 )
 
 var sealedMethods = []string{http.MethodGet, http.MethodPost, http.MethodDelete}
@@ -38,15 +39,11 @@ var (
 	errSealedUnavailable = apierr.Error{Status: http.StatusServiceUnavailable, Type: "server_error", Code: "sealed_unavailable", Message: "This proxy holds no sealing key."}
 )
 
-// Sealing is what a worker opens sealed requests and task bundles with, and attests its keys by. A zero Keys seals
-// nothing.
 type Sealing struct {
 	Keys
 	Attest func(ctx context.Context) ([]byte, error)
 }
 
-// Keys is the worker's per-boot HPKE identity and the task key whose epoch names the bundles it adopts. HoldKeys is
-// the only way to hold either and refuses one without the other, so a worker holds both or neither.
 type Keys struct {
 	identity *seal.Identity
 	tasks    *taskseal.Key
@@ -90,8 +87,6 @@ type Attested struct {
 	TaskEpoch taskseal.Epoch
 }
 
-// KeyUnknown is ErrSealedKeyUnknown with Holds, the key the worker opens with now, so the relay can tell a list
-// that predates a restart from a client that sealed to a key no instance holds.
 type KeyUnknown struct{ Holds seal.KeyID }
 
 func (KeyUnknown) Error() string { return ErrSealedKeyUnknown.Error() }
@@ -102,7 +97,7 @@ type sealedState struct {
 	Sealing
 	started time.Time
 	replays seal.Replays
-	floors  bundleFloors
+	floors  taskrun.Floors
 }
 
 func (w *InProcess) Attestation(ctx context.Context) (Attested, error) {
@@ -158,8 +153,6 @@ func (w *InProcess) OpenSealed(ctx context.Context, o SealedOpening) (SealedAdmi
 	return SealedAdmission{Pattern: pattern, Admission: admitted}, nil
 }
 
-// tidyPath says a path has nothing to clean. A slash at its end isn't noise: a lookup's path is the
-// service's own, and Photon's is /api/.
 func tidyPath(p string) bool {
 	clean := path.Clean(p)
 	return p == clean || (clean != "/" && p == clean+"/")

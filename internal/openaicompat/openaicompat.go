@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"morse/backend/internal/capped"
+	"morse/backend/internal/catalog"
 	"morse/backend/internal/chat"
 	"morse/backend/internal/jsonx"
 	"morse/backend/internal/sse"
@@ -69,29 +70,12 @@ type Provider struct {
 	LimitField      LimitField
 	KeepEnvelope    bool
 	ContinuousUsage bool
-	// AnswersInReasoning marks a model that can send a whole answer as reasoning and stop with no content, as Ling 3.0
-	// Flash does when it skips its thinking. That text reaches the client as content too: in a stream, before the stop.
-	AnswersInReasoning bool
-	// ReasoningInContent marks a host that writes the model's reasoning at the head of content, ended by </think>, as
-	// Novita does for Qwen3.5 27B: the provider moves it into reasoning_content, in a stream and a whole reply, on every
-	// call that leaves thinking on.
-	ReasoningInContent bool
-	// ThinkingSwitch is the request field the host turns thinking off with when it is false, as Novita's
-	// enable_thinking, sent on every call that forwards the effort none or no effort; "" sends none.
-	ThinkingSwitch string
-	// ToolCallsFinishStop marks a host that finishes a reply that calls a tool with stop, as DeepInfra does for
-	// DeepSeek V3: the provider reports tool_calls, which a client looping on finish_reason waits for.
-	ToolCallsFinishStop bool
-	// NoTools marks a route whose model or host fails a request that offers tools, as Mistral Nemo on DeepInfra
-	// streams a blank reply with no finish_reason: the provider sends no tools, tool_choice, or parallel_tool_calls.
-	NoTools bool
-	// Admit refuses a call before it is sent, or is nil to send every call.
-	Admit func(chat.Call) error
-	// Headers adds headers to the request that carries a call, or is nil to add none.
-	Headers func(chat.Call) http.Header
-	// ChargeFields are the usage fields that carry what the vendor charged the proxy, which the client is not shown.
-	ChargeFields []string
-	Bill         func(usage json.RawMessage) (json.RawMessage, error)
+	Fixes           catalog.Fixes
+	ThinkingField   string
+	Admit           func(chat.Call) error
+	Headers         func(chat.Call) http.Header
+	ChargeFields    []string
+	Bill            func(usage json.RawMessage) (json.RawMessage, error)
 }
 
 var _ chat.Provider = (*Provider)(nil)
@@ -104,11 +88,8 @@ func (p *Provider) Stream(ctx context.Context, c chat.Call, emit func(chat.Chunk
 	if err != nil {
 		return chat.Usage{}, err
 	}
-	s := &stream{p: p, emit: emit, opened: opening{}, calls: openedCalls{}, answer: reasoningAnswer{on: p.AnswersInReasoning},
+	s := &stream{p: p, emit: emit, opened: opening{}, calls: openedCalls{}, fixes: p.replyFixes(c),
 		head: morseHead{id: chat.NewReplyID(), model: c.Model, object: "chat.completion.chunk", created: time.Now().Unix()}}
-	if p.splitsThinking(c) {
-		s.think = &thinkSplit{}
-	}
 	if err := p.Sender.Stream(ctx, body, p.headers(c), s.event); err != nil {
 		return s.usage, err
 	}
@@ -122,18 +103,15 @@ func (p *Provider) Stream(ctx context.Context, c chat.Call, emit func(chat.Chunk
 }
 
 type stream struct {
-	p    *Provider
-	head morseHead
-	emit func(chat.Chunk) error
-	// Hosts send usage on the finish chunk, on a choice-less chunk after it, on both with different counts, or on every
-	// chunk (Phala's continuous_usage_stats, Fireworks for some models); only the last is what the reply cost.
+	p      *Provider
+	head   morseHead
+	emit   func(chat.Chunk) error
 	usage  chat.Usage
 	final  []byte
 	spoke  bool
 	opened opening
 	calls  openedCalls
-	answer reasoningAnswer
-	think  *thinkSplit
+	fixes  replyFixes
 }
 
 func (s *stream) event(data []byte) (bool, error) {
@@ -157,12 +135,11 @@ func (s *stream) event(data []byte) (bool, error) {
 		r.drop("usage")
 	}
 	s.spoke = true
-	if s.think != nil {
-		if err := s.think.splitThinking(&r, deltaPart); err != nil {
-			return false, err
-		}
+	text, ok, err := s.fixes.edit(&r, deltaPart)
+	if err != nil {
+		return false, err
 	}
-	if text, ok := s.answer.answerFromReasoning(chat.NewChunk(r.kept()).Delta()); ok {
+	if ok {
 		if err := s.send(r.withContent(text)); err != nil {
 			return false, err
 		}
@@ -171,7 +148,7 @@ func (s *stream) event(data []byte) (bool, error) {
 }
 
 func (s *stream) send(r reply) error {
-	data, err := s.p.disguise(r, s.head, s.calls)
+	data, err := s.p.disguise(r, s.head, s.calls, &s.fixes)
 	if err != nil {
 		return err
 	}
@@ -192,16 +169,15 @@ func (s *stream) send(r reply) error {
 }
 
 func (s *stream) sendHeldThinking() error {
-	if s.think == nil {
+	if s.fixes.think == nil {
 		return nil
 	}
-	if r, ok := s.think.flushed(); ok {
+	if r, ok := s.fixes.think.flushed(); ok {
 		return s.send(r)
 	}
 	return nil
 }
 
-// openSilentReply opens choice 0 of a reply that spoke but sent no chunk that opened a choice.
 func (s *stream) openSilentReply() error {
 	if s.spoke && len(s.opened) == 0 && !s.p.KeepEnvelope {
 		return s.emit(chat.NewChunk(s.head.opener([]int{0})))
@@ -209,7 +185,6 @@ func (s *stream) openSilentReply() error {
 	return nil
 }
 
-// sendUsage sends the host's usage chunk, without its choices, when the call asked for usage.
 func (s *stream) sendUsage(includeUsage bool) error {
 	if !includeUsage || s.final == nil {
 		return nil
@@ -221,22 +196,42 @@ func (s *stream) sendUsage(includeUsage bool) error {
 	if r.choices > 0 {
 		r.set("choices", json.RawMessage("[]"))
 	}
-	data, err := s.p.disguise(r, s.head, s.calls)
+	data, err := s.p.disguise(r, s.head, s.calls, &s.fixes)
 	if err != nil {
 		return err
 	}
 	return s.emit(chat.NewChunk(data))
 }
 
-// reasoningAnswer is the rule for a model that can send a whole answer as reasoning and stop with no content, as Ling
-// 3.0 Flash does when it skips its thinking (AnswersInReasoning): a reply that stops having given only reasoning gives
-// that reasoning as its content too.
+type replyFixes struct {
+	think               *thinkSplit
+	answer              reasoningAnswer
+	toolCallsFinishStop bool
+}
+
+func (p *Provider) replyFixes(c chat.Call) replyFixes {
+	f := replyFixes{answer: reasoningAnswer{on: p.Fixes.AnswersInReasoning}, toolCallsFinishStop: p.Fixes.ToolCallsFinishStop}
+	if p.Fixes.ReasoningInContent && !p.turnsThinkingOff(c) {
+		f.think = &thinkSplit{}
+	}
+	return f
+}
+
+func (f *replyFixes) edit(r *reply, part answerPart) (string, bool, error) {
+	if f.think != nil {
+		if err := f.think.splitThinking(r, part); err != nil {
+			return "", false, err
+		}
+	}
+	text, ok := f.answer.answerFromReasoning(chat.NewChunk(r.kept()).Delta())
+	return text, ok, nil
+}
+
 type reasoningAnswer struct {
 	on, settled bool
 	thought     strings.Builder
 }
 
-// answerFromReasoning returns the reasoning to give as content when d stops a reply that has given only reasoning.
 func (a *reasoningAnswer) answerFromReasoning(d chat.Delta) (string, bool) {
 	if !a.on || a.settled {
 		return "", false
@@ -266,13 +261,12 @@ func (p *Provider) Complete(ctx context.Context, c chat.Call) (chat.Chunk, chat.
 	if err != nil {
 		return chat.Chunk{}, chat.Usage{}, err
 	}
-	if p.splitsThinking(c) {
-		if err := (&thinkSplit{}).splitThinking(&r, messagePart); err != nil {
-			return chat.Chunk{}, chat.Usage{}, err
-		}
+	fixes := p.replyFixes(c)
+	text, ok, err := fixes.edit(&r, messagePart)
+	if err != nil {
+		return chat.Chunk{}, chat.Usage{}, err
 	}
-	answer := reasoningAnswer{on: p.AnswersInReasoning}
-	if text, ok := answer.answerFromReasoning(chat.NewChunk(r.kept()).Delta()); ok {
+	if ok {
 		if err := r.answer(text); err != nil {
 			return chat.Chunk{}, chat.Usage{}, err
 		}
@@ -281,7 +275,7 @@ func (p *Provider) Complete(ctx context.Context, c chat.Call) (chat.Chunk, chat.
 	if r.usage != nil {
 		usage = r.usage.Domain()
 	}
-	body, err = p.disguise(r, morseHead{id: chat.NewReplyID(), model: c.Model, object: "chat.completion", created: time.Now().Unix()}, nil)
+	body, err = p.disguise(r, morseHead{id: chat.NewReplyID(), model: c.Model, object: "chat.completion", created: time.Now().Unix()}, nil, &fixes)
 	if err != nil {
 		return chat.Chunk{}, chat.Usage{}, err
 	}
@@ -309,9 +303,7 @@ type envelope struct {
 	Usage   json.RawMessage `json:"usage,omitempty"`
 }
 
-// disguise gives a reply one shape whichever host sent it. calls records the tool calls a stream has opened, and is
-// nil for a whole reply.
-func (p *Provider) disguise(r reply, h morseHead, calls openedCalls) ([]byte, error) {
+func (p *Provider) disguise(r reply, h morseHead, calls openedCalls, fixes *replyFixes) ([]byte, error) {
 	if p.KeepEnvelope {
 		return r.kept(), nil
 	}
@@ -319,17 +311,15 @@ func (p *Provider) disguise(r reply, h morseHead, calls openedCalls) ([]byte, er
 	if !ok {
 		return nil, errNotAnObject
 	}
-	choices, err := uniformChoices(choices, h.id, calls, p.ToolCallsFinishStop)
+	choices, err := uniformChoices(choices, h.id, calls, fixes)
 	if err != nil {
 		return nil, err
 	}
 	return jsonx.Encode(envelope{ID: h.id, Object: h.object, Created: h.created, Model: h.model, Choices: choices, Usage: r.uniformUsage()}), nil
 }
 
-// opening tracks which choices of a stream have had their opening delta sent.
 type opening map[int]bool
 
-// firstOf returns the choices of a disguised chunk that say something and have not been opened, and marks them opened.
 func (o opening) firstOf(data []byte) []int {
 	var c struct {
 		Choices []struct {
@@ -355,7 +345,6 @@ func (o opening) firstOf(data []byte) []int {
 	return first
 }
 
-// opener is the chunk that opens a reply for the given choices: role assistant and content "", the shape OpenAI sends.
 func (h morseHead) opener(indexes []int) []byte {
 	var choices bytes.Buffer
 	choices.WriteByte('[')
@@ -369,15 +358,9 @@ func (h morseHead) opener(indexes []int) []byte {
 	return jsonx.Encode(envelope{ID: h.id, Object: h.object, Created: h.created, Model: h.model, Choices: choices.Bytes()})
 }
 
-// answerFields are what a client sees of a delta or a message, in order. Hosts add fields of their own (Fireworks's
-// tools, Together's annotations, OpenRouter's reasoning_details) and send different nulls, which would tell a client
-// which of a tier's hosts served.
 var answerFields = []string{"role", "content", "reasoning", "reasoning_content", "refusal", "tool_calls"}
 
-// uniformChoices gives every choice one shape whichever host sent it: index, its delta or message, finish_reason, and
-// logprobs when there are any, which no request asks for. A choice's other fields (raw_output, matched_stop,
-// stop_reason, token_ids, native_finish_reason, a per-choice usage) are the host's own.
-func uniformChoices(raw json.RawMessage, replyID string, calls openedCalls, toolStop bool) (json.RawMessage, error) {
+func uniformChoices(raw json.RawMessage, replyID string, calls openedCalls, fixes *replyFixes) (json.RawMessage, error) {
 	if string(raw) == "null" {
 		return raw, nil
 	}
@@ -399,7 +382,7 @@ func uniformChoices(raw json.RawMessage, replyID string, calls openedCalls, tool
 				v = json.RawMessage("null")
 			case !ok || name == "logprobs" && isNull(v):
 				continue
-			case name == "finish_reason" && toolStop && string(v) == `"stop"` && calledTool(c, i, calls):
+			case name == "finish_reason" && fixes.toolCallsFinishStop && string(v) == `"stop"` && calledTool(c, i, calls):
 				v = json.RawMessage(`"tool_calls"`)
 			case name == "delta" || name == "message":
 				answer, err := uniformAnswer(v, name == "message", replyID, i, calls)
@@ -416,11 +399,6 @@ func uniformChoices(raw json.RawMessage, replyID string, calls openedCalls, tool
 	return out.Bytes(), nil
 }
 
-// uniformAnswer drops the empty strings hosts disagree on. A delta keeps a text field only when it has text, and never
-// carries role: the Stream opens each reply with one delta of role and content "", the shape OpenAI sends, whichever
-// way the host opened or whether it repeated role on every chunk. A message with tool_calls and no text has content
-// null. A host that sends its reasoning twice, as reasoning and reasoning_content, or with one of them empty, sends it
-// once, as reasoning_content: the first of reasoning_content and reasoning that has text.
 func uniformAnswer(raw json.RawMessage, message bool, replyID string, choice int, opened openedCalls) (json.RawMessage, error) {
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &fields); err != nil {
@@ -518,8 +496,8 @@ func (p *Provider) encode(c chat.Call, stream bool) ([]byte, error) {
 	if effort, ok := c.ForwardedEffort(); ok {
 		set["reasoning_effort"], _ = json.Marshal(effort)
 	}
-	if p.ThinkingSwitch != "" && asksNoReasoning(c) {
-		set[p.ThinkingSwitch] = json.RawMessage("false")
+	if p.turnsThinkingOff(c) {
+		set[p.ThinkingField] = json.RawMessage("false")
 	}
 	if stream {
 		set["stream"] = json.RawMessage("true")
@@ -541,7 +519,7 @@ func (p *Provider) encode(c chat.Call, stream bool) ([]byte, error) {
 		}
 	}
 	keep := slices.Concat(anonymousFields, c.Settings)
-	if p.NoTools {
+	if p.Fixes.NoTools {
 		keep = slices.DeleteFunc(keep, func(name string) bool { return slices.Contains(toolFields, name) })
 	}
 	return c.EncodeOnly(keep, set), nil

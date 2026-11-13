@@ -16,6 +16,7 @@ import (
 	"morse/backend/internal/plugins"
 	"morse/backend/internal/research"
 	"morse/backend/internal/web"
+	"morse/backend/internal/worker/taskrun"
 )
 
 type InProcess struct {
@@ -41,23 +42,17 @@ type InProcess struct {
 	mu             sync.Mutex
 	last           uint64
 	opened         map[Handle]*entry
-	// tiers are every model's tier, which a task's routes are checked against.
-	tiers map[string]catalog.Tier
-	// runs are the scheduled task runs open now, under handles from the same count as opened's.
-	runs     map[Handle]*taskRun
-	taskLife time.Duration
+	tiers          map[string]catalog.Tier
+	runs           map[Handle]*taskRun
+	taskLife       time.Duration
 }
 
-// Reporter hears what the worker notices but does not answer. Nil is NopReporter, which a reporter that hears only
-// some of it embeds.
 type Reporter interface {
 	UnknownReplyField(model, field string)
 	Failed(route string, err error)
 	LookupBusy(service string)
 	VendorRefused(model string, status int)
 	UpstreamErrorChunk(model string, code chat.ErrorCode)
-	// VendorUsageMissing is a reply sealed whole that ended with no usage the vendor counted, so it was billed
-	// on the frames relayed.
 	VendorUsageMissing(model string)
 }
 
@@ -71,9 +66,8 @@ func (NopReporter) UpstreamErrorChunk(string, chat.ErrorCode) {}
 func (NopReporter) VendorUsageMissing(string)                 {}
 
 type Config struct {
-	Models map[string]Model
-	Lookup *lookup.Relay
-	// Plugins calls the vendors' MCP servers. Only a worker in an enclave has one: its calls hold users' tokens.
+	Models        map[string]Model
+	Lookup        *lookup.Relay
 	Plugins       *plugins.Relay
 	Reports       Reporter
 	Now           func() time.Time
@@ -83,8 +77,7 @@ type Config struct {
 	VideoSubmit   time.Duration
 	ProofBudget   time.Duration
 	Unpinned      func() []attested.UnpinnedRelease
-	// PrivacyVeil serves the Veil. Nil refuses every chat that asks for it.
-	PrivacyVeil *PrivacyVeil
+	PrivacyVeil   *PrivacyVeil
 }
 
 func NewInProcess(cfg Config) (*InProcess, error) {
@@ -99,7 +92,7 @@ func NewInProcess(cfg Config) (*InProcess, error) {
 		endpoints: map[string]catalog.EndpointID{},
 		lookup:    cfg.Lookup, plugins: cfg.Plugins, reports: cfg.Reports, unpinned: cfg.Unpinned, privacyVeil: cfg.PrivacyVeil,
 		now: cfg.Now, keepaliveEvery: cmp.Or(cfg.Keepalive, keepalive), videoSubmit: cmp.Or(cfg.VideoSubmit, videoSubmitTimeout), proofBudget: cmp.Or(cfg.ProofBudget, proofBudget), opened: map[Handle]*entry{},
-		tiers: map[string]catalog.Tier{}, runs: map[Handle]*taskRun{}, taskLife: TaskRunLife,
+		tiers: map[string]catalog.Tier{}, runs: map[Handle]*taskRun{}, taskLife: taskrun.RunLife,
 	}
 	if w.now == nil {
 		w.now = time.Now

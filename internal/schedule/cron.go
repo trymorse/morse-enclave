@@ -5,8 +5,6 @@ import (
 	"time"
 )
 
-// cron is a cron of the subset contracts.md section E.2 allows: the one minute it runs at, and a bit for each hour,
-// day of the month, month, and day of the week it runs in, with Sunday at bit 0 whichever of 0 and 7 named it.
 type cron struct {
 	minute                    int
 	hours, doms, months, dows uint64
@@ -15,14 +13,12 @@ type cron struct {
 
 var fieldBounds = [5]struct{ lo, hi int }{{0, 59}, {0, 23}, {1, 31}, {1, 12}, {0, 7}}
 
-// longest is the most days each month has, February's 29 included, for cron_never.
 var longest = [13]int{1: 31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31}
 
 // searchYears bounds the search for a run. The longest an accepted cron waits for a day it runs on is eight years,
 // from one 29 February to the next across a century year that isn't a leap year, as from 2096 to 2104.
 const searchYears = 9
 
-// readCron reads a preset's or a custom cron by E.5 rows 6 to 10, in order.
 func readCron(k Kind, text string) (cron, error) {
 	if len(text) > MaxCron {
 		return cron{}, Error{CodeCronSyntax}
@@ -57,9 +53,6 @@ func readCron(k Kind, text string) (cron, error) {
 
 type item struct{ from, to, step int }
 
-// readField reads one field into a bit per value it allows. A field that doesn't parse is cron_syntax, whatever
-// else is wrong with it; one that parses but names a value outside lo to hi, a range that runs backwards, or a step
-// of 0 is cron_range.
 func readField(field string, lo, hi int) (uint64, error) {
 	if field == "*" {
 		return span(lo, hi, 1), nil
@@ -82,7 +75,6 @@ func readField(field string, lo, hi int) (uint64, error) {
 	return set, nil
 }
 
-// readItem reads number, number "-" number ["/" step], or "*/" step.
 func readItem(text string, lo, hi int) (item, bool) {
 	if step, ok := strings.CutPrefix(text, "*/"); ok {
 		n, ok := number(step)
@@ -103,7 +95,6 @@ func readItem(text string, lo, hi int) (item, bool) {
 	return item{a, b, n}, okA && okB && okN
 }
 
-// number reads one or two ASCII digits.
 func number(text string) (int, bool) {
 	if len(text) < 1 || len(text) > 2 {
 		return 0, false
@@ -126,7 +117,6 @@ func span(from, to, step int) uint64 {
 	return set
 }
 
-// shaped is whether a preset's cron has its preset's shape (E.3). The minute is a single number by now.
 func shaped(k Kind, fields []string) bool {
 	_, oneHour := number(fields[1])
 	everyDay := fields[2] == "*" && fields[3] == "*"
@@ -144,7 +134,6 @@ func shaped(k Kind, fields []string) bool {
 	return true
 }
 
-// never is whether none of the days of the month the cron names comes in any month it names.
 func (c cron) never() bool {
 	if c.everyDom {
 		return false
@@ -161,12 +150,7 @@ func (c cron) runsOn(day time.Time) bool {
 	return c.months&(1<<int(day.Month())) != 0 && (c.everyDom || c.doms&(1<<day.Day()) != 0) && (c.everyDow || c.dows&(1<<int(day.Weekday())) != 0)
 }
 
-// next is the cron's first run strictly after after (E.6): taking the days it runs on in order and each of its
-// hours at its minute, the first instant resolve gives that is after after. Wall order decides, not instant order,
-// so a skipped time that lands on a later listed time is that time's instant and runs once. E.6 also drops an
-// instant at or before the one before it, which never changes which run comes first: the instant before the first
-// one after after is at or before after. The days start the day before after's, so a time a forward change carried
-// past midnight is not missed.
+// The days start the day before after's, so a time a forward change carried past midnight is not missed.
 func (c cron) next(loc *time.Location, after time.Time) (time.Time, bool) {
 	y, m, d := after.In(loc).Date()
 	day := time.Date(y, m, d-1, 0, 0, 0, 0, time.UTC)

@@ -9,9 +9,6 @@ import (
 	"time"
 )
 
-// slowNext is cron.next the slow way: every day from the day before after's, one at a time, each of the cron's
-// hours at its minute, turned to an instant by slowInstant, an instant at or before after or the one before it
-// dropped.
 func slowNext(c cron, loc *time.Location, after time.Time, days int) (time.Time, bool) {
 	y, m, d := after.In(loc).Date()
 	var prev time.Time
@@ -39,9 +36,6 @@ func (c cron) matches(wall time.Time) bool {
 	return wall.Minute() == c.minute && c.hours&(1<<wall.Hour()) != 0 && c.runsOn(wall)
 }
 
-// onItsWallTime is whether a run is the instant one of the cron's wall times names by E.4, checked from the run's
-// side: it shows a wall time the cron lists and no instant in the three hours before showed it, or it lies in the
-// gap a forward change opened and under the offset before the change it names a wall time the cron lists.
 func onItsWallTime(c cron, loc *time.Location, run time.Time) bool {
 	wall := wallOf(run, loc)
 	firstPass := true
@@ -81,8 +75,6 @@ func randomField(rng *rand.Rand, min, max int) string {
 	return strings.Join(items, ",")
 }
 
-// randomCron is a custom cron Parse accepts: mostly every day, often every hour, so most runs fall near a change of
-// clock when one is near.
 func randomCron(rng *rand.Rand) string {
 	minute := strconv.Itoa(rng.IntN(60))
 	if rng.IntN(8) == 0 {
@@ -104,11 +96,6 @@ func randomCron(rng *rand.Rand) string {
 	return strings.Join([]string{minute, hour, dom, month, dow}, " ")
 }
 
-// TestRandomCronsRunInOrderOnTheirWallTimesAndNoMoreThanHourly draws crons and zones, starts each within 14 hours
-// before one of the zone's changes of clock, and checks each of 16 runs: that it comes after the one
-// before; that it is at least an hour after it, or an hour less the rise when the clocks went forward by less
-// than an hour between them (Lord Howe's half hour); that it is the instant E.4 gives one of the cron's wall times;
-// and that the slow search finds the same run.
 func TestRandomCronsRunInOrderOnTheirWallTimesAndNoMoreThanHourly(t *testing.T) {
 	rng := rand.New(rand.NewPCG(2026, 1027))
 	from, to := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), time.Date(2028, 1, 1, 0, 0, 0, 0, time.UTC)

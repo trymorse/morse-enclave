@@ -1,4 +1,4 @@
-package worker
+package taskrun
 
 import (
 	"encoding/json"
@@ -10,35 +10,36 @@ import (
 	"unicode/utf8"
 
 	"morse/backend/internal/jsonx"
+	"morse/backend/internal/taskmode"
 	"morse/backend/internal/web"
 )
-
-// A run's web tools, as the app's own agent has them (src/lib/tools/web.ts): web_search through the mode's search
-// route and read_page through its extract route, the same output caps, and read_page opening only pages the task's
-// prompt or an earlier result showed, so text injected into a page can't send the run to a URL of its making.
 
 const (
 	webSearchName = "web_search"
 	readPageName  = "read_page"
 
-	maxSearchQuery = 200
-	maxObjective   = 500
-	maxHits        = 10
-	maxHitTitle    = 200
-	maxHitExcerpt  = 1_500
-	maxListing     = 6_000
-	maxPageURL     = 2_048
-	maxPageText    = 12_000
-	maxSourceTitle = 200
-	// maxCallsPerPass bounds the calls one pass replays; the run's tool limits stop them running long before.
-	maxCallsPerPass = MaxTaskSearches + MaxTaskReads
+	maxSearchQuery  = 200
+	maxObjective    = 500
+	maxHits         = 10
+	maxHitTitle     = 200
+	maxHitExcerpt   = 1_500
+	maxListing      = 6_000
+	maxPageURL      = 2_048
+	maxPageText     = 12_000
+	maxSourceTitle  = 200
+	maxCallsPerPass = MaxSearches + MaxReads
 )
 
-// taskToolRoutes are the routes a mode's web tools go through, chosen by the worker, never by the relay: Anonymous
-// tasks use Parallel's own routes, Private ones the routes Morse's zero data retention agreement covers.
-var taskToolRoutes = map[TaskMode]struct{ search, fetch string }{
-	TaskAnon:    {"parallel-search", "parallel-extract"},
-	TaskPrivate: {"parallel-search-zdr", "parallel-extract-zdr"},
+type Tools struct{ Search, Fetch string }
+
+func ToolRoutes(m taskmode.Mode) (Tools, bool) {
+	t, ok := toolRoutes[m]
+	return t, ok
+}
+
+var toolRoutes = map[taskmode.Mode]Tools{
+	taskmode.Anon:    {"parallel-search", "parallel-extract"},
+	taskmode.Private: {"parallel-search-zdr", "parallel-extract-zdr"},
 }
 
 type toolFunction struct {
@@ -70,8 +71,6 @@ func readPageSpec() json.RawMessage {
 	return jsonx.Encode(toolSpec{Type: "function", Function: toolFunction{Name: readPageName, Description: description, Parameters: json.RawMessage(readPageParameters)}})
 }
 
-// toolError is a call's result when it failed, as the app words one, so the model reads what went wrong and can
-// correct it.
 func toolError(message string) string { return "Error: " + message }
 
 type searchArgs struct {
@@ -79,7 +78,6 @@ type searchArgs struct {
 	Objective *string  `json:"objective,omitempty"`
 }
 
-// readSearchArgs reads web_search's arguments as the app's tool takes them, or says what is wrong with them.
 func readSearchArgs(args string) (searchArgs, string) {
 	fields, problem := argsObject(args)
 	if problem != "" {
@@ -108,7 +106,6 @@ func readSearchArgs(args string) (searchArgs, string) {
 	return a, ""
 }
 
-// readPageArgs reads read_page's URL argument, or says what is wrong with it.
 func readPageArgs(args string) (string, string) {
 	fields, problem := argsObject(args)
 	if problem != "" {
@@ -132,7 +129,6 @@ func argsObject(args string) (map[string]json.RawMessage, string) {
 	return fields, ""
 }
 
-// openable is raw as a page a tool may open, http(s) with no username or password in it, or why it isn't one.
 func openable(raw string) (*url.URL, string) {
 	u, err := url.Parse(strings.TrimSpace(raw))
 	switch {
@@ -148,8 +144,6 @@ func openable(raw string) (*url.URL, string) {
 	return u, ""
 }
 
-// pageKey is one page's spelling for comparison: the fragment never reaches the server, scheme and host compare in
-// lower case without their default port, and a path is the same page with or without its trailing slash.
 func pageKey(raw string) (string, bool) {
 	u, err := url.Parse(raw)
 	if err != nil || u.Host == "" {
@@ -178,8 +172,6 @@ var (
 	proseTrailing = regexp.MustCompile(`[.,;:!?\]}*_]+$`)
 )
 
-// urlsIn are the pages absolute URLs in text name, by key, without the punctuation of the prose around them. A closing
-// parenthesis stays when it closes one in the URL, as in GFM autolinks.
 func urlsIn(text string) []string {
 	var keys []string
 	for _, raw := range urlInText.FindAllString(text, -1) {
@@ -194,9 +186,6 @@ func urlsIn(text string) []string {
 	return keys
 }
 
-// wasShown reports whether the prompt or a result showed the page u names. Only these exact pages pass: a variant
-// that differs in its query or path could carry the run to whoever runs the server. URLs are read out of prose, where
-// a closing parenthesis usually ends a sentence, so a key may lack parentheses the shown URL left open.
 func wasShown(u *url.URL, seen map[string]bool) bool {
 	key, ok := pageKey(u.String())
 	if !ok {
@@ -215,10 +204,8 @@ var (
 	isDay      = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
 )
 
-// oneLine is text on one line, without control characters.
 func oneLine(text string) string { return strings.TrimSpace(lineBreaks.ReplaceAllString(text, " ")) }
 
-// cutText is text cut to max runes, saying so with an ellipsis, as the app's cut does.
 func cutText(text string, max int) string {
 	if runes(text) <= max {
 		return text
@@ -229,7 +216,6 @@ func cutText(text string, max int) string {
 	return strings.TrimRightFunc(cutRunes(text, max-1), func(r rune) bool { return r == ' ' || r == '\t' || r == '\n' }) + "…"
 }
 
-// clip cuts text to max runes, saying so, so the model knows there was more.
 func clip(text string, max int) string {
 	n := runes(text)
 	if n <= max {
@@ -246,8 +232,6 @@ func thousands(n int) string {
 	return s
 }
 
-// hitKey is how one search result compares with another: a page can be listed under http and https, with or
-// without www. and a trailing slash.
 func hitKey(u *url.URL) string {
 	return strings.TrimPrefix(strings.ToLower(u.Hostname()), "www.") + strings.TrimSuffix(u.EscapedPath(), "/") + queryOf(u)
 }
@@ -283,9 +267,7 @@ type pageReply struct {
 	Truncated bool    `json:"truncated"`
 }
 
-// searchOutput is what the model reads of a search's reply, and the results it lists, which become the run's
-// sources and pages read_page may open.
-func searchOutput(body []byte) (string, []TaskSource) {
+func searchOutput(body []byte) (string, []Source) {
 	var reply searchReply
 	if json.Unmarshal(body, &reply) != nil {
 		return toolError("the search provider sent a reply Morse couldn't read. Try again, or rephrase the queries."), nil
@@ -313,15 +295,13 @@ func searchOutput(body []byte) (string, []TaskSource) {
 		return "No results for those queries. Try other or fewer keywords.", nil
 	}
 	listed := listing(hits)
-	sources := make([]TaskSource, len(listed))
+	sources := make([]Source, len(listed))
 	for i, hit := range listed {
-		sources[i] = TaskSource{URL: hit.URL, Title: hit.Title}
+		sources[i] = Source{URL: hit.URL, Title: hit.Title}
 	}
 	return string(jsonx.Encode(listed)), sources
 }
 
-// listing is hits as the model reads them, within maxListing: the excerpts share the room the titles and URLs
-// leave, and the last results go if escaping still overflows it.
 func listing(hits []searchHit) []searchHit {
 	bare := make([]searchHit, len(hits))
 	for i, hit := range hits {
@@ -341,9 +321,7 @@ func listing(hits []searchHit) []searchHit {
 	return listed
 }
 
-// pageOutput is what the model reads of a page read_page opened at u, and the page as a source, or why it has
-// nothing to read.
-func pageOutput(u *url.URL, body []byte) (string, *TaskSource) {
+func pageOutput(u *url.URL, body []byte) (string, *Source) {
 	var page pageReply
 	host := u.Hostname()
 	if json.Unmarshal(body, &page) != nil {
@@ -365,10 +343,9 @@ func pageOutput(u *url.URL, body []byte) (string, *TaskSource) {
 	if page.Truncated {
 		lines = append(lines, "[The reader cut the page short.]")
 	}
-	return strings.Join(lines, "\n"), &TaskSource{URL: u.String(), Title: title}
+	return strings.Join(lines, "\n"), &Source{URL: u.String(), Title: title}
 }
 
-// callFailed is a tool step's result when its call failed, worded by the refusal a client would have seen.
 func callFailed(name string, u *url.URL, code string) string {
 	if name == webSearchName {
 		switch code {
@@ -400,19 +377,14 @@ func deref(s *string) string {
 	return *s
 }
 
-// zwsp breaks a mark, written after a tag's "<" or "</", or after a heading's first word.
 const zwsp = "\u200b"
 
 var (
-	// Every tool-call dialect's tags, as the app's src/lib/tool-protocol/dialects.ts lists them, and the run's own
-	// last_result block.
 	dialectTags  = regexp.MustCompile(`(?i)<(/?)(tool_call\||tool_response\||tool_call|tool_response|tool_result|arg_key|arg_value|function|parameter|unbound_|last_result|\|tool|tool\||\|"\||\|turn|turn\||\|channel|channel\|)`)
 	dialectToken = regexp.MustCompile(`<(/?)([|｜])([\w▁]+[|｜])`)
 	dialectHeads = regexp.MustCompile(`(?m)^(##|Result)( Return of| of call)`)
 )
 
-// defang breaks the marks of every tool-call dialect in text a model reads as data: a page can't close the result it
-// is in, pose as the model, or open a call in a template that writes results as text.
 func defang(text string) string {
 	text = dialectTags.ReplaceAllString(text, "<${1}"+zwsp+"${2}")
 	text = dialectToken.ReplaceAllString(text, "<${1}"+zwsp+"${2}${3}")
@@ -425,20 +397,19 @@ func defang(text string) string {
 	})
 }
 
-// taskSources are the pages a run used: those its read_page calls opened, then its search results, each page once.
-type taskSources struct{ read, found []TaskSource }
+type sources struct{ read, found []Source }
 
-func (s taskSources) list() []TaskSource {
-	var out []TaskSource
+func (s sources) list() []Source {
+	var out []Source
 	seen := map[string]bool{}
-	for _, source := range append(append([]TaskSource{}, s.read...), s.found...) {
+	for _, source := range append(append([]Source{}, s.read...), s.found...) {
 		key, ok := pageKey(source.URL)
 		if !ok || seen[key] || len(source.URL) > maxPageURL || !utf8.ValidString(source.Title) {
 			continue
 		}
 		seen[key] = true
-		out = append(out, TaskSource{URL: source.URL, Title: cutRunes(source.Title, maxSourceTitle)})
-		if len(out) == MaxTaskSources {
+		out = append(out, Source{URL: source.URL, Title: cutRunes(source.Title, maxSourceTitle)})
+		if len(out) == MaxSources {
 			break
 		}
 	}

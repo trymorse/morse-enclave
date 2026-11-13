@@ -42,19 +42,16 @@ func newLimitCut(ctx context.Context, r chatRoute, c chat.Call) *limitCut {
 	return l
 }
 
-// wrap passes each chunk to emit until the reply reaches the limit, then sends the chunk that ends it and returns
-// errAtLimit. A chunk that ends the reply at the limit by itself is the reply's own end, so every chunk after it, such
-// as the host's usage, passes as it is.
 func (l *limitCut) wrap(emit func(chat.Chunk) error) func(chat.Chunk) error {
 	if l == nil {
 		return emit
 	}
 	return func(c chat.Chunk) error {
-		if l.finished {
-			return emit(c)
-		}
 		d := c.Delta()
 		n := l.tokens(d)
+		if l.finished && n == 0 {
+			return emit(c)
+		}
 		if l.used+n > l.limit {
 			return l.end(emit, c)
 		}
@@ -75,6 +72,9 @@ func (l *limitCut) wrap(emit func(chat.Chunk) error) func(chat.Chunk) error {
 
 func (l *limitCut) end(emit func(chat.Chunk) error, c chat.Chunk) error {
 	l.reached = true
+	if l.finished {
+		return errAtLimit
+	}
 	if err := emit(c.Ending(chat.FinishLength)); err != nil {
 		return err
 	}

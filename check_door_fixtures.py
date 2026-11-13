@@ -1,7 +1,7 @@
 """Fixtures for test_check_door.py, test_rekor.py and test_signer.py: AWS Nitro documents under a test root, a fake Rekor v2 shard
 with its tiles and witnesses, a fake TUF repository, a CA with an OCSP responder and a CRL, local morse-pins, morse-records
 and morse-enclave repositories, and for check 7 a statements branch, GitHub's activity and runs listings, and a fake bundle
-verifier. It loads check-door.py, which loads rekor.py, signer.py and signer_watch.py, and refuses the network to every test that imports it.
+verifier. It loads check-door.py, which loads rekor.py, door_records.py, door_checks.py, signer.py and signer_watch.py, and refuses the network to every test that imports it.
 """
 
 import base64
@@ -45,7 +45,6 @@ GTS = ("pki.goog", "https://dv.acme-v02.api.pki.goog/account/2")
 CAA = [f'0 issue "{ca}; accounturi={uri}; validationmethods=dns-01"' for ca, uri in (LE, GTS)] + ['0 issuewild ";"', '0 iodef "mailto:security@trymorse.ai"']
 SOURCE = next(p for p in (HERE, HERE.parents[2]) if (p / "go.mod").exists())
 REAL_DOCUMENT = SOURCE / "internal/nitro/verify/testdata/nitro_document.b64"
-# The Go twin's golden lives beside internal/door/watch, which the morse-enclave export leaves out.
 TWIN = SOURCE / "internal/door/watch/testdata/twin.json" if SOURCE != HERE else None
 WATCHER_TRUST = SOURCE / "internal/door/testdata/watcher_trust.json" if SOURCE != HERE else None
 ORIGIN = "log.test.example"
@@ -57,7 +56,6 @@ def refuse_network(*args, **kwargs):
     raise AssertionError("the tests must not reach the network")
 
 
-# No test that imports these fixtures can reach the network.
 urllib.request.urlopen = refuse_network
 
 
@@ -198,7 +196,7 @@ def sealed(doc, born, sender, floor):
     key = SIGNERS.get(payload["certificate"])
     if key is None:
         return doc
-    payload["nonce"] = check_door.origin_nonce(hashlib.sha256(payload["public_key"]).hexdigest(), born, sender, floor)
+    payload["nonce"] = check_door.records.origin_nonce(hashlib.sha256(payload["public_key"]).hexdigest(), born, sender, floor)
     return sign(cbor2.dumps(payload), key)
 
 
@@ -227,8 +225,6 @@ def key_id(hpke):
     return hashlib.sha256(hpke).hexdigest()[:16]
 
 
-# Rekor v2, written here apart from check-door.py's reader: RFC 9162 trees, C2SP signed notes, cosignature/v1 and
-# tlog-tiles, and the hashedrekord v0.0.2 body.
 
 
 def leaf(body):
@@ -371,7 +367,7 @@ def der_octet(raw):
     return b"\x04" + length + raw
 
 
-def record_certificate(record, oid=check_door.RECORD_OID):
+def record_certificate(record, oid=check_door.records.RECORD_OID):
     key = ec.generate_private_key(ec.SECP256R1())
     raw = record if isinstance(record, bytes) else json.dumps(record, separators=(",", ":")).encode()
     cert = (
@@ -400,11 +396,9 @@ def git(directory, *args, committed=None, authored=None):
                           check=True, capture_output=True, env=env, text=True).stdout
 
 
-# morse-enclave checkouts, built once for each set of tags.
 TEMPLATES = tempfile.TemporaryDirectory()
 ENCLAVES = {}
 
-# The signer's code in every morse-pins this file builds, and the .github tree check 7 allows for it.
 SIGN_YML = "name: sign\n"
 
 
@@ -491,7 +485,7 @@ class Door:
             spki_sha256, boot = hashlib.sha256(payload["public_key"]).hexdigest(), key_id(payload["user_data"][-32:])
         except Exception:
             spki_sha256, boot = "0" * 64, "0" * 16
-        index = log.add(hashed_rekord(digest or check_door.record_digest(spki_sha256), certificate_der or record_certificate(record)))
+        index = log.add(hashed_rekord(digest or check_door.records.record_digest(spki_sha256), certificate_der or record_certificate(record)))
         if point:
             self.pointers.append(pointer or {"log": log.origin, "index": index, "spki_sha256": spki_sha256, "boot": boot})
         return index
@@ -649,11 +643,14 @@ class Door:
     def trusted_root(self):
         return json.dumps({"mediaType": "application/vnd.dev.sigstore.trustedroot+json;version=0.1", "tlogs": [log.tlog() for log in self.logs] + self.extra_tlogs}).encode()
 
+    def read_github(self, url, headers):
+        if url != check_door.checks.RECORDS_REPO_URL or "Authorization" in headers:
+            raise AssertionError(f"the test reaches {url} with {headers}")
+        if isinstance(self.visibility, int):
+            raise urllib.error.HTTPError(url, self.visibility, "status", {}, None)
+        return json.dumps({"visibility": self.visibility, "private": self.visibility != "public"}).encode(), {}
+
     def fetch(self, url):
-        if url == check_door.RECORDS_REPO_URL:
-            if isinstance(self.visibility, int):
-                raise urllib.error.HTTPError(url, self.visibility, "status", {}, None)
-            return json.dumps({"visibility": self.visibility, "private": self.visibility != "public"}).encode()
         for log in self.logs:
             if url.startswith(f"https://{log.origin}/api/v2/"):
                 return log.serve(url.removeprefix(f"https://{log.origin}/api/v2/"), url)
@@ -703,7 +700,7 @@ class Door:
         out = io.StringIO()
         root = unittest.mock.patch.object(check_door, "read_trusted_root", lambda cache: self.trusted_root()) if trusted_root else contextlib.nullcontext()
         github = [unittest.mock.patch.object(check_door.signer_watch, "fetch_github", self.fetch_github), unittest.mock.patch.object(check_door.signer_watch, "ACTIVITY_LAG", 0)]
-        with contextlib.redirect_stdout(out), unittest.mock.patch.object(check_door, "fetch", self.fetch), root, github[0], github[1]:
+        with contextlib.redirect_stdout(out), unittest.mock.patch.object(check_door, "fetch", self.fetch), unittest.mock.patch.object(check_door, "read_github", self.read_github), root, github[0], github[1]:
             try:
                 check_door.main(argv)
             except SystemExit as e:

@@ -2,8 +2,6 @@ package schedule
 
 import "time"
 
-// reach bounds how far from a wall time, read as if in UTC, the instants it names and the changes of clock that
-// skip it lie. No zone's offset comes near it.
 const reach = 36 * time.Hour
 
 // resolve is the instant a wall time names in loc, by contracts.md section E.4. wall is the wall time read as if in
@@ -11,9 +9,6 @@ const reach = 36 * time.Hour
 // skip it, as they go forward, the instant it names under the offset in force just before the skip, which the
 // clocks show as the wall time plus the skip's length. time.Date promises none of these, and on Go 1.27.3 it gives
 // the later pass of a repeat in London and an instant on the wrong day for Santiago's midnight skip.
-//
-// It walks the zone's periods in order: the first that holds the instant the wall time names under its own offset
-// holds the earliest, and a wall time no period holds lies in the gap a forward change opens.
 func resolve(loc *time.Location, wall time.Time) time.Time {
 	var (
 		skip      time.Time

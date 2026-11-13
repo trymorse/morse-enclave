@@ -6,6 +6,7 @@ import (
 	"net/url"
 
 	"morse/backend/internal/plugins"
+	"morse/backend/internal/worker/taskrun"
 )
 
 const (
@@ -49,10 +50,10 @@ var sealableRoutes = []struct {
 	{PluginTokenPattern, pluginOpener(plugins.KindToken)},
 	{PluginRevokePattern, pluginOpener(plugins.KindRevoke)},
 	{TasksPattern, func(w *InProcess, o Opening, _ func(string) string) (Admission, error) {
-		return w.openTask(o, bundleRoute{})
+		return w.openTask(o, taskrun.BundleRoute{})
 	}},
 	{TaskBundlePattern, func(w *InProcess, o Opening, pathValue func(string) string) (Admission, error) {
-		return w.openTask(o, bundleRoute{replaces: true, pathID: pathValue("id")})
+		return w.openTask(o, taskrun.BundleRoute{Replaces: true, PathID: pathValue("id")})
 	}},
 }
 

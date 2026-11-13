@@ -9,26 +9,25 @@ import (
 )
 
 type common struct {
-	Model         string       `json:"model"`
-	Tier          string       `json:"tier"`
-	Attester      string       `json:"attester"`
-	BaseURL       string       `json:"base_url"`
-	UpstreamModel string       `json:"upstream_model"`
-	APIKeyEnv     string       `json:"api_key_env"`
-	Provider      string       `json:"provider"`
-	ProviderName  string       `json:"provider_name"`
-	Label         string       `json:"label"`
-	OwnedBy       string       `json:"owned_by"`
-	Lab           string       `json:"lab"`
-	OpenWeights   bool         `json:"open_weights"`
-	Retention     string       `json:"retention"`
-	Kind          catalog.Kind `json:"kind"`
-	Included      *Included    `json:"included"`
-	RequiresPlan  string       `json:"requires_plan"`
-	AppOnly       bool         `json:"app_only"`
-	RebateShare   *int64       `json:"rebate_share_bps"`
-	// OnBehalfOf is set by Flatten on an on-behalf endpoint's route, which it builds from the sealed endpoint it names.
-	OnBehalfOf catalog.EndpointID `json:"on_behalf_of"`
+	Model         string             `json:"model"`
+	Tier          string             `json:"tier"`
+	Attester      string             `json:"attester"`
+	BaseURL       string             `json:"base_url"`
+	UpstreamModel string             `json:"upstream_model"`
+	APIKeyEnv     string             `json:"api_key_env"`
+	Provider      string             `json:"provider"`
+	ProviderName  string             `json:"provider_name"`
+	Label         string             `json:"label"`
+	OwnedBy       string             `json:"owned_by"`
+	Lab           string             `json:"lab"`
+	OpenWeights   bool               `json:"open_weights"`
+	Retention     string             `json:"retention"`
+	Kind          catalog.Kind       `json:"kind"`
+	Included      *Included          `json:"included"`
+	RequiresPlan  string             `json:"requires_plan"`
+	AppOnly       bool               `json:"app_only"`
+	RebateShare   *int64             `json:"rebate_share_bps"`
+	OnBehalfOf    catalog.EndpointID `json:"on_behalf_of"`
 }
 
 type marked struct {
@@ -49,6 +48,7 @@ func (m marked) markup(defaultMarkup money.Markup) (money.Markup, error) {
 type chatRoute struct {
 	common
 	marked
+	catalog.Fixes
 	Price                  *tokenPrice `json:"price"`
 	MaxOutputTokens        int         `json:"max_output_tokens"`
 	DefaultMaxTokens       int         `json:"default_max_tokens"`
@@ -60,11 +60,8 @@ type chatRoute struct {
 	Tokenizer              string      `json:"tokenizer"`
 	OpenRouterID           string      `json:"openrouter_id"`
 	HidesReasoning         bool        `json:"hides_reasoning"`
-	AnswersInReasoning     bool        `json:"answers_in_reasoning"`
-	ReasoningInContent     bool        `json:"reasoning_in_content"`
-	ThinkingOffSwitch      bool        `json:"thinking_off_switch"`
-	ToolCallsFinishStop    bool        `json:"tool_calls_finish_stop"`
 	Tools                  *bool       `json:"tools"`
+	Characters             *bool       `json:"characters"`
 	HiddenReasoningTPS     int         `json:"hidden_reasoning_tps"`
 	DecodeMaxTPS           int         `json:"decode_max_tps"`
 	Quantization           string      `json:"quantization"`

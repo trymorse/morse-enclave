@@ -1,7 +1,7 @@
 """Check 7 of check-door.py, which loads this file: the public image signer, sign.yml in trymorse/morse-pins. It reads
 GitHub's record of who pushed morse-pins main and which sign.yml runs there were, the .github trees on main, and the
 statements branch, whose statements signer.py verifies. check-door.py supplies git, descends, Note, Unenforced,
-signer and rekor before it runs this file."""
+read_github, signer and rekor before it runs this file."""
 
 import json
 import os
@@ -50,9 +50,9 @@ def fetch_github(url):
     headers = {"User-Agent": "check-door", "Accept": "application/vnd.github+json"}
     if os.environ.get("GH_TOKEN"):
         headers["Authorization"] = f"Bearer {os.environ['GH_TOKEN']}"
-    with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=60) as reply:
-        link = re.search(r'<([^>]+)>;\s*rel="next"', reply.headers.get("Link") or "")
-        return reply.read(), link and link[1]
+    body, reply_headers = read_github(url, headers)
+    link = re.search(r'<([^>]+)>;\s*rel="next"', reply_headers.get("Link") or "")
+    return body, link and link[1]
 
 
 def read_listing(url, items=lambda body: body, until=lambda item: False):

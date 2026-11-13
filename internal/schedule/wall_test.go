@@ -4,7 +4,6 @@ import (
 	"math/rand/v2"
 	"testing"
 	"time"
-	_ "time/tzdata"
 )
 
 func zone(t testing.TB, tz string) *time.Location {
@@ -25,7 +24,6 @@ func utc(t testing.TB, text string) time.Time {
 	return at.UTC()
 }
 
-// wallAt reads "2006-01-02 15:04" as a wall time, as if in UTC.
 func wallAt(t testing.TB, text string) time.Time {
 	t.Helper()
 	at, err := time.Parse("2006-01-02 15:04", text)
@@ -35,7 +33,6 @@ func wallAt(t testing.TB, text string) time.Time {
 	return at
 }
 
-// wallOf is the wall time an instant shows in loc, to the minute, read as if in UTC.
 func wallOf(at time.Time, loc *time.Location) time.Time {
 	l := at.In(loc)
 	y, m, d := l.Date()
@@ -43,11 +40,6 @@ func wallOf(at time.Time, loc *time.Location) time.Time {
 	return time.Date(y, m, d, h, mi, 0, 0, time.UTC)
 }
 
-// slowInstant is resolve the slow way, without zone bounds: the earliest instant within 16 hours either side that
-// shows the wall time, trying every whole quarter hour of offset (every offset the test zones use from 2026 on is
-// one); else, for a skipped wall time, the instant it names under the offset in force just before the clocks
-// jumped past it. Stepping by quarter hours keeps every wall time read on the wall time's own quarter-hour grid, so
-// a step can only pass over it by jumping.
 func slowInstant(loc *time.Location, wall time.Time) time.Time {
 	for quarters := 16 * 4; quarters >= -16*4; quarters-- {
 		at := wall.Add(-time.Duration(quarters) * 15 * time.Minute)
@@ -64,8 +56,6 @@ func slowInstant(loc *time.Location, wall time.Time) time.Time {
 	panic("no instant shows " + wall.Format(time.DateTime) + " in " + loc.String() + ", and the clocks never jump past it")
 }
 
-// Hand-worked from each zone's 2026 and 2027 changes of clock: the minute before each gap or repeat, its first and
-// last minutes, and the minute after. contracts.md section E.4's three worked examples are among them.
 var wallInstants = []struct{ tz, wall, want string }{
 	{"America/New_York", "2026-03-08 01:59", "2026-03-08T06:59:00Z"},
 	{"America/New_York", "2026-03-08 02:00", "2026-03-08T07:00:00Z"},
@@ -143,9 +133,6 @@ func TestAWallTimeNamesItsOnlyInstantItsFirstPassOrItsTimeUnderTheOffsetBeforeTh
 	}
 }
 
-// These are the zones the property tests draw from: the six the contract names, and others whose clocks change
-// in ways theirs don't: at midnight, by two hours, by half an hour, on Ramadan's dates, into negative DST, and not
-// at all, at the ends of the offsets.
 var testZones = []string{
 	"America/New_York", "Europe/London", "Australia/Lord_Howe", "Asia/Kolkata", "America/Santiago", "Pacific/Chatham",
 	"UTC", "America/Los_Angeles", "America/St_Johns", "America/Havana", "America/Nuuk", "America/Scoresbysund",
@@ -155,7 +142,6 @@ var testZones = []string{
 	"Antarctica/Troll", "Etc/GMT+12", "Etc/GMT-14",
 }
 
-// changes lists the instants loc's offset changes at from from to to.
 func changes(loc *time.Location, from, to time.Time) []time.Time {
 	var out []time.Time
 	for at := from.In(loc); ; {
@@ -193,7 +179,6 @@ func TestResolveAgreesWithTheSlowSearchAroundEveryChangeOfClockInTheTestZones(t 
 	}
 }
 
-// Where the clocks show a wall time exactly once, time.Date has no choice to make, so resolve must agree with it.
 func TestResolveIsTimeDateWhereTheClocksShowAWallTimeOnce(t *testing.T) {
 	rng := rand.New(rand.NewPCG(27, 10))
 	for range 2000 {

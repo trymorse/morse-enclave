@@ -21,8 +21,6 @@ from datetime import datetime, timedelta, timezone
 from cryptography import x509
 from cryptography.hazmat.primitives.asymmetric import ec, ed25519
 
-# check_door_fixtures.py sits beside this file. Nothing here writes bytecode, so a run leaves no __pycache__
-# among the files the export copies.
 sys.dont_write_bytecode = True
 from check_door_fixtures import *  # noqa: E402,F403
 
@@ -295,9 +293,9 @@ class WitnessesTest(Fixture):
         door, module = json.loads(WATCHER_TRUST.read_text()), self.real_module()
         self.assertEqual(module.WITNESS_K, door["witness_k"])
         self.assertEqual([list(w) for w in module.WITNESSES], door["witnesses"])
-        self.assertEqual(module.RECORD_OID, door["record_oid"])
-        self.assertEqual(module.RECORD_TYPE, door["record_type"])
-        self.assertEqual(module.MAX_KEY_AGE, timedelta(days=door["max_key_age_days"]))
+        self.assertEqual(module.records.RECORD_OID, door["record_oid"])
+        self.assertEqual(module.records.RECORD_TYPE, door["record_type"])
+        self.assertEqual(module.checks.MAX_KEY_AGE, timedelta(days=door["max_key_age_days"]))
         self.assertEqual(module.TUF_ROOT, door["tuf_root_version"])
         self.assertEqual(module.TUF_ROOT_SHA256, door["tuf_root_sha256"])
 
@@ -322,7 +320,7 @@ class RekorTest(unittest.TestCase):
         self.hpke = bytes([11]) * 32
         self.pins = [{"environment": "prod", "pcr0": PROD_PCRS[0].hex(), "pcr1": PROD_PCRS[1].hex(), "pcr2": PROD_PCRS[2].hex(), "revoked": False, "tag": "v1"}]
         self.record = Door.record(None, document(self.hpke, self.tls), None, 7)
-        self.index = self.log.add(hashed_rekord(check_door.record_digest(spki_hex(self.tls)), record_certificate(self.record)))
+        self.index = self.log.add(hashed_rekord(check_door.records.record_digest(spki_hex(self.tls)), record_certificate(self.record)))
         self.log.add(b"another")
         self.policy = rekor.make_policy(3, [(w.vkey, w.operator) for w in WITNESSES])
 
@@ -333,7 +331,7 @@ class RekorTest(unittest.TestCase):
         return rekor.read_shards(json.dumps({"tlogs": [l.tlog() for l in logs or (self.log,)] + list(tlogs)}))[0]
 
     def verify(self, raw, shards=None):
-        return check_door.verify_entry(raw, shards or self.shards(), self.policy, "prod", [(datetime(2000, 1, 1, tzinfo=timezone.utc), self.pins)])
+        return check_door.records.verify_entry(raw, shards or self.shards(), self.policy, "prod", [(datetime(2000, 1, 1, tzinfo=timezone.utc), self.pins)])
 
     def refused(self, raw, reason, detail="", shards=None):
         with self.assertRaises(check_door.Refusal) as caught:
@@ -421,12 +419,12 @@ class RekorTest(unittest.TestCase):
 
     def test_the_record_checks_run_in_order(self):
         cases = [
-            ("record", hashed_rekord(check_door.record_digest(spki_hex(self.tls)), b"\x30\x00")),
-            ("record", hashed_rekord(check_door.record_digest(spki_hex(self.tls)), record_certificate({**self.record, "type": "other"}))),
-            ("document", hashed_rekord(check_door.record_digest(spki_hex(self.tls)), record_certificate({**self.record, "document": b64(b"\xa0")}))),
-            ("spki", hashed_rekord(check_door.record_digest(spki_hex(self.tls)), record_certificate({**self.record, "spki_sha256": "0" * 64}))),
+            ("record", hashed_rekord(check_door.records.record_digest(spki_hex(self.tls)), b"\x30\x00")),
+            ("record", hashed_rekord(check_door.records.record_digest(spki_hex(self.tls)), record_certificate({**self.record, "type": "other"}))),
+            ("document", hashed_rekord(check_door.records.record_digest(spki_hex(self.tls)), record_certificate({**self.record, "document": b64(b"\xa0")}))),
+            ("spki", hashed_rekord(check_door.records.record_digest(spki_hex(self.tls)), record_certificate({**self.record, "spki_sha256": "0" * 64}))),
             ("digest", hashed_rekord(bytes(32), record_certificate(self.record))),
-            ("nonce", hashed_rekord(check_door.record_digest(spki_hex(self.tls)), record_certificate({**self.record, "origin": {**self.record["origin"], "floor": 8}}))),
+            ("nonce", hashed_rekord(check_door.records.record_digest(spki_hex(self.tls)), record_certificate({**self.record, "origin": {**self.record["origin"], "floor": 8}}))),
         ]
         for reason, body in cases:
             with self.subTest(reason=reason):
@@ -470,7 +468,7 @@ class RekorTest(unittest.TestCase):
         for case in twin["cases"]:
             with self.subTest(case=case["name"]):
                 try:
-                    v = check_door.verify_entry(base64.b64decode(case["entry"]), shards, policy, twin["environment"], history)
+                    v = check_door.records.verify_entry(base64.b64decode(case["entry"]), shards, policy, twin["environment"], history)
                     got = {"boot": v.boot, "spki_sha256": v.spki_sha256, "log": v.log, "index": v.index, "born": v.born, "from": v.sender, "floor": v.floor}
                 except check_door.Refusal as e:
                     got = {"reason": e.reason}

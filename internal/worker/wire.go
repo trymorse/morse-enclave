@@ -18,6 +18,7 @@ import (
 	"morse/backend/internal/enum"
 	"morse/backend/internal/seal"
 	"morse/backend/internal/taskseal"
+	"morse/backend/internal/worker/taskrun"
 )
 
 const (
@@ -292,11 +293,11 @@ func wireRefusal(resp *http.Response) error {
 		}
 		return KeyUnknown{Holds: *e.KeyID}
 	}
-	if e.Error.Code == ErrTaskEpochUnknown.Code {
+	if e.Error.Code == taskrun.ErrEpochUnknown.Code {
 		if e.Epoch == nil {
 			return errors.New("worker: task_epoch_unknown without the epoch the worker holds")
 		}
-		return TaskEpochUnknown{Holds: *e.Epoch}
+		return taskrun.EpochUnknown{Holds: *e.Epoch}
 	}
 	refusal := apierr.Error{Status: resp.StatusCode, Type: e.Error.Type, Code: e.Error.Code, Message: e.Error.Message, Reason: e.Error.Reason}
 	if e.Error.Param != nil {

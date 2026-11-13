@@ -190,8 +190,7 @@ func SealFor(pub []byte, info string, task, run [16]byte, plaintext []byte) ([]b
 	return sealFor(hpkeEncrypt, pub, info, task, run, plaintext)
 }
 
-// An encrypter seals padded to pk in HPKE's base mode, single shot, under info and aad. crypto/hpke draws its own
-// ephemeral key, so the vectors pass one that takes a fixed key instead.
+// crypto/hpke draws its own ephemeral key, so the vectors pass an encrypter that takes a fixed key instead.
 type encrypter func(pk hpke.PublicKey, info, aad, padded []byte) (enc, ct []byte, err error)
 
 func hpkeEncrypt(pk hpke.PublicKey, info, aad, padded []byte) ([]byte, []byte, error) {
@@ -265,7 +264,6 @@ func envelopeAAD(head []byte, task, run [16]byte) []byte { return slices.Concat(
 
 func headOf(id [8]byte) []byte { return append([]byte{Version}, id[:]...) }
 
-// A framing pads a plaintext to a whole number of unit bytes, at most limit.
 type framing struct{ unit, limit int }
 
 var (

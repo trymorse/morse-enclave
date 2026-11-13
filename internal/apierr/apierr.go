@@ -73,8 +73,10 @@ func WriteEnvelope(w http.ResponseWriter, status int, envelope []byte) {
 }
 
 func SetRetryAfter(w http.ResponseWriter, retryAfter time.Duration) {
-	w.Header().Set("Retry-After", strconv.Itoa(max(1, int(math.Ceil(retryAfter.Seconds())))))
+	w.Header().Set("Retry-After", strconv.Itoa(RetrySeconds(retryAfter)))
 }
+
+func RetrySeconds(retryAfter time.Duration) int { return max(1, int(math.Ceil(retryAfter.Seconds()))) }
 
 func Invalid(status int, code, message string) Error {
 	return Error{Status: status, Type: "invalid_request_error", Code: code, Message: message}
@@ -192,8 +194,6 @@ var contextOverflowMessages = []*regexp.Regexp{
 	regexp.MustCompile(`^Requested token count exceeds the model's maximum context length(?: of (?P<window>\d+) tokens)?`),
 }
 
-// unservedModel is Morph's 400 for a model it does not serve, where Together answers 404. The model is the route's,
-// never the client's, so it is a refusal, not the client's invalid request.
 var unservedModel = regexp.MustCompile(`^Model '[^']*' is not served by this endpoint`)
 
 type vendorReply struct {
@@ -240,8 +240,6 @@ func (r vendorReply) overflowsContext() bool {
 	return false
 }
 
-// StatedWindow is the context window that a vendor's refusal of a prompt as too long states, or 0 when the refusal
-// states none or is not one.
 func StatedWindow(status int, vendorBody []byte) int {
 	if SanitizedUpstreamError(status, vendorBody) != ErrContextLengthExceeded {
 		return 0

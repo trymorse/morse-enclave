@@ -27,6 +27,7 @@ import (
 	"morse/backend/internal/seal"
 	"morse/backend/internal/taskseal"
 	"morse/backend/internal/upstream"
+	"morse/backend/internal/worker/taskrun"
 )
 
 type Client struct {
@@ -527,8 +528,8 @@ func (c *Client) TaskNext(ctx context.Context, run Handle) (TaskStepped, error) 
 	return TaskStepped{Step: step}, nil
 }
 
-func (c *Client) TaskFinish(ctx context.Context, run Handle) (TaskFinished, error) {
-	var finished TaskFinished
+func (c *Client) TaskFinish(ctx context.Context, run Handle) (taskrun.Finished, error) {
+	var finished taskrun.Finished
 	err := c.task(ctx, taskFinishPath, taskRunRequest{Run: run}, &finished)
 	return finished, err
 }

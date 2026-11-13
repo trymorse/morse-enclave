@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strconv"
 	"time"
+	_ "time/tzdata"
 )
 
 // Error is a refused spec: Code is the first rule of contracts.md section E.5 it breaks.
@@ -37,8 +38,7 @@ func CodeOf(err error) (Code, bool) {
 }
 
 // CheckFields checks what a spec's fields alone decide, E.5 rows 1 and 2: a kind of the six, OnceLocal and no Cron
-// for Once, and a Cron and no OnceLocal for every other kind. It is as much of a bundle's schedule as the worker
-// checks; Parse checks it first.
+// for Once, and a Cron and no OnceLocal for every other kind.
 func (s Spec) CheckFields() error {
 	once := s.Kind == Once
 	switch {
@@ -51,8 +51,7 @@ func (s Spec) CheckFields() error {
 }
 
 // Zone loads a schedule's time zone, refusing what E.5 row 3 refuses: an empty name, one over 64 bytes, Local, and
-// any time.LoadLocation doesn't know. cmd/proxy and cmd/worker embed time/tzdata, so it knows every IANA zone
-// whether or not the host has a zoneinfo directory.
+// any time.LoadLocation doesn't know.
 func Zone(tz string) (*time.Location, error) {
 	if tz == "" || len(tz) > MaxTZ || tz == "Local" {
 		return nil, Error{CodeTZ}
@@ -171,8 +170,6 @@ func PresetCron(k Kind, minute, hour int, day time.Weekday) (string, error) {
 	return m + " " + h + " * * " + strconv.Itoa(int(day)), nil
 }
 
-// readOnce reads OnceLocal as a wall time, read as if in UTC: exactly YYYY-MM-DDTHH:MM, naming a real date and a time
-// from 00:00 to 23:59. Whether the zone's clocks skip or repeat it is resolve's concern, not the format's.
 func readOnce(text string) (time.Time, bool) {
 	if len(text) != len(OnceLayout) || text[4] != '-' || text[7] != '-' || text[10] != 'T' || text[13] != ':' {
 		return time.Time{}, false

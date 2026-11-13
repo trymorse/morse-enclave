@@ -17,6 +17,7 @@ import (
 	"morse/backend/internal/media"
 	"morse/backend/internal/seal"
 	"morse/backend/internal/upstream"
+	"morse/backend/internal/worker/taskrun"
 )
 
 type Server struct {
@@ -487,8 +488,8 @@ func stepWire(step TaskStep) (taskStepWire, error) {
 // writeTaskRefusal answers a task endpoint's refusal: task_epoch_unknown names the epoch the worker holds, as
 // sealed_key_unknown names its key, and anything that carries no refusal of its own is the worker being unable to.
 func writeTaskRefusal(w http.ResponseWriter, err error) {
-	if unknown, ok := errors.AsType[TaskEpochUnknown](err); ok {
-		apierr.WriteEnvelope(w, ErrTaskEpochUnknown.Status, ErrTaskEpochUnknown.EnvelopeWith("epoch", unknown.Holds))
+	if unknown, ok := errors.AsType[taskrun.EpochUnknown](err); ok {
+		apierr.WriteEnvelope(w, taskrun.ErrEpochUnknown.Status, taskrun.ErrEpochUnknown.EnvelopeWith("epoch", unknown.Holds))
 		return
 	}
 	refusal, _ := apierr.Refusal(err, apierr.ErrUnavailable)

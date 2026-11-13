@@ -107,9 +107,6 @@ func withChat(m map[routes.Provider]map[catalog.Kind]build) map[routes.Provider]
 	return m
 }
 
-// ChatProvider is the provider the proxy sends rt's plaintext chats through, without the busy retry and the serving
-// around it, for a tool that sends single calls and reads each reply as the proxy would. An attested route's gateway
-// is reached in the clear and unattested, which only Phala serves.
 func ChatProvider(rt routes.Route, key string, client *http.Client) (chat.Provider, error) {
 	if up, attested := rt.Upstream.(routes.Attested); attested {
 		if up.Attester != attester.Phala {
@@ -125,8 +122,6 @@ func ChatProvider(rt routes.Route, key string, client *http.Client) (chat.Provid
 	return newProvider(rt, c, key, Deps{Client: client}), nil
 }
 
-// Endpoint is rt's host as an OpenAI-compatible endpoint reached with key: its base URL and the credentials every
-// request to it carries, a host's ZDR header among them, for a tool that sends a host requests of its own.
 func Endpoint(rt routes.Route, key string, client *http.Client) upstream.Endpoint {
 	var p routes.Provider
 	if v, vendor := rt.Upstream.(routes.Vendor); vendor {
@@ -251,10 +246,7 @@ func veniceProvider(rt routes.Route, _ routes.Chat, key string, d Deps) chat.Pro
 }
 
 func openAIHostProvider(rt routes.Route, c routes.Chat, key string, d Deps) chat.Provider {
-	return openAIHosts[rt.Upstream.(routes.Vendor).Provider].NewChat(rt.BaseURL, key, rt.UpstreamModel, openaihosts.Route{
-		AnswersInReasoning: c.AnswersInReasoning, ReasoningInContent: c.ReasoningInContent, ThinkingOff: c.ThinkingOffSwitch,
-		ToolCallsFinishStop: c.ToolCallsFinishStop, NoTools: c.NoTools,
-	}, d.Client)
+	return openAIHosts[rt.Upstream.(routes.Vendor).Provider].NewChat(rt.BaseURL, key, rt.UpstreamModel, c.Fixes, d.Client)
 }
 
 func attestedChat(rt routes.Route, attested routes.Attested, key string, d Deps) (worker.Serving, error) {

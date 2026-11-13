@@ -63,7 +63,6 @@ func seq(from, to int) []int {
 	return out
 }
 
-// Rows 6 to 10 of contracts.md section E.5, in order: the first rule a cron breaks is its code.
 func TestACronIsRefusedByTheFirstRuleItBreaks(t *testing.T) {
 	long := "00 9 " + strings.Repeat("01,", 30) + "31 * *"
 	for _, c := range []struct {

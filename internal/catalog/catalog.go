@@ -23,8 +23,6 @@ const (
 	E2EE
 )
 
-// OnBehalfTier is the tier of a plaintext request the worker seals to a sealed route's vendor for its client: the
-// vendor's TEE reads it, and no key of the client's sealed it.
 const OnBehalfTier = TEE
 
 func OnBehalf(aliased bool, t Tier, sealsBody bool) (Tier, bool) {
@@ -71,8 +69,6 @@ func (t Tier) Serves(k Kind) bool {
 	return t.Valid() && (!t.Attested() || k.Attestable() && (!t.Sealed() || k.Sealable()))
 }
 
-// Relay is how a chat route's body reaches its vendor. A plaintext relay reads and rewrites it. A verbatim relay
-// forwards the client's sealed body as sent, so only a sealed tier serves one.
 type Relay uint8
 
 const (
@@ -174,12 +170,17 @@ type ChatTerms struct {
 	ContextTokens          int
 	CompactAtTokens        int
 	HidesReasoning         bool
-	// NoTools is a model served without tools: an API key's chat that lets it call one is refused, every other request
-	// reaches the host with none, and GET /v1/models says so.
-	NoTools bool
-	// Quantization is the precision the endpoint's host publishes for the weights, which provider.quantizations
-	// filters on. Each host has its own, so endpoints of one tier may differ in it.
-	Quantization Quantization
+	Quantization           Quantization
+	NoCharacters           bool
+	Fixes
+}
+
+type Fixes struct {
+	AnswersInReasoning  bool `json:"answers_in_reasoning"`
+	ReasoningInContent  bool `json:"reasoning_in_content"`
+	ThinkingOffSwitch   bool `json:"thinking_off_switch"`
+	ToolCallsFinishStop bool `json:"tool_calls_finish_stop"`
+	NoTools             bool `json:"-"`
 }
 
 type Inputs uint8

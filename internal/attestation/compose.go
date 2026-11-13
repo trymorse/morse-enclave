@@ -8,6 +8,7 @@ import (
 	"maps"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -223,20 +224,17 @@ func (c AppCompose) launcher() (launcher, error) {
 // alternate after it. A $$ is a literal dollar sign and interpolates nothing.
 var composeVariable = regexp.MustCompile(`\$\$|\$\{?([A-Za-z_][A-Za-z0-9_]*)`)
 
-// interpolatedVariables lists the variables s interpolates, the ones inside a ${NAME:-default} too.
-func interpolatedVariables(s string) []string {
-	var names []string
-	for _, m := range composeVariable.FindAllStringSubmatch(s, -1) {
-		if m[1] != "" {
-			names = append(names, m[1])
-		}
-	}
-	return names
+type deployerVariables struct {
+	listed   []string
+	reviewed map[string]string
 }
 
-// checkDeployerImages refuses an app_compose in which a service's image interpolates a variable allowed_envs lets the
-// deployer set, since the deployer could then run any image under the same measured compose-hash.
-func checkDeployerImages(raw string) error {
+var nearReviewedInterpolations = map[string]string{
+	"services.certbot-init.command":          "certonly --dns-cloudflare --dns-cloudflare-credentials /etc/cloudflare/credentials.ini --dns-cloudflare-propagation-seconds 30 --email ${CERTBOT_EMAIL} --agree-tos --no-eff-email --non-interactive --key-type ecdsa --elliptic-curve secp256r1 --cert-name completions.near.ai -d \"*.completions.near.ai\" -d \"completions.near.ai\" -d \"$HOSTNAME.hosts.near.ai\"\n",
+	"configs.cloudflare_credentials.content": "dns_cloudflare_api_token = ${CLOUDFLARE_API_TOKEN}\n",
+}
+
+func checkDeployerVariables(raw string, reviewed map[string]string) error {
 	fields, err := manifestFields(raw)
 	if err != nil {
 		return fmt.Errorf("app_compose is not JSON: %w", err)
@@ -250,20 +248,104 @@ func checkDeployerImages(raw string) error {
 			}
 		}
 	}
-	var file struct {
-		Services map[string]struct {
-			Image string `yaml:"image"`
-		} `yaml:"services"`
+	d := deployerVariables{listed: allowedEnvs, reviewed: reviewed}
+	for documents := yaml.NewDecoder(strings.NewReader(composeFile)); ; {
+		var doc yaml.Node
+		var expanded any
+		err := documents.Decode(&doc)
+		if err == io.EOF {
+			return nil
+		}
+		if err == nil {
+			err = doc.Decode(&expanded)
+		}
+		if err != nil {
+			return fmt.Errorf("docker_compose_file is not YAML: %w", err)
+		}
+		if err := d.check(&doc, nil); err != nil {
+			return err
+		}
 	}
-	if err := yaml.Unmarshal([]byte(composeFile), &file); err != nil {
-		return fmt.Errorf("docker_compose_file is not YAML: %w", err)
-	}
-	for _, name := range slices.Sorted(maps.Keys(file.Services)) {
-		image := file.Services[name].Image
-		for _, v := range interpolatedVariables(image) {
-			if slices.Contains(allowedEnvs, v) {
-				return fmt.Errorf("service %s runs image %q, which interpolates %s, and allowed_envs lets the deployer set it", name, image, v)
+}
+
+func holdsDeployerData(path []string) bool {
+	return len(path) == 3 && path[0] == "services" && (path[2] == "environment" || path[2] == "labels")
+}
+
+func (d deployerVariables) check(n *yaml.Node, path []string) error {
+	n = resolve(n)
+	data := holdsDeployerData(path)
+	switch n.Kind {
+	case yaml.DocumentNode:
+		for _, child := range n.Content {
+			if err := d.check(child, path); err != nil {
+				return err
 			}
+		}
+	case yaml.SequenceNode:
+		for i, item := range n.Content {
+			item = resolve(item)
+			at := slices.Concat(path, []string{strconv.Itoa(i)})
+			if data && item.Kind == yaml.ScalarNode {
+				literal := len(item.Value)
+				if name, _, ok := strings.Cut(item.Value, "="); ok {
+					literal = len(name)
+				}
+				if err := d.checkScalar(at, item.Value, literal); err != nil {
+					return err
+				}
+				continue
+			}
+			if err := d.check(item, at); err != nil {
+				return err
+			}
+		}
+	case yaml.MappingNode:
+		for i := 0; i+1 < len(n.Content); i += 2 {
+			k, v := resolve(n.Content[i]), resolve(n.Content[i+1])
+			if k.Tag == "!!merge" {
+				merged := []*yaml.Node{v}
+				if v.Kind == yaml.SequenceNode {
+					merged = v.Content
+				}
+				for _, m := range merged {
+					if err := d.check(m, path); err != nil {
+						return err
+					}
+				}
+				continue
+			}
+			if len(path) == 0 && strings.HasPrefix(k.Value, "x-") {
+				continue
+			}
+			at := slices.Concat(path, []string{k.Value})
+			if err := d.check(k, at); err != nil {
+				return err
+			}
+			if data && v.Kind == yaml.ScalarNode {
+				continue
+			}
+			if err := d.check(v, at); err != nil {
+				return err
+			}
+		}
+	case yaml.ScalarNode:
+		return d.checkScalar(path, n.Value, len(n.Value))
+	}
+	return nil
+}
+
+func (d deployerVariables) checkScalar(path []string, text string, literal int) error {
+	at := strings.Join(path, ".")
+	if reviewed, ok := d.reviewed[at]; ok && reviewed == text {
+		return nil
+	}
+	for _, m := range composeVariable.FindAllStringSubmatchIndex(text, -1) {
+		if m[2] < 0 || m[0] >= literal {
+			continue
+		}
+		if name := text[m[2]:m[3]]; slices.Contains(d.listed, name) {
+			return fmt.Errorf("%s is %.200q, which interpolates %s, and allowed_envs lets the deployer set it", at, text, name)
 		}
 	}
 	return nil

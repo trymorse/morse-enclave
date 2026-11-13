@@ -5,7 +5,6 @@ import (
 	"time"
 )
 
-// runs lists a schedule's first n runs after from, as Next gives them one after another.
 func runs(sch Schedule, from time.Time, n int) []time.Time {
 	var out []time.Time
 	for at := from; len(out) < n; {
@@ -27,7 +26,6 @@ func formatted(times []time.Time) []string {
 	return out
 }
 
-// Hand-worked from the zones' 2026 changes of clock (wall_test.go lists each change's instants).
 func TestRunsAroundChangesOfClockAreTheHandWorkedInstants(t *testing.T) {
 	for _, c := range []struct {
 		name string

@@ -26,8 +26,6 @@ from cryptography import x509
 from cryptography.hazmat.primitives.asymmetric import ec, ed25519, rsa
 from cryptography.x509.oid import ExtendedKeyUsageOID
 
-# check_door_fixtures.py sits beside this file. Nothing here writes bytecode, so a run leaves no __pycache__
-# among the files the export copies.
 sys.dont_write_bytecode = True
 from check_door_fixtures import *  # noqa: E402,F403
 
@@ -144,6 +142,70 @@ class CertificatesTest(Fixture):
         out = self.door.run("--ct", "crt.sh", "--ct", str(self.door.root / "ct.json"))[1]
         self.assertEqual(self.section(out, "check 1"), "  OK")
 
+    def crtsh_lags(self, *later):
+        """crt.sh answers with no certificate until it has been read len(later) + 1 times, then with later's last."""
+        self.crtsh_answers()
+        delays = []
+
+        def sleep(delay):
+            delays.append(delay)
+            if len(delays) == len(later):
+                self.crtsh_answers(*later[-1])
+        return unittest.mock.patch.object(check_door.time, "sleep", sleep), delays
+
+    def test_crtsh_with_none_of_the_certificates_another_source_returns_is_read_again_then_taken_as_unread(self):
+        ct = self.door.root / "ct.json"
+        sleeping, delays = self.crtsh_lags()
+        with sleeping:
+            code, out = self.door.run("--ct", "crt.sh", "--ct", str(ct))
+        self.assertEqual(code, 0, out)
+        self.assertEqual(delays, list(check_door.CRTSH_RETRY_DELAYS))
+        self.assertEqual(self.section(out, "check 1"), f"  NOTE: crt.sh could not be read, so this run judges check 1 from {ct} alone: "
+                         f"LookupError('it returned no certificate covering inference.trymorse.ai in 3 reads, though {ct} returned 1')\n  OK")
+
+    def test_crtsh_that_answers_on_a_later_read_is_judged_as_usual(self):
+        ct = self.door.root / "ct.json"
+        sleeping, delays = self.crtsh_lags([], [self.door.ct[0]])
+        with sleeping:
+            code, out = self.door.run("--ct", "crt.sh", "--ct", str(ct))
+        self.assertEqual(code, 0, out)
+        self.assertEqual(delays, list(check_door.CRTSH_RETRY_DELAYS))
+        self.assertEqual(self.section(out, "check 1"), "  OK")
+
+    def test_crtsh_that_answers_on_a_later_read_with_a_rogue_certificate_fails(self):
+        rogue = certificate(ec.generate_private_key(ec.SECP256R1()), self.door.ca, "inference.trymorse.ai", ["inference.trymorse.ai"], issuer_cn="test ca")
+        sleeping, _ = self.crtsh_lags([rogue])
+        with sleeping:
+            code, out = self.door.run("--ct", "crt.sh", "--ct", str(self.door.root / "ct.json"))
+        self.assertEqual(code, 1, out)
+        self.assertIn(f"FAIL: crt.sh 0 names inference.trymorse.ai {self.unrecorded(rogue)}, and CT made it public at", out)
+
+    def test_a_rogue_certificate_only_the_other_source_returns_fails_while_crtsh_has_none(self):
+        rogue = self.door.rogue(["inference.trymorse.ai"])
+        ct = self.door.root / "ct.json"
+        sleeping, _ = self.crtsh_lags()
+        with sleeping:
+            code, out = self.door.run("--ct", "crt.sh", "--ct", str(ct))
+        self.assertEqual(code, 1, out)
+        self.assertIn("NOTE: crt.sh could not be read, so this run judges check 1", out)
+        self.assertIn(f"FAIL: {ct} 2 names inference.trymorse.ai {self.unrecorded(rogue)}, and CT made it public at", out)
+
+    def test_a_rogue_certificate_only_crtsh_returns_fails(self):
+        rogue = certificate(ec.generate_private_key(ec.SECP256R1()), self.door.ca, "inference.trymorse.ai", ["inference.trymorse.ai"], issuer_cn="test ca")
+        self.crtsh_answers(self.door.ct[0], rogue)
+        with unittest.mock.patch.object(check_door.time, "sleep", lambda delay: self.fail("crt.sh is read again")):
+            code, out = self.door.run("--ct", "crt.sh", "--ct", str(self.door.root / "ct.json"))
+        self.assertEqual(code, 1, out)
+        self.assertIn(f"FAIL: crt.sh 1 names inference.trymorse.ai {self.unrecorded(rogue)}, and CT made it public at", out)
+
+    def test_the_other_source_with_none_of_the_certificates_crtsh_returns_still_fails(self):
+        self.crtsh_answers(self.door.ct[0])
+        empty = self.door.root / "empty.json"
+        empty.write_text("[]")
+        code, out = self.door.run("--ct", "crt.sh", "--ct", str(empty))
+        self.assertEqual(code, 1, out)
+        self.assertIn(f"FAIL: {empty} returned no certificate covering inference.trymorse.ai, though crt.sh returned 1", out)
+
     def test_a_certificate_from_after_its_key_is_60_days_old_fails(self):
         self.door.needed(self.door.tls, not_before=BORN + timedelta(days=60))
         self.passes()
@@ -258,12 +320,12 @@ class RecordsTest(Fixture):
     def test_a_label_naming_a_rogue_key_beside_a_genuine_document_fails(self):
         rogue = self.door.rogue(["inference.trymorse.ai"])
         record = self.door.record(document(self.door.hpke[2], ec.generate_private_key(ec.SECP256R1())), None, 8, spki_hex(rogue))
-        index = self.door.add(record, digest=check_door.record_digest(spki_hex(rogue)))
+        index = self.door.add(record, digest=check_door.records.record_digest(spki_hex(rogue)))
         self.fails(self.ignored(index, "spki: the record's spki_sha256 is"), self.unrecorded(rogue))
 
     def test_a_digest_that_is_not_h_of_the_documents_spki_fails(self):
         tls = self.door.needed(ec.generate_private_key(ec.SECP256R1()))
-        index = self.door.add(self.door.record(document(self.door.hpke[2], tls), None, 8), digest=check_door.record_digest(spki_hex(self.door.tls)))
+        index = self.door.add(self.door.record(document(self.door.hpke[2], tls), None, 8), digest=check_door.records.record_digest(spki_hex(self.door.tls)))
         self.fails(self.ignored(index, f"digest: the entry's digest is not H for SPKI {spki_hex(tls)}"), self.unrecorded(tls))
 
     def test_a_junk_public_key_fails(self):
@@ -445,14 +507,14 @@ class RecordsTest(Fixture):
     def test_the_origin_nonce_is_the_backends_golden_statement(self):
         sender = hashlib.sha256(b"sender").hexdigest()[:16]
         golden = '{"origin":{"born":"2026-11-04T17:12:03.12Z","floor":7,"from":"' + sender + '"},"spki_sha256":"9f3c","type":"morse-door-origin-v1"}'
-        self.assertEqual(check_door.origin_nonce("9f3c", "2026-11-04T09:12:03.120-08:00", sender, 7), hashlib.sha256(golden.encode()).digest())
+        self.assertEqual(check_door.records.origin_nonce("9f3c", "2026-11-04T09:12:03.120-08:00", sender, 7), hashlib.sha256(golden.encode()).digest())
         born = '{"origin":{"born":"2026-11-04T17:12:03.12Z","floor":7,"from":null},"spki_sha256":"9f3c","type":"morse-door-origin-v1"}'
-        self.assertEqual(check_door.origin_nonce("9f3c", "2026-11-04T17:12:03.120000000Z", None, 7), hashlib.sha256(born.encode()).digest())
-        self.assertEqual(check_door.canonical_time("2026-11-04T17:12:03.000000000Z"), "2026-11-04T17:12:03Z")
-        self.assertEqual(check_door.canonical_time("2026-11-04T23:12:03.123456789-08:00"), "2026-11-05T07:12:03.123456789Z")
+        self.assertEqual(check_door.records.origin_nonce("9f3c", "2026-11-04T17:12:03.120000000Z", None, 7), hashlib.sha256(born.encode()).digest())
+        self.assertEqual(check_door.records.canonical_time("2026-11-04T17:12:03.000000000Z"), "2026-11-04T17:12:03Z")
+        self.assertEqual(check_door.records.canonical_time("2026-11-04T23:12:03.123456789-08:00"), "2026-11-05T07:12:03.123456789Z")
 
     def test_the_record_digest_is_the_enclaves(self):
-        self.assertEqual(check_door.record_digest("9f3c"), hashlib.sha256(b"morse-door-boot-v1\n9f3c\n").digest())
+        self.assertEqual(check_door.records.record_digest("9f3c"), hashlib.sha256(b"morse-door-boot-v1\n9f3c\n").digest())
 
     def test_a_real_aws_document_verifies_at_its_own_time_and_its_dev_user_data_fails_for_prod(self):
         check_door.nitro.AWS_NITRO_ROOT = self.real_root
@@ -618,14 +680,14 @@ class LiveTest(Fixture):
         self.door.live.append(document(self.door.hpke[2], rogue))
         self.passes()
         first = datetime.fromisoformat(self.door.state()["boots"][key_id(self.door.hpke[2])]["first_seen"])
-        self.door.ran(first + check_door.LIVE_GRACE - timedelta(minutes=5))
-        code, out = self.at(first + check_door.LIVE_GRACE)
+        self.door.ran(first + check_door.checks.LIVE_GRACE - timedelta(minutes=5))
+        code, out = self.at(first + check_door.checks.LIVE_GRACE)
         self.assertEqual(code, 1, out)
         self.assertIn(f"live document 2: {self.no_record(self.door.hpke[2], rogue)}, and this watcher first saw it live at {first.isoformat(timespec='seconds')}", out)
 
     def test_a_live_boot_with_no_record_behind_a_recorded_spki_fails_once_past_the_grace(self):
         self.door.live.append(document(self.door.hpke[2], self.door.tls))
-        self.door.seen(self.door.hpke[2], self.door.tls, check_door.LIVE_GRACE + timedelta(seconds=1))
+        self.door.seen(self.door.hpke[2], self.door.tls, check_door.checks.LIVE_GRACE + timedelta(seconds=1))
         self.fails(f"live document 2: {self.no_record(self.door.hpke[2], self.door.tls)}, and this watcher first saw it live at")
 
     def test_a_handed_off_boot_passes_until_the_grace_ends_and_then_fails(self):
@@ -634,11 +696,11 @@ class LiveTest(Fixture):
         self.passes()
         first = datetime.fromisoformat(self.door.state()["boots"][key_id(self.door.hpke[2])]["first_seen"])
         self.assertEqual(first.isoformat(), last_run)
-        later = first + check_door.LIVE_GRACE - timedelta(seconds=1)
+        later = first + check_door.checks.LIVE_GRACE - timedelta(seconds=1)
         self.door.ran(later - timedelta(minutes=5))
         code, out = self.at(later)
         self.assertEqual(code, 0, out)
-        code, out = self.at(first + check_door.LIVE_GRACE)
+        code, out = self.at(first + check_door.checks.LIVE_GRACE)
         self.assertEqual(code, 1, out)
         self.assertIn(f"{self.no_record(self.door.hpke[2], self.door.tls)}, and this watcher first saw it live at {first.isoformat(timespec='seconds')}", out)
 
@@ -647,18 +709,18 @@ class LiveTest(Fixture):
         self.passes()
         first = datetime.fromisoformat(self.door.state()["boots"][key_id(self.door.hpke[2])]["first_seen"])
         self.door.live.pop()
-        code, out = self.at(first + check_door.LIVE_GRACE)
+        code, out = self.at(first + check_door.checks.LIVE_GRACE)
         self.assertEqual(code, 1, out)
         self.assertIn(f"{self.gone(self.door.hpke[2], self.door.tls)}, and this watcher first saw it live at", out)
         self.assertIn(key_id(self.door.hpke[2]), self.door.state()["boots"])
 
     def test_a_boot_whose_record_lands_late_passes(self):
-        self.door.seen(self.door.hpke[2], self.door.tls, check_door.LIVE_GRACE + timedelta(hours=5))
+        self.door.seen(self.door.hpke[2], self.door.tls, check_door.checks.LIVE_GRACE + timedelta(hours=5))
         self.door.add(self.door.record(document(self.door.hpke[2], self.door.tls), key_id(self.door.hpke[1]), 8))
         self.passes()
 
     def test_a_boot_whose_spki_changes_keeps_the_grace_it_started_with(self):
-        self.door.seen(self.door.hpke[1], self.door.tls, check_door.LIVE_GRACE + timedelta(seconds=1))
+        self.door.seen(self.door.hpke[1], self.door.tls, check_door.checks.LIVE_GRACE + timedelta(seconds=1))
         rogue = ec.generate_private_key(ec.SECP256R1())
         self.door.live = [document(self.door.hpke[1], rogue)]
         self.fails(f"live document 1: {self.no_record(self.door.hpke[1], rogue)}, and this watcher first saw it live at")
@@ -675,12 +737,12 @@ class LiveTest(Fixture):
         self.assertEqual(code, 0, out)
         self.assertEqual(self.door.state()["boots"][key_id(self.door.hpke[2])], {"first_seen": first.isoformat(), "spkis": sorted([spki_hex(self.door.tls), spki_hex(second)])})
         self.door.live.pop()
-        self.door.ran(first + check_door.LIVE_GRACE - timedelta(minutes=4))
+        self.door.ran(first + check_door.checks.LIVE_GRACE - timedelta(minutes=4))
         return first, second
 
     def test_a_gone_boot_that_served_on_a_second_spki_inside_its_grace_fails_for_that_spki_once_the_grace_ends(self):
         first, second = self.served_on_a_second_spki_inside_its_grace()
-        code, out = self.at(first + check_door.LIVE_GRACE + timedelta(minutes=1))
+        code, out = self.at(first + check_door.checks.LIVE_GRACE + timedelta(minutes=1))
         self.assertEqual(code, 1, out)
         self.assertIn(f"{self.gone(self.door.hpke[2], second)}, and this watcher first saw it live at {first.isoformat(timespec='seconds')}", self.section(out, "check 6"))
         self.assertNotIn(self.gone(self.door.hpke[2], self.door.tls), out)
@@ -688,7 +750,7 @@ class LiveTest(Fixture):
     def test_a_gone_boot_whose_second_spki_has_a_record_passes(self):
         first, second = self.served_on_a_second_spki_inside_its_grace()
         self.door.add(self.door.record(document(self.door.hpke[2], second), None, 9))
-        code, out = self.at(first + check_door.LIVE_GRACE + timedelta(minutes=1))
+        code, out = self.at(first + check_door.checks.LIVE_GRACE + timedelta(minutes=1))
         self.assertEqual(code, 0, out)
 
     def test_a_state_with_one_spki_per_boot_is_read_and_rewritten_with_a_list(self):
@@ -761,7 +823,7 @@ class LiveTest(Fixture):
         (self.door.root / "sequence.json").write_text(before)
         self.assertEqual(self.at(start + timedelta(minutes=1))[0], 0)
         self.door.ran(start + timedelta(minutes=110))
-        code, out = self.at(start - timedelta(minutes=5) + check_door.LIVE_GRACE)
+        code, out = self.at(start - timedelta(minutes=5) + check_door.checks.LIVE_GRACE)
         self.assertEqual(code, 1, out)
         self.assertIn(f"{self.no_record(self.door.hpke[2], self.door.tls)}, and this watcher first saw it live at {(start - timedelta(minutes=5)).isoformat(timespec='seconds')}", out)
 
@@ -820,10 +882,10 @@ class LiveTest(Fixture):
 
     def test_a_live_document_ahead_of_the_clock_by_more_than_the_skew_fails(self):
         now = NOW.replace(microsecond=0)
-        self.assertEqual(self.live_at(now + check_door.MAX_AHEAD, now)[0], 0)
-        code, out = self.live_at(now + check_door.MAX_AHEAD + timedelta(seconds=1), now)
+        self.assertEqual(self.live_at(now + check_door.records.MAX_AHEAD, now)[0], 0)
+        code, out = self.live_at(now + check_door.records.MAX_AHEAD + timedelta(seconds=1), now)
         self.assertEqual(code, 1, out)
-        self.assertIn(f"live document 1: AWS Nitro signed the document at {(now + check_door.MAX_AHEAD + timedelta(seconds=1)).isoformat(timespec='seconds')}, more than 2 minutes after this run's clock reads {now.isoformat(timespec='seconds')}, so this watcher's clock is behind", out)
+        self.assertIn(f"live document 1: AWS Nitro signed the document at {(now + check_door.records.MAX_AHEAD + timedelta(seconds=1)).isoformat(timespec='seconds')}, more than 2 minutes after this run's clock reads {now.isoformat(timespec='seconds')}, so this watcher's clock is behind", out)
 
     def test_a_frozen_watcher_clock_fails_once_the_relay_refreshes_its_document(self):
         frozen = NOW.replace(microsecond=0)
@@ -882,7 +944,7 @@ class LiveTest(Fixture):
         self.assertIsNone(self.door.state()["boots"][key_id(self.door.hpke[2])]["first_seen"])
 
     def test_a_clock_behind_the_last_run_by_less_than_the_skew_passes(self):
-        self.door.ran(datetime.now(timezone.utc) + check_door.MAX_AHEAD - timedelta(seconds=10))
+        self.door.ran(datetime.now(timezone.utc) + check_door.records.MAX_AHEAD - timedelta(seconds=10))
         self.passes()
 
     def test_a_first_seen_time_ahead_of_the_clock_is_an_unknown_age(self):
@@ -893,7 +955,7 @@ class LiveTest(Fixture):
 
     def test_a_first_seen_time_ahead_of_the_clock_by_less_than_the_skew_keeps_its_grace(self):
         self.door.live.append(document(self.door.hpke[2], self.door.tls))
-        self.door.seen(self.door.hpke[2], self.door.tls, -check_door.MAX_AHEAD + timedelta(seconds=10))
+        self.door.seen(self.door.hpke[2], self.door.tls, -check_door.records.MAX_AHEAD + timedelta(seconds=10))
         self.passes()
 
     def test_a_live_document_from_an_unpinned_image_fails_at_once(self):
@@ -924,7 +986,7 @@ class RecordsPublicTest(Fixture):
         for answer, message in (("internal", "answers visibility 'internal'"), ("private", "answers visibility 'private'"), (404, "answers 404")):
             with self.subTest(answer=answer):
                 self.door.visibility = answer
-                self.assertIn(f"{check_door.RECORDS_REPO_URL}, read with no token, {message}, so an outside watcher cannot read", self.section(self.fails(), "check 9"))
+                self.assertIn(f"{check_door.checks.RECORDS_REPO_URL}, read with no token, {message}, so an outside watcher cannot read", self.section(self.fails(), "check 9"))
         self.door.visibility = "public"
         self.passes()
 

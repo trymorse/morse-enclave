@@ -1,6 +1,5 @@
 // Package schedule reads a scheduled task's schedule and finds when it runs. The spec, its kinds, and the codes a
-// refused spec carries are the contract the worker, the relay, and the web app's src/lib/schedule share. The package
-// must stay one the worker may link: the standard library and internal/enum only.
+// refused spec carries are the contract the worker, the relay, and the web app's src/lib/schedule share.
 package schedule
 
 import (
@@ -49,8 +48,7 @@ const (
 	OnceLead = time.Minute
 )
 
-// Code is why a spec is refused, the first of these that applies in this order. The task routes answer CodeTZ as
-// task_timezone_invalid, CodeOncePast as task_once_past, and every other code as task_schedule_invalid.
+// Code is why a spec is refused, the first of these that applies in this order.
 type Code string
 
 const (
