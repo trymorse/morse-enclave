@@ -73,6 +73,10 @@
       {
         "name": "dstack-0.5.12-b73eed6a",
         "compose_hash": "b73eed6abc60fbe5eb0ce2bbaacf3bd9b83c9c84f3e6a5b1a091cb679bdbe66f"
+      },
+      {
+        "name": "dstack-0.5.12-7c15cbaa",
+        "compose_hash": "7c15cbaa24e4e9aa70f4b1aae215e55268d08f64dbadbbcdd791287de191a255"
       }
     ],
     "images": [
