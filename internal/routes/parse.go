@@ -203,6 +203,7 @@ func (c common) route(serves Serves) (Route, error) {
 		OwnedBy:       cmp.Or(c.OwnedBy, defaultOwner),
 		Lab:           c.Lab,
 		OpenWeights:   c.OpenWeights,
+		Uncensored:    c.Uncensored,
 		Retention:     retention,
 		ProviderName:  c.ProviderName,
 		Serves:        serves,

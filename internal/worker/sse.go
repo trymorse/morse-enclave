@@ -19,18 +19,16 @@ import (
 )
 
 type eventStream struct {
-	w       http.ResponseWriter
-	rc      *http.ResponseController
-	mu      sync.Mutex
-	started bool
-	err     error
+	w   *replyWriter
+	rc  *http.ResponseController
+	mu  sync.Mutex
+	err error
 }
 
 func (s *eventStream) start() {
-	if s.started {
+	if s.w.phase() != unclaimed {
 		return
 	}
-	s.started = true
 	s.w.Header().Set("Content-Type", eventStreamType)
 	setEventStreamHeaders(s.w.Header())
 	s.w.WriteHeader(http.StatusOK)
@@ -97,7 +95,7 @@ func (s *eventStream) keepAlive(ctx context.Context, every time.Duration) (stop 
 			select {
 			case <-tick.C:
 				s.mu.Lock()
-				if s.started {
+				if s.w.phase() != unclaimed {
 					s.writeLocked(commentOf("keepalive"))
 				}
 				s.mu.Unlock()

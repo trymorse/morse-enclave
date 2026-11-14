@@ -238,7 +238,7 @@ func submit(c cuts, endpoint catalog.EndpointID, reply http.ResponseWriter, queu
 	end := endingOf(c.client, writeErr, err)
 	m := Measured{Measurement: measure.Measurement{Outcome: end.outcome()}, Cut: end.cut(), Served: err == nil, Refusal: end.refusal(err), Endpoint: endpoint}
 	m.Health = rw.observed(ctx, err, false, opened, returned)
-	if err != nil && rw.status == 0 {
+	if rw.unsent(err) {
 		refuse(ctx, rw, err)
 	}
 	return m

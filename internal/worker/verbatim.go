@@ -148,7 +148,7 @@ func (u Verbatim) sealLaunch(o *openedChat, prompt string) error {
 	return err
 }
 
-func (u Verbatim) serve(ctx context.Context, w *InProcess, o *openedChat, a attempt, reply http.ResponseWriter) served {
+func (u Verbatim) serve(ctx context.Context, w *InProcess, o *openedChat, a attempt, reply *replyWriter) served {
 	s, unexpected := relay(ctx, reply, http.NewResponseController(reply), u.Route, a.call, o.protocol.params, o.promptComment, !o.protocol.scheme.SealsBody, o.afterCut)
 	for _, field := range unexpected {
 		w.reports.UnknownReplyField(a.call.Model, field)

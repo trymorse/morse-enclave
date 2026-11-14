@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
 	"slices"
 	"time"
 
@@ -63,7 +62,7 @@ type ChatUpstream interface {
 	Speaks() *chat.Scheme
 	attester() chat.Attester
 	admit(o *openedChat, cast chat.Cast) error
-	serve(ctx context.Context, w *InProcess, o *openedChat, a attempt, reply http.ResponseWriter) served
+	serve(ctx context.Context, w *InProcess, o *openedChat, a attempt, reply *replyWriter) served
 	count(a attempt, e measure.Evidence, got served) *pendingCount
 	busyWaits() []time.Duration
 	hedge() chat.Hedge

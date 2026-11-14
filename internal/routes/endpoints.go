@@ -20,7 +20,7 @@ var (
 	endpointIDPattern = regexp.MustCompile(catalog.EndpointIDPattern)
 )
 
-var ModelFields = []string{"label", "lab", "open_weights", "kind", "reasoning_efforts", "input_modalities", "hides_reasoning", "answers_in_reasoning", "tools", "characters", "markup", "app_only", "prices", "rebate_share_bps"}
+var ModelFields = []string{"label", "lab", "open_weights", "uncensored", "kind", "reasoning_efforts", "input_modalities", "hides_reasoning", "answers_in_reasoning", "tools", "characters", "markup", "app_only", "prices", "rebate_share_bps"}
 
 // FallbackFields are the fields in which a later e2ee endpoint of a model may differ from the first, whose fallback it
 // is.
@@ -192,6 +192,13 @@ func parseModel(raw json.RawMessage) (model, error) {
 		if !slices.Contains(ModelFields, k) {
 			return model{}, fmt.Errorf("model %q sets %q; a model sets id, endpoints, and %s, and every other field belongs to an endpoint", m.id, k, strings.Join(ModelFields, ", "))
 		}
+	}
+	raw, ok := top["uncensored"]
+	if !ok {
+		return model{}, fmt.Errorf("model %q sets no uncensored; set it to true when a request to it produces content its provider does not filter, else false", m.id)
+	}
+	if err := json.Unmarshal(raw, new(bool)); err != nil {
+		return model{}, fmt.Errorf("model %q has uncensored %s, which must be true or false", m.id, raw)
 	}
 	m.fields = top
 	for _, ef := range endpoints {

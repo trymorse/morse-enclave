@@ -9,16 +9,24 @@ import (
 	"morse/backend/internal/health"
 )
 
+type replyPhase uint8
+
+const (
+	unclaimed replyPhase = iota
+	claimed
+	bodyBegun
+	lost
+)
+
+func (p replyPhase) holdsTheReply() bool { return p == claimed || p == bodyBegun }
+
 type replyWriter struct {
 	outer     http.ResponseWriter
 	header    http.Header
-	status    int
+	at        replyPhase
 	firstBody time.Time
 	writeErr  error
-	// claim, when set, is asked once before the first write reaches outer. A writer it refuses has lost the reply to
-	// another, and nothing it writes reaches outer.
-	claim func() bool
-	lost  bool
+	claim     func() bool
 }
 
 var errLostTheReply = errors.New("worker: another endpoint's call began the reply first")
@@ -27,24 +35,34 @@ func newReplyWriter(outer http.ResponseWriter) *replyWriter {
 	return &replyWriter{outer: outer, header: http.Header{}}
 }
 
-// claiming is a writer of its own headers that writes to outer only once claim lets it.
 func claiming(outer http.ResponseWriter, claim func() bool) *replyWriter {
 	w := newReplyWriter(outer)
 	w.claim = claim
 	return w
 }
 
+func (w *replyWriter) phase() replyPhase { return w.at }
+
+func (w *replyWriter) enter(next replyPhase) {
+	w.at = next
+	if next == bodyBegun {
+		w.firstBody = time.Now()
+	}
+}
+
+func (w *replyWriter) unsent(callErr error) bool { return callErr != nil && w.at == unclaimed }
+
 func (w *replyWriter) Header() http.Header { return w.header }
 
 func (w *replyWriter) WriteHeader(code int) {
-	if w.status != 0 || w.lost {
+	if w.at != unclaimed {
 		return
 	}
 	if w.claim != nil && !w.claim() {
-		w.lost = true
+		w.enter(lost)
 		return
 	}
-	w.status = code
+	w.enter(claimed)
 	outer := w.outer.Header()
 	for name, values := range w.header {
 		outer[name] = values
@@ -54,11 +72,11 @@ func (w *replyWriter) WriteHeader(code int) {
 
 func (w *replyWriter) Write(p []byte) (int, error) {
 	w.WriteHeader(http.StatusOK)
-	if w.lost {
+	if w.at == lost {
 		return 0, errLostTheReply
 	}
-	if w.firstBody.IsZero() && len(p) > 0 {
-		w.firstBody = time.Now()
+	if w.at == claimed && len(p) > 0 {
+		w.enter(bodyBegun)
 	}
 	n, err := w.outer.Write(p)
 	if w.writeErr == nil {
@@ -71,7 +89,7 @@ func (w *replyWriter) FlushError() error {
 	if w.claim != nil {
 		w.WriteHeader(http.StatusOK)
 	}
-	if w.lost {
+	if w.at == lost {
 		return errLostTheReply
 	}
 	err := http.NewResponseController(w.outer).Flush()
@@ -84,7 +102,7 @@ func (w *replyWriter) FlushError() error {
 func (w *replyWriter) streamed() bool { return streamed(w.header.Get("Content-Type")) }
 
 func (w *replyWriter) observed(ctx context.Context, callErr error, cutForCaller bool, opened, returned time.Time) health.Observation {
-	began := !w.firstBody.IsZero()
+	began := w.at == bodyBegun
 	evidence := evidenceOf(ctx, callErr, w.writeErr, began)
 	if cutForCaller {
 		evidence.Cut = health.CutByCaller

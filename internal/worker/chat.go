@@ -452,10 +452,10 @@ func (o *openedChat) run(_ context.Context, w *InProcess, h Handle, g Grant, rep
 	}
 	end := o.walk(ctx, w, granted, cg, rw)
 	a, got, e, m := end.a, end.got, end.e, end.m
-	if errors.Is(got.callErr, upstream.ErrEgressRefused) && rw.status == 0 {
+	unsent := rw.unsent(got.callErr)
+	if unsent && errors.Is(got.callErr, upstream.ErrEgressRefused) {
 		return o.egressRefused(w, rw, m)
 	}
-	unsent := got.callErr != nil && rw.status == 0
 	m.Unserved = unsent && m.Cut == measure.NotCut && m.Health.Outcome.FailsOver() && m.Health.Outcome != health.Unattested && m.Health.Outcome != health.ContextOverflow
 	if unsent {
 		rw.Header().Del(HeaderPrivacyVeil)
@@ -614,7 +614,7 @@ func (o *openedChat) compact(cast chat.Cast) error {
 	return nil
 }
 
-func (u Plain) serve(ctx context.Context, w *InProcess, o *openedChat, a attempt, reply http.ResponseWriter) served {
+func (u Plain) serve(ctx context.Context, w *InProcess, o *openedChat, a attempt, reply *replyWriter) served {
 	var transcript *chat.Transcript
 	if a.route.Counter != nil {
 		transcript = chat.NewTranscript(transcriptLimit(a.call))
@@ -737,7 +737,7 @@ func (t *thinkingClock) thought() thought {
 	return thought{duration: cmp.Or(t.firstAnswer, t.now()).Sub(t.firstEvent), interleaved: t.interleaved}
 }
 
-func stream(ctx context.Context, w http.ResponseWriter, rc *http.ResponseController, prov chat.BusyRetry, c chat.Call, transcript *chat.Transcript, clock *thinkingClock, keepalive time.Duration, rv *replyVeil, cut *limitCut, encoder dialect.Encoder) served {
+func stream(ctx context.Context, w *replyWriter, rc *http.ResponseController, prov chat.BusyRetry, c chat.Call, transcript *chat.Transcript, clock *thinkingClock, keepalive time.Duration, rv *replyVeil, cut *limitCut, encoder dialect.Encoder) served {
 	sw := &sseWriter{eventStream: eventStream{w: w, rc: rc}, encoder: encoder, transcript: transcript, clock: clock, veil: rv}
 	stop := func() {}
 	if clock != nil {
@@ -753,7 +753,7 @@ func stream(ctx context.Context, w http.ResponseWriter, rc *http.ResponseControl
 	case err == nil:
 		sw.closeVeil()
 		sw.done(reported)
-	case sw.started && ctx.Err() == nil && sw.err == nil:
+	case sw.w.phase() == bodyBegun && ctx.Err() == nil && sw.err == nil:
 		sw.closeVeil()
 		sw.errorEvent()
 	}

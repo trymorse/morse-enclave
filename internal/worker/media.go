@@ -76,13 +76,13 @@ func (o *openedImages) run(_ context.Context, w *InProcess, h Handle, g Grant, r
 		}
 		end = endingOf(o.cuts.client, writeErr, err)
 		// A client that leaves once the images began going out has them, so it pays as if it stayed.
-		if end == cutByClient && !rw.firstBody.IsZero() {
+		if end == cutByClient && rw.phase() == bodyBegun {
 			end = completed
 		}
 	}
 	m.Measurement.Outcome, m.Cut, m.Refusal = end.outcome(), end.cut(), end.refusal(err)
 	m.Health = rw.observed(ctx, err, cutForCaller, opened, returned)
-	if err != nil && rw.status == 0 {
+	if rw.unsent(err) {
 		refuse(ctx, rw, err)
 	}
 	return m
@@ -156,7 +156,7 @@ func (o *openedCall) run(_ context.Context, w *InProcess, h Handle, g Grant, rep
 	end := endingOf(o.cuts.client, writeErr, err)
 	m := Measured{Measurement: measure.Measurement{Outcome: end.outcome()}, Cut: end.cut(), Served: err == nil, Refusal: end.refusal(err), Endpoint: o.endpoint}
 	m.Health = rw.observed(ctx, err, false, opened, returned)
-	if err != nil && rw.status == 0 {
+	if rw.unsent(err) {
 		refuse(ctx, rw, err)
 	}
 	return m

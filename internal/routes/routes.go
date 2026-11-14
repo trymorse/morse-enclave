@@ -75,6 +75,7 @@ type Route struct {
 	OwnedBy       string
 	Lab           string
 	OpenWeights   bool
+	Uncensored    bool
 	Retention     catalog.Retention
 	ProviderName  string
 	Serves        Serves

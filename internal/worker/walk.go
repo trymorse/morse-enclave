@@ -96,9 +96,9 @@ func (o *openedChat) walk(ctx context.Context, w *InProcess, granted []chatRoute
 			switch {
 			case end.panicked != nil:
 				panicked = cmp.Or(panicked, &end)
-			case claim.Load() == end.leg:
+			case end.rw.phase().holdsTheReply():
 				won = &end
-			case end.rw.lost:
+			case end.rw.phase() == lost:
 			case end.failedOver():
 				failed = append(failed, end)
 			case stood == nil || end.at < stood.at:
@@ -117,7 +117,7 @@ func (o *openedChat) walk(ctx context.Context, w *InProcess, granted []chatRoute
 	}
 	final := cmp.Or(won, stood)
 	if panicked != nil {
-		if final == nil || claim.Load() == panicked.leg {
+		if final == nil || panicked.rw.phase().holdsTheReply() {
 			panic(panicked.panicked)
 		}
 		w.reports.Failed(string(panicked.a.route.endpoint), fmt.Errorf("worker: a try panicked while another answered: %v", panicked.panicked))
@@ -153,7 +153,7 @@ func lingering(reports Reporter, ended <-chan legEnd, n int) <-chan Try {
 			switch end := <-ended; {
 			case end.panicked != nil:
 				reports.Failed(string(end.a.route.endpoint), fmt.Errorf("worker: a try the walk left running panicked: %v", end.panicked))
-			case !end.rw.lost && end.failedOver():
+			case end.rw.phase() != lost && end.failedOver():
 				late <- Try{Endpoint: end.a.route.endpoint, Health: end.m.Health}
 			}
 		}
