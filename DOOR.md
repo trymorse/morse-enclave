@@ -17,10 +17,10 @@ For each entry the watcher checks:
 - Check 3: the custody of each key ends at a key born in an enclave, with a floor that never falls.
 - Check 4: each shard's tree only grows, by a consistency proof from the checkpoint the last run accepted.
 - Check 5: CAA names only Morse's ACME accounts.
-- Check 6: every boot `/v1/attestation` lists has a verified record within 2 hours.
+- Check 6: every boot `/v1/attestation` lists has a verified record within 2 hours. A boot that takes a handed key drops the key it was born with unlogged, so a born key it was listed holding before that take is a note, not a failure. Check 1 still fails any certificate for it.
 - Check 7: the public image signer's statements, and every push to morse-pins `main` and `sign.yml` run, pass the rules below.
 - Check 8: no listed witness has missed a checkpoint of a shard still in service for 24 hours, no unknown one cosigns, and the newest pinned image's `internal/door/trust.go` here lists no witness `WITNESSES` does not, and no smaller k.
-- Check 9: morse-records is public.
+- Check 9: morse-records is public. GitHub's API, read with no token, must call it public. A 404 or a plain 403 fails. A 403 that names a rate limit, or a 429 that still refuses after the usual retries of GitHub reads, makes the run print a note and not judge check 9.
 
 Check 1 asks a failing certificate's OCSP responder, then its CRL, and accepts an answer only when it verifies against the issuer that signed the certificate. It lists a revoked certificate as `revoked, skipped` and does not fail it. It still fails one whose revocation it cannot read, or that its CA holds and may release, and says why. A client that does not check revocation still accepts a revoked certificate, so a `revoked, skipped` line names a certificate that could have served the name.
 

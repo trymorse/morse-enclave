@@ -13,7 +13,6 @@ import (
 	"morse/backend/internal/billing/money"
 	"morse/backend/internal/catalog"
 	"morse/backend/internal/chat"
-	"morse/backend/internal/e2ee/near"
 )
 
 const floorField = "min_privacy"
@@ -167,19 +166,16 @@ func (a *providerAsk) takeQuantizations(_ string, raw json.RawMessage) error {
 	return nil
 }
 
-func (a providerAsk) quantized(routes []chatRoute) ([]chatRoute, error) {
-	if !a.quantizations.Set() {
-		return routes, nil
-	}
-	kept := slices.DeleteFunc(slices.Clone(routes), func(r chatRoute) bool { return !a.quantizations.Admits(r.Quantization) })
-	if len(kept) > 0 {
-		return kept, nil
-	}
+func (a providerAsk) quantized() narrowing {
+	return keeping(a.quantizations.Set(), func(r chatRoute) bool { return a.quantizations.Admits(r.Quantization) }, a.quantizationUnmet)
+}
+
+func (a providerAsk) quantizationUnmet(routes []chatRoute) error {
 	var served catalog.Quantizations
 	for _, r := range routes {
 		served = served.With(r.Quantization)
 	}
-	return nil, apierr.Invalid(http.StatusBadRequest, "quantization_unmet", fmt.Sprintf("No host this request may run on serves a precision in provider.quantizations (%s). This model's hosts at the tiers the request reaches serve %s. Add one of those to quantizations, or choose another model; GET /v1/models lists each tier's quantizations.", a.quantizations, served)).Naming("provider.quantizations")
+	return apierr.Invalid(http.StatusBadRequest, "quantization_unmet", fmt.Sprintf("No host this request may run on serves a precision in provider.quantizations (%s). This model's hosts at the tiers the request reaches serve %s. Add one of those to quantizations, or choose another model; GET /v1/models lists each tier's quantizations.", a.quantizations, served)).Naming("provider.quantizations")
 }
 
 // sealedQuantizations refuses a sealed body that names provider.quantizations, since no vendor whose sealed body the
@@ -189,13 +185,7 @@ func sealedQuantizations(req *chat.Request, p protocol) error {
 	if _, named := sealedProviderField(req, "quantizations"); !named {
 		return nil
 	}
-	why := `a body sealed to Phala must carry provider exactly {"aci_verified":true,"zdr":true}`
-	vendor := "Phala"
-	if p.scheme == near.Scheme {
-		why = "a body sealed to NEAR is forwarded verbatim and may carry no provider field"
-		vendor = "NEAR"
-	}
-	return apierr.Invalid(http.StatusBadRequest, "quantization_unsupported", fmt.Sprintf(`The model %q cannot take provider.quantizations on an E2EE request sealed to %s: %s. Drop quantizations, or send the request in plaintext, where it filters by each host's precision.`, req.Model, vendor, why)).Naming("provider.quantizations")
+	return apierr.Invalid(http.StatusBadRequest, "quantization_unsupported", fmt.Sprintf(`The model %q cannot take provider.quantizations on an E2EE request sealed to %s: a body sealed to %s %s. Drop quantizations, or send the request in plaintext, where it filters by each host's precision.`, req.Model, p.scheme.Vendor, p.scheme.Vendor, p.scheme.ProviderRule)).Naming("provider.quantizations")
 }
 
 // dollarsOf reads a price as OpenRouter spells it, a JSON number or a string holding one.
@@ -260,7 +250,7 @@ func (a providerAsk) narrow(n chatName, routes []chatRoute, keyFloor catalog.Tie
 		}
 	}
 	routes = n.optIn(routes, max(a.floor, keyFloor))
-	routes, err := a.quantized(routes)
+	routes, err := a.quantized()(routes)
 	if err != nil {
 		return nil, err
 	}

@@ -2,7 +2,9 @@
 
 Usage: python3 door_watch.py --state <dir> [--alerts] [--restored <cache key>] --run-url <url> --alert-body alert.md [--setup-code N --setup-log setup.txt] -- <check-door.py command>
 
-It passes --verdict to the command, so the kind of each run comes from check-door.py's JSON verdict. A run with no
+It passes --verdict to the command, so the kind of each run comes from check-door.py's JSON verdict. It reruns only a
+run whose reads of CT, Rekor, TUF or DNS raised. GitHub is retried inside check-door.py (github_read.py, after 2s and 5s), and a
+GitHub read that still fails ends as a check 7 or check 9 result, so this does not rerun it. A run with no
 verdict, or one whose exit code is not the verdict's, could not watch the door. It keeps the last kind and how many
 runs in a row had it in <dir>/streak. With --alerts it writes the alert's label, title and comment hours to
 GITHUB_OUTPUT and its body to --alert-body, and exits 1 when the run failed a check or could not read its evidence.

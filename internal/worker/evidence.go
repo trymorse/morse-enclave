@@ -9,6 +9,7 @@ import (
 	"morse/backend/internal/apierr"
 	"morse/backend/internal/attestation"
 	"morse/backend/internal/chat"
+	"morse/backend/internal/nitro/verify"
 )
 
 type Vendor struct {
@@ -55,7 +56,16 @@ func (w *InProcess) Attest(ctx context.Context, v Vendor, nonce string, f Format
 	if source.Embedded() {
 		att.VendorPins.StatementSHA256 = "embedded"
 	}
-	return att, evidenceRefusal(err)
+	if err != nil {
+		return att, evidenceRefusal(err)
+	}
+	if w.sealing.identity != nil && w.sealing.Attest != nil {
+		pins := att.VendorPins
+		if pins.Document, err = w.sealing.Attest(ctx, verify.VendorPinsNonce(nonce, pins.Sequence, pins.StatementSHA256)); err != nil {
+			return chat.Attestation{}, err
+		}
+	}
+	return att, nil
 }
 
 func (w *InProcess) attesterOf(v Vendor) (chat.Attester, error) {

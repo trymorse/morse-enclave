@@ -157,6 +157,7 @@ var (
 	ErrScheduleInvalid = apierr.Invalid(http.StatusBadRequest, "task_schedule_invalid", "The schedule is not one Morse runs: cron is 5 fields with a single minute, day of month and day of week not both set, and a preset's cron has its preset's shape; once carries once_local and no cron.")
 
 	ErrEpochUnknown  = apierr.Invalid(http.StatusMisdirectedRequest, "task_epoch_unknown", "This worker holds no task key of that epoch. A device must seal the task again.")
+	ErrKeyPending    = apierr.Error{Status: http.StatusServiceUnavailable, Type: "server_error", Code: "task_key_pending", Message: "This enclave is taking its task key from another, which it does in the first minutes after it starts. Send the task again shortly."}
 	ErrBundleInvalid = apierr.Invalid(http.StatusBadRequest, "task_bundle_invalid", "The task's bundle does not open under this worker's task key, or what it holds is not a bundle.")
 	ErrMetaMismatch  = apierr.Invalid(http.StatusBadRequest, "task_meta_mismatch", "The relay's route, mode, notify, or schedule for this task is not the bundle's.")
 )

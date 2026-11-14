@@ -30,13 +30,11 @@ var (
 type AppCompose struct {
 	PreLaunchScript string
 	AllowedEnvs     []string
-	Services        map[string]Service
-}
-
-type Service struct {
-	Image       string
-	Environment map[string]string
-	Mounts      []string
+	// Manifest holds the manifest's other settings, as JSON decodes them, and Settings the compose file's other
+	// top-level settings, but its x- extensions.
+	Manifest map[string]any
+	Settings map[string]any
+	Services map[string]Service
 }
 
 func ParseAppCompose(raw string) (AppCompose, error) {
@@ -60,23 +58,20 @@ func ParseAppCompose(raw string) (AppCompose, error) {
 			}
 		}
 	}
-	var file struct {
-		Services map[string]struct {
-			Image       string      `yaml:"image"`
-			Environment yaml.Node   `yaml:"environment"`
-			Volumes     []yaml.Node `yaml:"volumes"`
-		} `yaml:"services"`
-	}
-	if err := yaml.Unmarshal([]byte(manifest.DockerComposeFile), &file); err != nil {
-		return AppCompose{}, fmt.Errorf("docker_compose_file is not YAML: %w", err)
-	}
-	c := AppCompose{PreLaunchScript: manifest.PreLaunchScript, AllowedEnvs: manifest.AllowedEnvs, Services: map[string]Service{}}
-	for name, s := range file.Services {
-		env, err := environment(&s.Environment)
-		if err != nil {
-			return AppCompose{}, fmt.Errorf("service %s: %w", name, err)
+	c := AppCompose{PreLaunchScript: manifest.PreLaunchScript, AllowedEnvs: manifest.AllowedEnvs, Manifest: map[string]any{}}
+	for key, value := range fields {
+		switch key {
+		case "docker_compose_file", "pre_launch_script", "allowed_envs":
+		default:
+			var v any
+			if err := json.Unmarshal(value, &v); err != nil {
+				return AppCompose{}, fmt.Errorf("app_compose %s: %w", key, err)
+			}
+			c.Manifest[key] = v
 		}
-		c.Services[name] = Service{Image: s.Image, Environment: env, Mounts: mounts(s.Volumes)}
+	}
+	if c.Settings, c.Services, err = parseComposeFile(manifest.DockerComposeFile); err != nil {
+		return AppCompose{}, err
 	}
 	return c, nil
 }
@@ -112,72 +107,6 @@ func manifestFields(raw string) (map[string]json.RawMessage, error) {
 		return nil, errors.New("holds more than one value")
 	}
 	return fields, nil
-}
-
-func resolve(n *yaml.Node) *yaml.Node {
-	for n.Kind == yaml.AliasNode {
-		n = n.Alias
-	}
-	return n
-}
-
-func environment(n *yaml.Node) (map[string]string, error) {
-	n = resolve(n)
-	env := map[string]string{}
-	set := func(key, value string) error {
-		if _, dup := env[key]; dup {
-			return fmt.Errorf("environment sets %s twice", key)
-		}
-		env[key] = value
-		return nil
-	}
-	switch {
-	case n.Kind == 0, n.Kind == yaml.ScalarNode && n.Tag == "!!null":
-	case n.Kind == yaml.SequenceNode:
-		for _, item := range n.Content {
-			if item = resolve(item); item.Kind != yaml.ScalarNode {
-				return nil, errors.New("environment lists an entry that is not a string")
-			}
-			key, value, _ := strings.Cut(item.Value, "=")
-			if err := set(key, value); err != nil {
-				return nil, err
-			}
-		}
-	case n.Kind == yaml.MappingNode:
-		for i := 0; i+1 < len(n.Content); i += 2 {
-			k, v := resolve(n.Content[i]), resolve(n.Content[i+1])
-			if k.Kind != yaml.ScalarNode || v.Kind != yaml.ScalarNode {
-				return nil, errors.New("environment maps an entry that is not a scalar")
-			}
-			if err := set(k.Value, v.Value); err != nil {
-				return nil, err
-			}
-		}
-	default:
-		return nil, errors.New("environment is neither a list nor a map")
-	}
-	return env, nil
-}
-
-// mounts lists the host paths and named volumes a service mounts, in the short `source:target` and the
-// long `source:` forms.
-func mounts(volumes []yaml.Node) []string {
-	var sources []string
-	for i := range volumes {
-		switch v := resolve(&volumes[i]); v.Kind {
-		case yaml.ScalarNode:
-			if source, _, ok := strings.Cut(v.Value, ":"); ok {
-				sources = append(sources, source)
-			}
-		case yaml.MappingNode:
-			for i := 0; i+1 < len(v.Content); i += 2 {
-				if resolve(v.Content[i]).Value == "source" {
-					sources = append(sources, resolve(v.Content[i+1]).Value)
-				}
-			}
-		}
-	}
-	return sources
 }
 
 type launcher struct {
@@ -219,10 +148,6 @@ func (c AppCompose) launcher() (launcher, error) {
 	}
 	return l, nil
 }
-
-// composeVariable is a variable docker compose interpolates: $NAME, or ${NAME with an optional default, error, or
-// alternate after it. A $$ is a literal dollar sign and interpolates nothing.
-var composeVariable = regexp.MustCompile(`\$\$|\$\{?([A-Za-z_][A-Za-z0-9_]*)`)
 
 type deployerVariables struct {
 	listed   []string
@@ -340,11 +265,8 @@ func (d deployerVariables) checkScalar(path []string, text string, literal int) 
 	if reviewed, ok := d.reviewed[at]; ok && reviewed == text {
 		return nil
 	}
-	for _, m := range composeVariable.FindAllStringSubmatchIndex(text, -1) {
-		if m[2] < 0 || m[0] >= literal {
-			continue
-		}
-		if name := text[m[2]:m[3]]; slices.Contains(d.listed, name) {
+	for _, name := range Names(text[:literal]) {
+		if slices.Contains(d.listed, name) {
 			return fmt.Errorf("%s is %.200q, which interpolates %s, and allowed_envs lets the deployer set it", at, text, name)
 		}
 	}

@@ -13,7 +13,7 @@ import base64
 import hashlib
 import json
 import sys
-import types
+import importlib.util
 import unittest
 import unittest.mock
 from datetime import datetime, timedelta, timezone
@@ -303,9 +303,9 @@ class WitnessesTest(Fixture):
         return self.real_module().WITNESSES
 
     def real_module(self):
-        module = types.ModuleType("fresh")
-        module.__file__ = check_door.__file__
-        exec(compile((HERE / "check-door.py").read_text(), "check-door.py", "exec"), module.__dict__)
+        spec = importlib.util.spec_from_file_location("check_door_unpatched", HERE / "check_door.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
         return module
 
 
@@ -313,8 +313,8 @@ class RekorTest(unittest.TestCase):
     """The Rekor v2 reader on its own: each refusal an entry can draw, and the proofs built from tiles."""
 
     def setUp(self):
-        self.real_root = check_door.nitro.AWS_NITRO_ROOT
-        check_door.nitro.AWS_NITRO_ROOT = ROOT
+        self.real_root = nitro.AWS_NITRO_ROOT
+        nitro.AWS_NITRO_ROOT = ROOT
         self.log = Log()
         self.tls = ec.generate_private_key(ec.SECP256R1())
         self.hpke = bytes([11]) * 32
@@ -325,7 +325,7 @@ class RekorTest(unittest.TestCase):
         self.policy = rekor.make_policy(3, [(w.vkey, w.operator) for w in WITNESSES])
 
     def tearDown(self):
-        check_door.nitro.AWS_NITRO_ROOT = self.real_root
+        nitro.AWS_NITRO_ROOT = self.real_root
 
     def shards(self, *logs, tlogs=()):
         return rekor.read_shards(json.dumps({"tlogs": [l.tlog() for l in logs or (self.log,)] + list(tlogs)}))[0]
@@ -460,7 +460,7 @@ class RekorTest(unittest.TestCase):
         if TWIN is None:
             self.skipTest("the morse-enclave export does not carry internal/door/watch")
         twin = json.loads(TWIN.read_text())
-        check_door.nitro.AWS_NITRO_ROOT = x509.load_der_x509_certificate(base64.b64decode(twin["nitro_root"]))
+        nitro.AWS_NITRO_ROOT = x509.load_der_x509_certificate(base64.b64decode(twin["nitro_root"]))
         shards, _ = rekor.read_shards(json.dumps(twin["trusted_root"]))
         policy = rekor.make_policy(twin["k"], twin["witnesses"])
         history = [(datetime(2000, 1, 1, tzinfo=timezone.utc), twin["pins"])]

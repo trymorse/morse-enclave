@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"morse/backend/internal/attestation"
@@ -105,7 +106,27 @@ type Config struct {
 type Loader struct {
 	Config
 	// reported is the newest sequence Log mode has reported, so it says so once.
-	reported uint64
+	reported         atomic.Uint64
+	newestUnverified atomic.Uint64
+	behindSince      atomic.Int64
+}
+
+type Lag struct {
+	Newest uint64
+	Taken  uint64
+	Behind time.Duration
+}
+
+func (l *Loader) Lag() (Lag, bool) {
+	newest := l.newestUnverified.Load()
+	if l.Mode == Off || newest == 0 {
+		return Lag{}, false
+	}
+	lag := Lag{Newest: newest, Taken: l.floor()}
+	if since := l.behindSince.Load(); since != 0 && lag.Newest > lag.Taken {
+		lag.Behind = time.Since(time.Unix(0, since))
+	}
+	return lag, true
 }
 
 func New(c Config) *Loader {
@@ -148,7 +169,7 @@ var (
 )
 
 func (l *Loader) floor() uint64 {
-	return max(attestation.Vendors().Source.Sequence, l.Floor, l.reported)
+	return max(attestation.Vendors().Source.Sequence, l.Floor, l.reported.Load())
 }
 
 func (l *Loader) branch() pinsbranch.Reader {
@@ -179,8 +200,23 @@ func (l *Loader) once(ctx context.Context) error {
 		}
 		return now, nil
 	}
-	for _, c := range candidates {
-		err := l.take(ctx, branch, commit, c, clock)
+	var newest uint64
+	defer func() {
+		if newest == 0 {
+			return
+		}
+		if newest <= l.floor() {
+			l.behindSince.Store(0)
+		} else if l.behindSince.Load() == 0 {
+			l.behindSince.Store(time.Now().UnixNano())
+		}
+		l.newestUnverified.Store(newest)
+	}()
+	for i, c := range candidates {
+		seen, err := l.take(ctx, branch, commit, c, clock)
+		if i == 0 {
+			newest = seen
+		}
 		if err == nil || errors.Is(err, errNotNewer) || errors.Is(err, errNoTime) {
 			return err
 		}
@@ -189,44 +225,46 @@ func (l *Loader) once(ctx context.Context) error {
 	return nil
 }
 
-func (l *Loader) take(ctx context.Context, branch pinsbranch.Reader, commit string, c pinsbranch.Candidate, clock func() (time.Time, error)) error {
+func (l *Loader) take(ctx context.Context, branch pinsbranch.Reader, commit string, c pinsbranch.Candidate, clock func() (time.Time, error)) (seen uint64, err error) {
 	statement, err := branch.File(ctx, commit, c.Statement, maxStatement)
 	if err != nil {
-		return err
+		return seen, err
 	}
-	// Reading the sequence before the signature only decides whether to fetch more: nothing is trusted until it verifies.
-	if peek, err := pinsig.ParseVendorStatement(statement); err == nil && peek.Sequence <= l.floor() {
-		return errNotNewer
+	if unverified, err := pinsig.ParseVendorStatement(statement); err == nil {
+		seen = unverified.Sequence
+		if seen <= l.floor() {
+			return seen, errNotNewer
+		}
 	}
 	bundle, err := branch.File(ctx, commit, c.Bundle, maxStatement)
 	if err != nil {
-		return err
+		return seen, err
 	}
 	st, signed, err := pinsig.VerifyVendor(statement, bundle, l.Root, l.Identity, l.Witnesses)
 	if err != nil {
-		return err
+		return seen, err
 	}
 	now, err := clock()
 	if err != nil {
-		return err
+		return seen, err
 	}
 	// The active sequence must be strictly below the statement's, and Admit's floor is inclusive.
 	if err := pinsig.AdmitVendor(st, l.floor()+1, signed, now, l.MaxAge); err != nil {
-		return err
+		return seen, err
 	}
 	// The files are read at the main commit the signer built from, which VerifyVendor bound to the statement.
 	var canonical [len(pinsig.VendorFiles)][]byte
 	for i, key := range pinsig.VendorFiles {
 		path, err := publicPath(key)
 		if err != nil {
-			return err
+			return seen, err
 		}
 		raw, err := branch.File(ctx, st.PinsCommit, path, maxFile)
 		if err != nil {
-			return err
+			return seen, err
 		}
 		if canonical[i], err = st.CheckFile(key, raw); err != nil {
-			return err
+			return seen, err
 		}
 	}
 	sum := sha256.Sum256(statement)
@@ -234,7 +272,7 @@ func (l *Loader) take(ctx context.Context, branch pinsbranch.Reader, commit stri
 	// phala_model_pins.json, is for the app's models list; nothing here parses it.
 	next, err := attestation.ParseVendorSet(canonical[0], canonical[1], canonical[2], attestation.VendorSource{Sequence: st.Sequence, StatementSHA256: hex.EncodeToString(sum[:])})
 	if err != nil {
-		return err
+		return seen, err
 	}
 	from := attestation.Vendors()
 	event := Event{From: from.Source, To: next.Source, Diff: diff(from.Counts(), next.Counts())}
@@ -247,11 +285,11 @@ func (l *Loader) take(ctx context.Context, branch pinsbranch.Reader, commit stri
 			l.OnSwap()
 		}
 	default:
-		l.reported = st.Sequence
+		l.reported.Store(st.Sequence)
 		event.Kind = WouldSwap
 		l.observe(event)
 	}
-	return nil
+	return seen, nil
 }
 
 // publicPath is where trymorse/morse-pins holds the file a vendor statement lists under key. As its sign.yml

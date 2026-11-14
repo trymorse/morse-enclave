@@ -273,6 +273,8 @@
   "sealable_patterns": [
     "POST /v1/chat/completions",
     "POST /v1/chat/compact",
+    "POST /v1/messages",
+    "POST /v1/responses",
     "POST /v1/images/generations",
     "POST /v1/videos",
     "GET /v1/videos/{id}/content",

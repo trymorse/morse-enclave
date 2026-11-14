@@ -1,4 +1,4 @@
-"""The public image signer's statements, verified offline, for check-door.py's check 7, which reads this file. It is
+"""The public image signer's statements, verified offline, for check_door.py's check 7. It is
 not a script.
 
 It checks a Sigstore bundle over a statement as the enclave's pinsig.VerifyBundleV2 does: one hashedrekord v0.0.2

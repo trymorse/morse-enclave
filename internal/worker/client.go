@@ -17,7 +17,6 @@ import (
 	"time"
 
 	"morse/backend/internal/apierr"
-	"morse/backend/internal/attested"
 	"morse/backend/internal/billing/measure"
 	"morse/backend/internal/catalog"
 	"morse/backend/internal/chat"
@@ -152,16 +151,16 @@ func (c *Client) OpenSealed(ctx context.Context, o SealedOpening) (SealedAdmissi
 	return admissionOf(data)
 }
 
-func (c *Client) Unpinned(ctx context.Context) ([]attested.UnpinnedRelease, error) {
+func (c *Client) Unpinned(ctx context.Context) (Unpinned, error) {
 	data, _, err := c.get(ctx, "/unpinned")
 	if err != nil {
-		return nil, err
+		return Unpinned{}, err
 	}
-	var reply unpinnedWire
+	var reply Unpinned
 	if err := json.Unmarshal(data, &reply); err != nil {
-		return nil, fmt.Errorf("worker: /unpinned: %w", err)
+		return Unpinned{}, fmt.Errorf("worker: /unpinned: %w", err)
 	}
-	return reply.Releases, nil
+	return reply, nil
 }
 
 func (c *Client) Attestation(ctx context.Context) (Attested, error) {
@@ -173,11 +172,14 @@ func (c *Client) Attestation(ctx context.Context) (Attested, error) {
 	if err := keyID.UnmarshalText([]byte(header.Get(headerKeyID))); err != nil {
 		return Attested{}, fmt.Errorf("worker: /attestation named no key: %w", err)
 	}
+	if header.Get(headerTaskKey) == taskKeyPending && header.Get(headerTaskEpoch) == "" {
+		return Attested{Document: data, KeyID: keyID}, nil
+	}
 	var epoch taskseal.Epoch
 	if err := epoch.UnmarshalText([]byte(header.Get(headerTaskEpoch))); err != nil {
 		return Attested{}, fmt.Errorf("worker: /attestation named no task epoch: %w", err)
 	}
-	return Attested{Document: data, KeyID: keyID, TaskEpoch: epoch}, nil
+	return Attested{Document: data, KeyID: keyID, TaskEpoch: &epoch}, nil
 }
 
 func (c *Client) Run(ctx context.Context, h Handle, g Grant, reply http.ResponseWriter) Measured {

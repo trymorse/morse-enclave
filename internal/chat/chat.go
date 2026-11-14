@@ -712,6 +712,9 @@ type VendorPins struct {
 	Sequence uint64 `json:"sequence,omitempty"`
 	// StatementSHA256 is the hex sha256 of the release's vendor statement, or "embedded".
 	StatementSHA256 string `json:"statement_sha256"`
+	// Document is the worker's attestation document whose nonce is verify.VendorPinsNonce of the caller's nonce and
+	// this set, so a verifier can prove the attested image held it. Nil when the worker holds no sealing key.
+	Document []byte `json:"document,omitempty"`
 }
 
 type Attester interface {

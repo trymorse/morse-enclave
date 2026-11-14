@@ -10,6 +10,7 @@ statements of trymorse/morse-pins recorded in this repository. It reads nothing 
 Usage: uv run test_signer.py
 """
 
+import io
 import json
 import sys
 import unittest
@@ -20,7 +21,6 @@ from datetime import timedelta
 sys.dont_write_bytecode = True
 from check_door_fixtures import *  # noqa: E402,F403
 
-signer = check_door.signer
 DOOR_TESTDATA = SOURCE / "internal/door/testdata"
 LIVE = SOURCE / "internal/pinsbranch/testdata"
 TRUSTED_ROOT = SOURCE / "internal/pinsig/sigstore_trusted_root.json"
@@ -626,8 +626,8 @@ class GitHubBlipTest(unittest.TestCase):
             except Exception as e:
                 return e, len(calls), [c.args[0] for c in slept.call_args_list]
 
-    def refusal(self, code):
-        return urllib.error.HTTPError(check_door.signer_watch.RUNS_URL, code, "refused", {}, None)
+    def refusal(self, code, headers=None, body=b""):
+        return urllib.error.HTTPError(check_door.signer_watch.RUNS_URL, code, "refused", headers or {}, io.BytesIO(body))
 
     def test_a_502_then_an_answer_reads_the_answer(self):
         for blip in (self.refusal(502), self.refusal(503), self.refusal(429), urllib.error.URLError(ConnectionResetError(54, "reset")), urllib.error.URLError(ConnectionRefusedError(61, "refused")), ConnectionResetError(54, "reset")):
@@ -656,6 +656,35 @@ class GitHubBlipTest(unittest.TestCase):
         public = json.dumps({"visibility": "public"}).encode()
         self.assertEqual(self.fetch(self.refusal(502), public, read=check_door.records_visibility), ("public", 2, [2]))
         self.assertEqual(self.fetch(self.refusal(404), public, read=check_door.records_visibility), ("answers 404", 1, []))
+
+    def test_morse_records_visibility_answers_public_on_a_200(self):
+        self.assertEqual(self.fetch(json.dumps({"visibility": "public"}).encode(), read=check_door.records_visibility), ("public", 1, []))
+
+    def test_morse_records_visibility_fails_a_403_that_names_no_rate_limit(self):
+        self.assertEqual(self.fetch(self.refusal(403, body=b'{"message": "Forbidden"}'), read=check_door.records_visibility), ("answers 403", 1, []))
+
+    def rate_limits(self):
+        return (self.refusal(403, {"x-ratelimit-remaining": "0"}), self.refusal(403, {"retry-after": "60"}),
+                self.refusal(403, body=b'{"message": "You have exceeded a secondary rate limit."}'), self.refusal(429))
+
+    def test_github_reads_fail_a_rate_limited_403_at_once(self):
+        for limit in self.rate_limits()[:3]:
+            got, calls, slept = self.fetch(limit, b"{}")
+            self.assertIsInstance(got, urllib.error.HTTPError)
+            self.assertEqual((got.code, calls, slept), (403, 1, []))
+
+    def test_a_rate_limit_leaves_morse_records_unread_without_another_wait(self):
+        for limit in self.rate_limits()[:3]:
+            got, calls, slept = self.fetch(limit, read=check_door.records_visibility)
+            self.assertIsInstance(got, check_door.Note)
+            self.assertEqual(got, "could not be read: GitHub answers 403 for a rate limit")
+            self.assertEqual((calls, slept), (1, []))
+
+    def test_a_429_that_outlasts_the_usual_retries_leaves_morse_records_unread(self):
+        got, calls, slept = self.fetch(self.refusal(429), self.refusal(429), self.refusal(429), read=check_door.records_visibility)
+        self.assertIsInstance(got, check_door.Note)
+        self.assertEqual(got, "could not be read: GitHub answers 429 for a rate limit")
+        self.assertEqual((calls, slept), (3, [2, 5]))
 
 
 if __name__ == "__main__":

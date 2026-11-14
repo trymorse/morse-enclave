@@ -1,7 +1,6 @@
 package door
 
 import (
-	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -27,7 +26,8 @@ var refusalNames = enum.Names[ConnectionRefusal]{NoProxyHeader: "no_proxy_header
 
 func (r ConnectionRefusal) String() string { return refusalNames.String(r) }
 
-var proxyV2Signature = []byte("\r\n\r\n\x00\r\nQUIT\n")
+// ProxyV2Signature opens every PROXY protocol v2 header.
+const ProxyV2Signature = "\r\n\r\n\x00\r\nQUIT\n"
 
 const (
 	proxyV2Fixed  = 16
@@ -44,12 +44,31 @@ var (
 	errBadProxyHeader = errors.New("door: the PROXY v2 header is malformed")
 )
 
+// ProxyV2Header is a PROXY v2 PROXY command that names src as the client of a TCP stream to dst, the header readHeader
+// reads. An IPv4 address paired with an IPv6 one is sent as an IPv4-mapped IPv6 address.
+func ProxyV2Header(src, dst netip.AddrPort) []byte {
+	from, to := src.Addr().Unmap(), dst.Addr().Unmap()
+	if from.Is4() != to.Is4() {
+		from, to = netip.AddrFrom16(src.Addr().As16()), netip.AddrFrom16(dst.Addr().As16())
+	}
+	family, size := byte(proxyV2TCP4), 12
+	if !from.Is4() {
+		family, size = proxyV2TCP6, 36
+	}
+	head := append([]byte(ProxyV2Signature), proxyV2Proxy, family)
+	head = binary.BigEndian.AppendUint16(head, uint16(size))
+	head = append(head, from.AsSlice()...)
+	head = append(head, to.AsSlice()...)
+	head = binary.BigEndian.AppendUint16(head, src.Port())
+	return binary.BigEndian.AppendUint16(head, dst.Port())
+}
+
 func readHeader(r io.Reader) (netip.AddrPort, error) {
 	var fixed [proxyV2Fixed]byte
 	if _, err := io.ReadFull(r, fixed[:]); err != nil {
 		return netip.AddrPort{}, fmt.Errorf("%w: %w", errNoProxyHeader, err)
 	}
-	if !bytes.Equal(fixed[:len(proxyV2Signature)], proxyV2Signature) {
+	if string(fixed[:len(ProxyV2Signature)]) != ProxyV2Signature {
 		return netip.AddrPort{}, errNoProxyHeader
 	}
 	command, family, length := fixed[12], fixed[13], int(binary.BigEndian.Uint16(fixed[14:]))

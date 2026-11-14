@@ -257,7 +257,7 @@ func (r *Run[A]) afterPass(s *Step) (Stepped[A], error) {
 			r.pending = calls
 			return r.advance()
 		}
-		if answer := strings.TrimSpace(g.content); answer != "" {
+		if answer, ok := g.answer(s.callable); ok {
 			r.passes++
 			r.phase = answered{answer}
 			return r.done()
@@ -483,14 +483,22 @@ func (r *Run[A]) Finish() (Finished, error) {
 
 func settled(s *Step) phase {
 	g := s.got
-	answer := strings.TrimSpace(g.content)
-	switch {
-	case g.served && answer != "" && !(s.callable && len(g.calls) > 0):
+	if answer, ok := g.answer(s.callable); ok {
 		return answered{answer}
-	case !g.served:
+	}
+	if !g.served {
 		return failed{g.code}
 	}
 	return failed{}
+}
+
+// answer is the text a served pass answered with: it holds some, and calls no tool the step could run.
+func (g Got) answer(callable bool) (string, bool) {
+	text := strings.TrimSpace(g.content)
+	if !g.served || callable && len(g.calls) > 0 {
+		return "", false
+	}
+	return text, text != ""
 }
 
 type stepState uint8

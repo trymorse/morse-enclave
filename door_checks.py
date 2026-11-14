@@ -2,6 +2,10 @@ import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
+import door_records as records
+import rekor
+from revocation import Revocation
+
 RECORDS_REPO_URL = "https://api.github.com/repos/trymorse/morse-records"
 LIVE_GRACE = timedelta(hours=2)
 RUN_GAP = timedelta(minutes=7)
@@ -28,7 +32,7 @@ def level(failure):
 @dataclass(frozen=True)
 class Boot:
     first_seen: datetime | None
-    spkis: tuple
+    spkis: dict[str, datetime | None]
 
     def young(self, now):
         return self.first_seen is not None and now - self.first_seen < LIVE_GRACE
@@ -37,6 +41,12 @@ class Boot:
         if self.first_seen is None:
             return "this watcher cannot date when it first saw it live, so how long it served is unknown"
         return f"this watcher first saw it live at {self.first_seen.isoformat(timespec='seconds')}"
+
+    def showed_first(self, spki, handed):
+        if handed not in self.spkis:
+            return False
+        a, b = self.spkis[spki], self.spkis[handed]
+        return a is None or b is not None and a <= b
 
 
 @dataclass
@@ -206,11 +216,23 @@ def check_live(ev):
             failures.append(f"live document {n} is from an image no record can admit: {seen.unpinned}")
         elif (seen.key_id, seen.spki_sha256) not in pairs and not ev.boots[seen.key_id].young(ev.now):
             failures.append(f"live document {n}: the boot with HPKE key {seen.key_id} holds SPKI {seen.spki_sha256}, which no verified record of that boot attests, and {ev.boots[seen.key_id].seen()}")
+    took = {}
+    for v in ev.verified:
+        if v.sender is not None:
+            took.setdefault(v.boot, {})[v.spki_sha256] = v.sender
     for key_id, boot in sorted(ev.boots.items()):
         if boot.young(ev.now):
             continue
-        for spki in boot.spkis:
-            if (key_id, spki) not in held and (key_id, spki) not in pairs:
+        unrecorded = [spki for spki in boot.spkis if (key_id, spki) not in pairs]
+        for spki in unrecorded:
+            if (key_id, spki) in held:
+                continue
+            handed = [(h, sender) for h, sender in sorted(took.get(key_id, {}).items()) if h != spki and boot.showed_first(spki, h)]
+            if len(unrecorded) == 1 and handed:
+                h, sender = handed[0]
+                when = f"before it took SPKI {h} from boot {sender}" if None not in (boot.spkis[spki], boot.spkis[h]) else f"beside SPKI {h} it took from boot {sender}, though this watcher's older state did not record when it saw each key"
+                failures.append(Note(f"the boot with HPKE key {key_id} has no verified record of SPKI {spki}, which it held live {when}, so {spki} is taken as the key it was born with, which the door drops unlogged when it takes a key; check 1 still fails any certificate for it"))
+            else:
                 failures.append(f"the boot with HPKE key {key_id} has no verified record of SPKI {spki}, which it held live, and {boot.seen()}")
     if ev.last_run is None:
         return failures + [UNENFORCED]
@@ -247,4 +269,6 @@ def check_witnesses(ev):
 def check_records_public(ev):
     if ev.records_visibility == "public":
         return []
+    if isinstance(ev.records_visibility, Note):
+        return [Note(f"{RECORDS_REPO_URL}, read with no token, {ev.records_visibility}, so this run does not judge check 9")]
     return [f"{RECORDS_REPO_URL}, read with no token, {ev.records_visibility}, so an outside watcher cannot read the pointers or the leaf archive"]

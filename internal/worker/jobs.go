@@ -1,7 +1,6 @@
 package worker
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -222,7 +221,7 @@ func (s *eventStream) researchEvent(e research.Event) error {
 	if err != nil {
 		return err
 	}
-	return s.event(bytes.NewReader(data))
+	return s.write(func(w io.Writer) error { return writeEvent(w, "", data) })
 }
 
 func submit(c cuts, endpoint catalog.EndpointID, reply http.ResponseWriter, queued any, accepted func(media.Submitted), start func(ctx context.Context) (media.Submitted, error)) Measured {

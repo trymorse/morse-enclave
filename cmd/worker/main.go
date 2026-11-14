@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"maps"
@@ -25,6 +26,7 @@ import (
 	"morse/backend/internal/privacyveil"
 	"morse/backend/internal/routes"
 	"morse/backend/internal/seal"
+	"morse/backend/internal/taskseal"
 	"morse/backend/internal/tee"
 	"morse/backend/internal/vendorpins"
 	"morse/backend/internal/worker"
@@ -98,6 +100,8 @@ func build(getenv func(string) string, log *logger) (built, error) {
 	if err != nil {
 		return built{}, err
 	}
+	tasks := taskKeys(attester, taskKey, time.Now())
+	gate.ServeTaskKeys(tasks)
 	mode, err := vendorpins.ParseMode(getenv("PROXY_VENDOR_PINS"))
 	if err != nil {
 		return built{}, fmt.Errorf("PROXY_VENDOR_PINS: %w", err)
@@ -108,7 +112,7 @@ func build(getenv func(string) string, log *logger) (built, error) {
 	pins := vendorpins.New(vendorpins.Config{
 		Mode: mode, Client: client, Root: trust.Root, Identity: trust.Identity, Witnesses: trust.Witnesses, MaxAge: door.PinsMaxAge, Floor: floor,
 		Now: func(ctx context.Context) (time.Time, error) {
-			document, err := gate.Attest(ctx)
+			document, err := gate.Attest(ctx, nil)
 			if err != nil {
 				return time.Time{}, err
 			}
@@ -131,7 +135,7 @@ func build(getenv func(string) string, log *logger) (built, error) {
 	if err != nil {
 		return built{}, err
 	}
-	sealingKeys, err := worker.HoldKeys(identity, taskKey)
+	sealingKeys, err := worker.HoldKeys(identity, tasks)
 	if err != nil {
 		return built{}, err
 	}
@@ -141,13 +145,21 @@ func build(getenv func(string) string, log *logger) (built, error) {
 		filter = tee.NewPrivacyFilter(getenv(privacyFilterKeyEnv), tee.Deps{Base: transport, Unpinned: client, Policy: attestation.NVIDIAPolicy(), Observe: log.attestation})
 		veil = &worker.PrivacyVeil{Filter: filter, Cache: privacyveil.NewCache(privacyVeilCacheBytes, privacyVeilCacheTTL, time.Now)}
 	}
+	instance := rand.Text()
 	inner, err := worker.NewInProcess(worker.Config{
-		Models:      models,
-		Lookup:      lookup.New(services, client, time.Now),
-		Plugins:     pluginRelay,
-		Reports:     log,
-		Sealing:     worker.Sealing{Keys: sealingKeys, Attest: gate.Attest},
-		Unpinned:    gates.Unpinned,
+		Models:   models,
+		Lookup:   lookup.New(services, client, time.Now),
+		Plugins:  pluginRelay,
+		Reports:  log,
+		Sealing:  worker.Sealing{Keys: sealingKeys, Attest: gate.Attest},
+		Unpinned: gates.Unpinned,
+		VendorPins: func() *worker.VendorPinsLag {
+			lag, ok := pins.Lag()
+			if !ok {
+				return nil
+			}
+			return &worker.VendorPinsLag{Worker: instance, Newest: lag.Newest, Taken: lag.Taken, Behind: lag.Behind}
+		},
 		PrivacyVeil: veil,
 	})
 	if err != nil {
@@ -168,6 +180,17 @@ func build(getenv func(string) string, log *logger) (built, error) {
 	gate.Register(mux)
 	srv := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: readHeaderTimeout, ErrorLog: discarded()}
 	return built{server: srv, inner: inner, gates: gates, pins: pins, routes: len(models), door: front, filter: filter, veil: veil}, nil
+}
+
+const taskKeyWait = 3 * time.Minute
+
+func taskKeys(attester nitro.Attester, own *taskseal.Key, now time.Time) *taskseal.Holder {
+	if _, enclave := attester.(nitro.NSM); !enclave {
+		return taskseal.Settled(own, now)
+	}
+	held := taskseal.Pending(own, now)
+	held.SettleAfter(taskKeyWait)
+	return held
 }
 
 func doorFloor(value, environment string) (uint64, error) {

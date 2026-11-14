@@ -46,7 +46,19 @@ type Worker interface {
 	Receipt(ctx context.Context, v Vendor, id string) (json.RawMessage, error)
 	Session(ctx context.Context, v Vendor, id string) (json.RawMessage, error)
 	Sessions(ctx context.Context, v Vendor) ([]chat.ListedSession, error)
-	Unpinned(ctx context.Context) ([]attested.UnpinnedRelease, error)
+	Unpinned(ctx context.Context) (Unpinned, error)
+}
+
+type Unpinned struct {
+	Releases   []attested.UnpinnedRelease `json:"releases"`
+	VendorPins *VendorPinsLag             `json:"vendor_pins,omitempty"`
+}
+
+type VendorPinsLag struct {
+	Worker string        `json:"worker"`
+	Newest uint64        `json:"newest"`
+	Taken  uint64        `json:"taken"`
+	Behind time.Duration `json:"behind"`
 }
 
 // Format is the attestation document a client asked for. Only a Tinfoil route reads it, and it serves its v3

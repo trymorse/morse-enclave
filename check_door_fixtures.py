@@ -12,8 +12,8 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
-import types
 import unittest
 import unittest.mock
 import urllib.error
@@ -31,10 +31,11 @@ from cryptography.x509 import ocsp
 from cryptography.x509.oid import AuthorityInformationAccessOID, ExtendedKeyUsageOID, NameOID
 
 HERE = Path(__file__).parent
-check_door = types.ModuleType("check_door")
-check_door.__file__ = str(HERE / "check-door.py")
-exec(compile((HERE / "check-door.py").read_text(), check_door.__file__, "exec"), check_door.__dict__)
-rekor = check_door.rekor
+sys.path.insert(0, str(HERE))
+import check_door  # noqa: E402
+import check_enclave as nitro  # noqa: E402
+import rekor  # noqa: E402,F401
+import signer  # noqa: E402
 
 NOW = datetime.now(timezone.utc)
 BORN = (NOW - timedelta(days=20)).replace(microsecond=0)
@@ -422,8 +423,8 @@ def fake_bundle(commit, run=RUN.format(1), unsigned=None):
 def fake_verify(statement, bundle_json, shards, authorities, policy, rekor_module):
     b = json.loads(bundle_json)
     if "unsigned" in b:
-        raise check_door.signer.Unsigned(b["unsigned"])
-    return check_door.signer.Signed(b["commit"], b["run"])
+        raise signer.Unsigned(b["unsigned"])
+    return signer.Signed(b["commit"], b["run"])
 
 
 def push(before, after, actor="morse-pins-publisher[bot]", kind="push"):
@@ -646,6 +647,8 @@ class Door:
     def read_github(self, url, headers):
         if url != check_door.checks.RECORDS_REPO_URL or "Authorization" in headers:
             raise AssertionError(f"the test reaches {url} with {headers}")
+        if self.visibility == "rate limited":
+            raise urllib.error.HTTPError(url, 403, "rate limit exceeded", {"x-ratelimit-remaining": "0"}, None)
         if isinstance(self.visibility, int):
             raise urllib.error.HTTPError(url, self.visibility, "status", {}, None)
         return json.dumps({"visibility": self.visibility, "private": self.visibility != "public"}).encode(), {}
@@ -710,11 +713,11 @@ class Door:
 
 class Fixture(unittest.TestCase):
     def setUp(self):
-        self.real_root = check_door.nitro.AWS_NITRO_ROOT
-        check_door.nitro.AWS_NITRO_ROOT = ROOT
+        self.real_root = nitro.AWS_NITRO_ROOT
+        nitro.AWS_NITRO_ROOT = ROOT
         policy = [unittest.mock.patch.object(check_door, "WITNESSES", [(w.vkey, w.operator) for w in WITNESSES]), unittest.mock.patch.object(check_door, "WITNESS_K", 3),
-                  unittest.mock.patch.object(check_door.signer_watch, "SIGNER_TREES", {SIGNER_TREE}), unittest.mock.patch.object(check_door.signer, "verify_statement", fake_verify),
-                  unittest.mock.patch.object(check_door.signer, "read_authorities", lambda root, rfc3339: [])]
+                  unittest.mock.patch.object(check_door.signer_watch, "SIGNER_TREES", {SIGNER_TREE}), unittest.mock.patch.object(signer, "verify_statement", fake_verify),
+                  unittest.mock.patch.object(signer, "read_authorities", lambda root, rfc3339: [])]
         for p in policy:
             p.start()
             self.addCleanup(p.stop)
@@ -722,7 +725,7 @@ class Fixture(unittest.TestCase):
         self.door = Door(self.tmp.name)
 
     def tearDown(self):
-        check_door.nitro.AWS_NITRO_ROOT = self.real_root
+        nitro.AWS_NITRO_ROOT = self.real_root
         self.tmp.cleanup()
 
     def passes(self, *messages):

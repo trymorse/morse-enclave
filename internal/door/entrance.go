@@ -47,8 +47,8 @@ func (g gate) Accept() (net.Conn, error) {
 		}
 		peer, _ := netip.ParseAddrPort(raw.RemoteAddr().String())
 		if g.e.proxyV2 && !g.e.trusts(peer.Addr()) {
-			raw.Close()
 			g.e.report(UntrustedPeer)
+			raw.Close()
 			continue
 		}
 		c := &doorConn{Conn: raw, e: g.e, peer: peer, accepted: time.Now()}

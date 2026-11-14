@@ -329,12 +329,12 @@ func (s *Server) serveRoutes(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) serveUnpinned(w http.ResponseWriter, r *http.Request) {
-	releases, err := s.inner.Unpinned(r.Context())
+	unpinned, err := s.inner.Unpinned(r.Context())
 	if err != nil {
 		apierr.WriteError(w, apierr.ErrUnavailable)
 		return
 	}
-	apierr.WriteJSON(w, http.StatusOK, unpinnedWire{Releases: releases})
+	apierr.WriteJSON(w, http.StatusOK, unpinned)
 }
 
 func (s *Server) attestation(w http.ResponseWriter, r *http.Request) {
@@ -345,10 +345,14 @@ func (s *Server) attestation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	keyID, _ := attested.KeyID.MarshalText()
-	epoch, _ := attested.TaskEpoch.MarshalText()
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set(headerKeyID, string(keyID))
-	w.Header().Set(headerTaskEpoch, string(epoch))
+	if attested.TaskEpoch == nil {
+		w.Header().Set(headerTaskKey, taskKeyPending)
+	} else {
+		epoch, _ := attested.TaskEpoch.MarshalText()
+		w.Header().Set(headerTaskEpoch, string(epoch))
+	}
 	w.Write(attested.Document)
 }
 

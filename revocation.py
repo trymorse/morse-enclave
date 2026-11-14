@@ -1,4 +1,4 @@
-"""Certificate revocation, read from a certificate's CA by OCSP or CRL, for check-door.py, which reads this file. It is
+"""Certificate revocation, read from a certificate's CA by OCSP or CRL, for check_door.py. It is
 not a script. Each lookup reads the network through the fetch it is given.
 """
 

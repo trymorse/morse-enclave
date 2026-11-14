@@ -41,17 +41,17 @@ var (
 
 type Sealing struct {
 	Keys
-	Attest func(ctx context.Context) ([]byte, error)
+	Attest func(ctx context.Context, nonce []byte) ([]byte, error)
 }
 
 type Keys struct {
 	identity *seal.Identity
-	tasks    *taskseal.Key
+	tasks    *taskseal.Holder
 }
 
 var errKeysPartial = errors.New("worker: a worker holds both its sealing identity and its task key, or neither")
 
-func HoldKeys(identity *seal.Identity, tasks *taskseal.Key) (Keys, error) {
+func HoldKeys(identity *seal.Identity, tasks *taskseal.Holder) (Keys, error) {
 	if identity == nil || tasks == nil {
 		return Keys{}, errKeysPartial
 	}
@@ -60,7 +60,25 @@ func HoldKeys(identity *seal.Identity, tasks *taskseal.Key) (Keys, error) {
 
 func (k Keys) Identity() *seal.Identity { return k.identity }
 
-func (k Keys) Tasks() *taskseal.Key { return k.tasks }
+// Tasks is the task key the worker settled on, and nil while it is pending.
+func (k Keys) Tasks() *taskseal.Key {
+	if k.tasks == nil {
+		return nil
+	}
+	key, _ := k.tasks.Key()
+	return key
+}
+
+func (k Keys) taskKey() (*taskseal.Key, error) {
+	if k.tasks == nil {
+		return nil, errSealedUnavailable
+	}
+	key, settled := k.tasks.Key()
+	if !settled {
+		return nil, taskrun.ErrKeyPending
+	}
+	return key, nil
+}
 
 type SealedOpening struct {
 	Body []byte
@@ -81,10 +99,12 @@ type SealedRefusal struct{ Reply []byte }
 
 func (SealedRefusal) Error() string { return "worker: refused a sealed request" }
 
+// Attested is the worker's attestation. TaskEpoch names the task key it settled on, and is nil while the worker waits
+// to take its key from a peer enclave.
 type Attested struct {
 	Document  []byte
 	KeyID     seal.KeyID
-	TaskEpoch taskseal.Epoch
+	TaskEpoch *taskseal.Epoch
 }
 
 type KeyUnknown struct{ Holds seal.KeyID }
@@ -104,11 +124,18 @@ func (w *InProcess) Attestation(ctx context.Context) (Attested, error) {
 	if w.sealing.identity == nil {
 		return Attested{}, errSealedUnavailable
 	}
-	document, err := w.sealing.Attest(ctx)
+	document, err := w.sealing.Attest(ctx, nil)
 	if err != nil {
 		return Attested{}, err
 	}
-	return Attested{Document: document, KeyID: w.sealing.identity.KeyID(), TaskEpoch: w.sealing.tasks.Epoch()}, nil
+	a := Attested{Document: document, KeyID: w.sealing.identity.KeyID(), TaskEpoch: &taskseal.Epoch{}}
+	if w.sealing.tasks != nil {
+		a.TaskEpoch = nil
+		if epoch, settled := w.sealing.tasks.State(); settled {
+			a.TaskEpoch = &epoch
+		}
+	}
+	return a, nil
 }
 
 func (w *InProcess) OpenSealed(ctx context.Context, o SealedOpening) (SealedAdmission, error) {

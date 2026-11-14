@@ -50,6 +50,10 @@ type Scheme struct {
 	// SealsBody is a scheme that seals the whole request body, so its params are BodySealed: the clear
 	// headers name what the proxy can't read inside the body.
 	SealsBody bool
+	// Vendor is who a body sealed under the scheme goes to, and ProviderRule what that body may carry in its provider
+	// object, in words that finish "a body sealed to Vendor". A scheme that seals the whole body has neither, since
+	// the worker never reads its provider.
+	Vendor, ProviderRule string
 }
 
 // BodySealed is the params of a scheme that seals the whole body: the model the request names, which the

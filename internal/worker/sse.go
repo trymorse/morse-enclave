@@ -10,12 +10,12 @@ import (
 	"math/rand/v2"
 	"net/http"
 	"slices"
-	"strings"
 	"sync"
 	"time"
 
 	"morse/backend/internal/apierr"
 	"morse/backend/internal/chat"
+	"morse/backend/internal/dialect"
 )
 
 type eventStream struct {
@@ -41,8 +41,22 @@ func setEventStreamHeaders(h http.Header) {
 	h.Set("X-Accel-Buffering", "no")
 }
 
-func (s *eventStream) event(data io.WriterTo) error {
-	return s.write(func(w io.Writer) error { return writeEvent(w, data) })
+func (s *eventStream) events(events []dialect.Event) error {
+	if len(events) == 0 {
+		return nil
+	}
+	return s.write(func(w io.Writer) error {
+		for _, e := range events {
+			data := e.Data
+			if !e.Unpadded {
+				data = padObject(data, filler())
+			}
+			if err := writeEvent(w, e.Name, data); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 func commentOf(text string) func(io.Writer) error {
@@ -107,11 +121,16 @@ func (s *eventStream) flush() error {
 	return s.err
 }
 
-func writeEvent(w io.Writer, data io.WriterTo) error {
+func writeEvent(w io.Writer, name string, data []byte) error {
+	if name != "" {
+		if _, err := io.WriteString(w, "event: "+name+"\n"); err != nil {
+			return err
+		}
+	}
 	if _, err := io.WriteString(w, "data: "); err != nil {
 		return err
 	}
-	if _, err := data.WriteTo(w); err != nil {
+	if _, err := w.Write(data); err != nil {
 		return err
 	}
 	_, err := io.WriteString(w, "\n\n")
@@ -120,6 +139,7 @@ func writeEvent(w io.Writer, data io.WriterTo) error {
 
 type sseWriter struct {
 	eventStream
+	encoder    dialect.Encoder
 	delivered  int
 	visible    int
 	shown      bool
@@ -139,9 +159,7 @@ func (s *sseWriter) emit(c chat.Chunk) error {
 		c = c.MarkUnanswered()
 	}
 	c = s.veil.chunk(c)
-	var object bytes.Buffer
-	c.WriteTo(&object)
-	err := s.event(bytes.NewReader(padObject(object.Bytes(), filler())))
+	err := s.events(s.encoder.Chunk(c))
 	if err == nil {
 		s.delivered++
 		s.visible += d.VisibleBytes()
@@ -221,16 +239,14 @@ func hasPadding(object []byte) bool {
 // closeVeil writes, before the stream ends, any text the Veil still holds back and the report.
 func (s *sseWriter) closeVeil() {
 	for _, c := range s.veil.closing() {
-		var object bytes.Buffer
-		c.WriteTo(&object)
-		s.event(bytes.NewReader(padObject(object.Bytes(), filler())))
+		s.events(s.encoder.Chunk(c))
 	}
 }
 
-func (s *sseWriter) done() {
-	s.event(strings.NewReader("[DONE]"))
+func (s *sseWriter) done(usage chat.Usage) {
+	s.events(s.encoder.End(usage))
 }
 
 func (s *sseWriter) errorEvent() {
-	s.event(bytes.NewReader(apierr.ErrUpstream.Envelope()))
+	s.events(s.encoder.Failed(apierr.ErrUpstream))
 }

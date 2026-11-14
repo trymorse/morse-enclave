@@ -15,6 +15,7 @@ type UnpinnedRelease struct {
 	Release   string    `json:"release"`
 	FirstSeen time.Time `json:"first_seen"`
 	LastSeen  time.Time `json:"last_seen"`
+	Listed    bool      `json:"listed,omitempty"`
 }
 
 const (

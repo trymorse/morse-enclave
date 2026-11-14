@@ -1,4 +1,4 @@
-"""Rekor v2 entries, verified offline, for check-door.py, which reads this file. It is not a script.
+"""Rekor v2 entries, verified offline, for check_door.py. It is not a script.
 
 It checks the logs of Sigstore's trusted_root.json, signed notes and their cosignature/v1 cosignatures, RFC 9162
 inclusion and consistency proofs, C2SP tlog-tiles, and the strict hashedrekord v0.0.2 body. The door's enclave runs

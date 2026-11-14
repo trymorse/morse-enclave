@@ -63,9 +63,71 @@ type handoffStatement struct {
 	Type       string `json:"type"`
 }
 
-func HandoffNonce(blob []byte) []byte {
+func handoffNonce(typ string, blob []byte) []byte {
 	sum := sha256.Sum256(blob)
-	return canonicalSum(handoffStatement{BlobSHA256: hex.EncodeToString(sum[:]), Type: payloadType})
+	return canonicalSum(handoffStatement{BlobSHA256: hex.EncodeToString(sum[:]), Type: typ})
+}
+
+// HandedKey describes a key a door hands to a peer's door. Label names it in a host's log. PeerPath is the route a
+// peer's host serves its handoff at, HandoffPath the route of the door behind that host that makes the handoff, and
+// Path the route of the receiving door that takes it, which the blob is sealed for.
+type HandedKey struct {
+	Label       string
+	PeerPath    string
+	HandoffPath string
+	Path        string
+	payload     string
+}
+
+var DoorKey = HandedKey{Label: "door", PeerPath: "/handoff", HandoffPath: "/door/handoff", Path: keyPath, payload: payloadType}
+
+func (d *Door) handOver(ctx context.Context, k HandedKey, in admitted, req Handoff, payload func() ([]byte, *Refusal)) (Handed, *Refusal) {
+	_, receiver, err := d.enclave.Peer(req.Receiver, in.expect(d.environment))
+	if err != nil {
+		return Handed{}, refuse(http.StatusUnprocessableEntity, "receiver_refused", "%v", err)
+	}
+	body, refused := payload()
+	if refused != nil {
+		return Handed{}, refused
+	}
+	blob, _, err := seal.Seal([][]byte{receiver.PublicKey}, seal.Head{Method: http.MethodPut, Path: k.Path, TS: in.now.Unix()}, body)
+	if err != nil {
+		return Handed{}, refuse(http.StatusUnprocessableEntity, "unsealed", "%v", err)
+	}
+	document, _, err := d.attest(ctx, func(*custody) []byte { return handoffNonce(k.payload, blob) })
+	if err != nil {
+		return Handed{}, refuse(http.StatusServiceUnavailable, "unattested", "this enclave could not attest: %v", err)
+	}
+	return Handed{Blob: blob, Document: document, Pins: req.Pins}, nil
+}
+
+type received struct {
+	in     admitted
+	spki   []byte
+	sender verify.Key
+	body   []byte
+}
+
+func (d *Door) receive(ctx context.Context, k HandedKey, req Handed) (received, *Refusal) {
+	in, refused := d.admit(ctx, req.Pins)
+	if refused != nil {
+		return received{}, refused
+	}
+	spki, sender, err := d.enclave.Peer(req.Document, in.expect(d.environment))
+	if err != nil {
+		return received{}, refuse(http.StatusUnprocessableEntity, "sender_refused", "%v", err)
+	}
+	if !bytes.Equal(sender.Nonce, handoffNonce(k.payload, req.Blob)) {
+		return received{}, refuse(http.StatusUnprocessableEntity, "nonce_mismatch", "the sender's document does not name this blob")
+	}
+	opened, err := d.enclave.Open(req.Blob)
+	if err == nil && (opened.Method != http.MethodPut || opened.Path != k.Path) {
+		err = fmt.Errorf("the blob is sealed for %s %s", opened.Method, opened.Path)
+	}
+	if err != nil {
+		return received{}, refuse(http.StatusUnprocessableEntity, "unopened", "%v", err)
+	}
+	return received{in: in, spki: spki, sender: sender, body: opened.Body}, nil
 }
 
 func (d *Door) admit(ctx context.Context, pins Pins) (admitted, *Refusal) {
@@ -119,60 +181,37 @@ func (d *Door) handoff(ctx context.Context, req Handoff) (Handed, *Refusal) {
 	if !isServing {
 		return Handed{}, refuse(http.StatusConflict, "unserved", "this door holds no certificate to hand off")
 	}
-	_, receiver, err := d.enclave.Peer(req.Receiver, in.expect(d.environment))
-	if err != nil {
-		return Handed{}, refuse(http.StatusUnprocessableEntity, "receiver_refused", "%v", err)
-	}
-	if age := in.now.Sub(c.origin.Born); age > MaxKeyAge-KeyAgeMargin {
-		return Handed{}, refuse(http.StatusUnprocessableEntity, "key_too_old", "the key was born %s ago, past %s", age.Round(time.Hour), MaxKeyAge-KeyAgeMargin)
-	}
-	der, err := x509.MarshalPKCS8PrivateKey(c.key.private)
-	if err != nil {
-		return Handed{}, refuse(http.StatusInternalServerError, "unsealed", "%v", err)
-	}
-	var chain bytes.Buffer
-	for _, cert := range serving.Chain {
-		pem.Encode(&chain, &pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw})
-	}
-	records := append(append([]Logged{}, c.records...), serving.receipt.logged())
-	body, err := json.Marshal(payload{Type: payloadType, Key: der, Chain: chain.String(), Born: c.origin.Born, Floor: c.floor, Records: records})
-	if err != nil {
-		return Handed{}, refuse(http.StatusInternalServerError, "unsealed", "%v", err)
-	}
-	blob, _, err := seal.Seal([][]byte{receiver.PublicKey}, seal.Head{Method: http.MethodPut, Path: keyPath, TS: in.now.Unix()}, body)
-	if err != nil {
-		return Handed{}, refuse(http.StatusUnprocessableEntity, "unsealed", "%v", err)
-	}
-	document, _, err := d.attest(ctx, func(*custody) []byte { return HandoffNonce(blob) })
-	if err != nil {
-		return Handed{}, refuse(http.StatusServiceUnavailable, "unattested", "this enclave could not attest: %v", err)
-	}
-	return Handed{Blob: blob, Document: document, Pins: req.Pins}, nil
+	return d.handOver(ctx, DoorKey, in, req, func() ([]byte, *Refusal) {
+		if age := in.now.Sub(c.origin.Born); age > MaxKeyAge-KeyAgeMargin {
+			return nil, refuse(http.StatusUnprocessableEntity, "key_too_old", "the key was born %s ago, past %s", age.Round(time.Hour), MaxKeyAge-KeyAgeMargin)
+		}
+		der, err := x509.MarshalPKCS8PrivateKey(c.key.private)
+		if err != nil {
+			return nil, refuse(http.StatusInternalServerError, "unsealed", "%v", err)
+		}
+		var chain bytes.Buffer
+		for _, cert := range serving.Chain {
+			pem.Encode(&chain, &pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw})
+		}
+		records := append(append([]Logged{}, c.records...), serving.receipt.logged())
+		body, err := json.Marshal(payload{Type: payloadType, Key: der, Chain: chain.String(), Born: c.origin.Born, Floor: c.floor, Records: records})
+		if err != nil {
+			return nil, refuse(http.StatusInternalServerError, "unsealed", "%v", err)
+		}
+		return body, nil
+	})
 }
 
 func (d *Door) take(ctx context.Context, req Handed) *Refusal {
 	if d.custody.Load().took {
 		return refusedHolding()
 	}
-	in, refused := d.admit(ctx, req.Pins)
+	got, refused := d.receive(ctx, DoorKey, req)
 	if refused != nil {
 		return refused
 	}
-	spki, sender, err := d.enclave.Peer(req.Document, in.expect(d.environment))
-	if err != nil {
-		return refuse(http.StatusUnprocessableEntity, "sender_refused", "%v", err)
-	}
-	if !bytes.Equal(sender.Nonce, HandoffNonce(req.Blob)) {
-		return refuse(http.StatusUnprocessableEntity, "nonce_mismatch", "the sender's document does not name this blob")
-	}
-	opened, err := d.enclave.Open(req.Blob)
-	if err == nil && (opened.Method != http.MethodPut || opened.Path != keyPath) {
-		err = fmt.Errorf("the blob is sealed for %s %s", opened.Method, opened.Path)
-	}
-	if err != nil {
-		return refuse(http.StatusUnprocessableEntity, "unopened", "%v", err)
-	}
-	p, private, refused := readPayload(opened.Body)
+	in, spki := got.in, got.spki
+	p, private, refused := readPayload(got.body)
 	if refused != nil {
 		return refused
 	}
@@ -196,7 +235,7 @@ func (d *Door) take(ctx context.Context, req Handed) *Refusal {
 	if refused := d.checkChain(chain, key, in.now); refused != nil {
 		return refused
 	}
-	from := seal.KeyIDOf(sender.PublicKey)
+	from := seal.KeyIDOf(got.sender.PublicKey)
 	origin := Origin{Born: p.Born.UTC(), From: &from, Floor: in.custody.floor}
 	record, err := d.startCustody(ctx, key, origin, in.now)
 	if err != nil {

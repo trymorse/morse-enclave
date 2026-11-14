@@ -8,6 +8,9 @@ from cryptography import x509
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 
+import check_enclave as nitro
+import rekor
+
 Refused = nitro.Refused
 Refusal = rekor.Refusal
 

@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"morse/backend/internal/apierr"
-	"morse/backend/internal/attested"
 	"morse/backend/internal/billing/measure"
 	"morse/backend/internal/catalog"
 	"morse/backend/internal/chat"
@@ -32,6 +31,8 @@ const (
 	headerVendorStatus  = "Worker-Vendor-Status"
 	headerKeyID         = "Worker-Key-Id"
 	headerTaskEpoch     = "Worker-Task-Epoch"
+	headerTaskKey       = "Worker-Task-Key"
+	taskKeyPending      = "pending"
 )
 
 func (h Handle) MarshalJSON() ([]byte, error) { return json.Marshal(h.id) }
@@ -185,11 +186,7 @@ type pollRequest struct {
 	Deadline time.Time `json:"deadline"`
 }
 
-const WireVersion = 4
-
-type unpinnedWire struct {
-	Releases []attested.UnpinnedRelease `json:"releases"`
-}
+const WireVersion = 5
 
 type Served struct {
 	Digest string `json:"digest"`

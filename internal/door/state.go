@@ -119,6 +119,7 @@ type Door struct {
 	readyOnce   sync.Once
 	tufRoot     int64
 	clock       func() time.Time
+	tasks       TaskKeys
 }
 
 type Enclave interface {
@@ -240,8 +241,8 @@ func (d *Door) attest(ctx context.Context, nonce func(*custody) []byte) ([]byte,
 	return document, c, err
 }
 
-func (d *Door) Attest(ctx context.Context) ([]byte, error) {
-	document, _, err := d.attest(ctx, nil)
+func (d *Door) Attest(ctx context.Context, nonce []byte) ([]byte, error) {
+	document, _, err := d.attest(ctx, func(*custody) []byte { return nonce })
 	return document, err
 }
 
@@ -295,6 +296,7 @@ type Answer struct {
 	Records           []Logged           `json:"records"`
 	Certificate       *AnswerCertificate `json:"certificate,omitempty"`
 	Document          []byte             `json:"document"`
+	TaskKeys          *TaskKeysAnswer    `json:"task_keys,omitempty"`
 }
 
 type AnswerOrigin struct {
@@ -338,6 +340,9 @@ func canonicalSum(v any) []byte {
 }
 
 func (d *Door) Register(mux *http.ServeMux) {
+	if d.tasks != nil {
+		d.registerTaskKeys(mux)
+	}
 	mux.HandleFunc("GET /door", func(w http.ResponseWriter, r *http.Request) {
 		for range answerRetries {
 			document, attested, err := d.attest(r.Context(), func(c *custody) []byte { return OriginNonce(c.key.spkiSHA256(), c.origin) })
@@ -375,7 +380,7 @@ func (d *Door) Register(mux *http.ServeMux) {
 		}
 		w.WriteHeader(http.StatusNoContent)
 	})
-	mux.HandleFunc("POST /door/handoff", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST "+DoorKey.HandoffPath, func(w http.ResponseWriter, r *http.Request) {
 		var req Handoff
 		if refused := readJSON(w, r, &req); refused != nil {
 			writeJSON(w, refused.status, refused)
@@ -388,7 +393,7 @@ func (d *Door) Register(mux *http.ServeMux) {
 		}
 		writeJSON(w, http.StatusOK, handed)
 	})
-	mux.HandleFunc("PUT /door/key", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("PUT "+DoorKey.Path, func(w http.ResponseWriter, r *http.Request) {
 		var req Handed
 		if refused := readJSON(w, r, &req); refused != nil {
 			writeJSON(w, refused.status, refused)
@@ -441,6 +446,10 @@ func (d *Door) answer(c *custody, document []byte, now time.Time) Answer {
 	if chain != nil {
 		leaf := chain[0]
 		a.Certificate = &AnswerCertificate{Issuer: leaf.Issuer.String(), Serial: leaf.SerialNumber.Text(16), NotBefore: leaf.NotBefore, NotAfter: leaf.NotAfter}
+	}
+	if d.tasks != nil {
+		tasks := d.taskKeysAnswer()
+		a.TaskKeys = &tasks
 	}
 	return a
 }

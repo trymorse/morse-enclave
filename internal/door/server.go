@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"morse/backend/internal/apierr"
+	"morse/backend/internal/dialect"
 	"morse/backend/internal/enum"
 	"morse/backend/internal/seal"
 	"morse/backend/internal/upstream"
@@ -332,7 +333,10 @@ func (s *Server) Close() error {
 }
 
 func (s *Server) pass(pattern string, rt route) http.HandlerFunc {
+	d := worker.Dialects[pattern]
 	return func(w http.ResponseWriter, r *http.Request) {
+		w = d.Errors(w)
+		apiKeyAsBearer(r.Header)
 		peer, err := netip.ParseAddrPort(r.RemoteAddr)
 		if err != nil {
 			apierr.WriteError(w, errClientUnknown)
@@ -398,6 +402,12 @@ func (b *flooredBody) Read(p []byte) (int, error) {
 		b.rc.SetReadDeadline(b.first.Add(b.ramp + time.Duration(b.read)*time.Second/time.Duration(b.rate)))
 	}
 	return n, err
+}
+
+func apiKeyAsBearer(h http.Header) {
+	if key := strings.TrimSpace(h.Get(dialect.HeaderAPIKey)); key != "" && h.Get("Authorization") == "" {
+		h.Set("Authorization", "Bearer "+key)
+	}
 }
 
 func bearerShaped(h http.Header) bool {

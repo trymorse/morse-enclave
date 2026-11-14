@@ -1,6 +1,7 @@
 package worker
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"encoding/json"
@@ -17,6 +18,7 @@ import (
 	"morse/backend/internal/catalog"
 	"morse/backend/internal/chat"
 	"morse/backend/internal/compaction"
+	"morse/backend/internal/dialect"
 	"morse/backend/internal/health"
 	"morse/backend/internal/openaicompat"
 	"morse/backend/internal/plans/limits"
@@ -106,6 +108,8 @@ type openedChat struct {
 	// veil is set on a chat that asked for the Privacy Veil, from /open until its run ends, and veilMeasure once it ran.
 	veil        *openedVeil
 	veilMeasure *VeilMeasure
+	dialect     dialect.Dialect
+	reply       func() dialect.Encoder
 }
 
 // played is the character the chat plays: the launch the proxy checked, the user's own character whose rules it
@@ -121,8 +125,16 @@ func (o *openedChat) played(cast chat.Cast) chat.Character {
 	return cast.Plays(text)
 }
 
-func (w *InProcess) openChat(o Opening, compaction bool) (Admission, error) {
+func (w *InProcess) openChat(o Opening, d dialect.Dialect, compaction bool) (Admission, error) {
 	p := protocolOf(o.Header.Get)
+	reply := func() dialect.Encoder { return dialect.ChatCompletions{} }
+	if !d.Native() {
+		decoded, err := w.decode(o, p, d)
+		if err != nil {
+			return nil, err
+		}
+		o.Body, reply = bytes.NewReader(decoded.Body), decoded.Reply
+	}
 	req, err := requestOf(o.Body, p)
 	if err != nil {
 		return nil, err
@@ -135,18 +147,16 @@ func (w *InProcess) openChat(o Opening, compaction bool) (Admission, error) {
 	if err != nil {
 		return nil, err
 	}
+	var want providerAsk
+	var wantErr error
 	if p.scheme == nil {
 		req = req.Without(privacyVeilField)
+		want, wantErr = floorOf(req)
 	}
 	ask := askOf(p, o.KeyCaller, req)
 	var digest affinity.Digest
 	if o.inTheClear(ask) {
 		digest = affinity.DigestOf(req)
-	}
-	var want providerAsk
-	var wantErr error
-	if p.scheme == nil {
-		want, wantErr = floorOf(req)
 	}
 	routes, err := name.reach(p, ask, compaction, want, o.KeyFloor)
 	if err != nil && ask == askLooksSealed {
@@ -155,36 +165,16 @@ func (w *InProcess) openChat(o Opening, compaction bool) (Admission, error) {
 	if err != nil {
 		return nil, err
 	}
-	if p.scheme != nil {
+	var settings []string
+	switch {
+	case p.scheme != nil:
 		if err = sealedQuantizations(req, p); err != nil {
 			return nil, err
 		}
-	} else {
-		if wantErr != nil {
-			return nil, wantErr
-		}
-		if routes, err = name.atFloor(routes, want.floor); err != nil {
-			return nil, err
-		}
-		if routes, err = withoutUnsealable(routes, req); err != nil {
-			return nil, err
-		}
-		if routes, err = want.narrow(name, routes, o.KeyFloor); err != nil {
-			return nil, err
-		}
-	}
-	var settings []string
-	if p.scheme == nil && o.KeyCaller && !compaction {
-		if settings, err = openaicompat.SettingsOf(req, o.KeySettings); err != nil {
-			return nil, err
-		}
-		if routes, err = forwardingSettings(routes, settings); err != nil {
-			return nil, err
-		}
-		if routes, err = takingTools(routes, req); err != nil {
-			return nil, err
-		}
-		if routes, err = readingImages(routes, req); err != nil {
+	case wantErr != nil:
+		return nil, wantErr
+	default:
+		if routes, err = narrowed(routes, plaintextNarrowings(name, req, want, o, compaction, &settings)); err != nil {
 			return nil, err
 		}
 	}
@@ -202,7 +192,7 @@ func (w *InProcess) openChat(o Opening, compaction bool) (Admission, error) {
 		}
 	}
 	route := routes[0]
-	oc := &openedChat{cuts: newCuts(), routes: routes, first: route, protocol: p, call: chat.Call{Request: req, RouteEffort: route.DefaultReasoningEffort, Efforts: route.ReasoningEfforts, Settings: settings}, launch: o.Launch, own: o.Own, writing: o.Writing}
+	oc := &openedChat{cuts: newCuts(), routes: routes, first: route, protocol: p, call: chat.Call{Request: req, RouteEffort: route.DefaultReasoningEffort, Efforts: route.ReasoningEfforts, Settings: settings}, launch: o.Launch, own: o.Own, writing: o.Writing, dialect: d, reply: reply}
 	if compaction {
 		err = oc.compact(o.Cast)
 	} else {
@@ -228,36 +218,72 @@ func (w *InProcess) openChat(o Opening, compaction bool) (Admission, error) {
 	return admission, nil
 }
 
+// A narrowing cuts a request's routes to those that can serve it, and refuses the request when it leaves none.
+type narrowing func([]chatRoute) ([]chatRoute, error)
+
+// narrowed runs each narrowing on what the one before left, and stops at the first refusal.
+func narrowed(routes []chatRoute, steps []narrowing) ([]chatRoute, error) {
+	var err error
+	for _, step := range steps {
+		if routes, err = step(routes); err != nil {
+			return nil, err
+		}
+	}
+	return routes, nil
+}
+
+// keeping is the narrowing that, when it applies, keeps the routes keep admits and refuses with refuse(routes) when it
+// keeps none.
+func keeping(applies bool, keep func(chatRoute) bool, refuse func([]chatRoute) error) narrowing {
+	return func(routes []chatRoute) ([]chatRoute, error) {
+		if !applies {
+			return routes, nil
+		}
+		kept := slices.DeleteFunc(slices.Clone(routes), func(r chatRoute) bool { return !keep(r) })
+		if len(kept) == 0 {
+			return nil, refuse(routes)
+		}
+		return kept, nil
+	}
+}
+
+// plaintextNarrowings are the narrowings of a plaintext chat, in the order they refuse. The last three apply to a key's
+// chat alone, and the first of them reads the call's settings into settings. A sealed chat is forwarded verbatim, so
+// none applies to it.
+func plaintextNarrowings(name chatName, req *chat.Request, want providerAsk, o Opening, compaction bool, settings *[]string) []narrowing {
+	steps := []narrowing{
+		func(routes []chatRoute) ([]chatRoute, error) { return name.atFloor(routes, want.floor) },
+		withoutUnsealable(req),
+		func(routes []chatRoute) ([]chatRoute, error) { return want.narrow(name, routes, o.KeyFloor) },
+	}
+	if o.KeyCaller && !compaction {
+		steps = append(steps, func(routes []chatRoute) ([]chatRoute, error) {
+			var err error
+			if *settings, err = openaicompat.SettingsOf(req, o.KeySettings); err != nil {
+				return nil, err
+			}
+			return forwardingSettings(*settings)(routes)
+		}, takingTools(req), readingImages(req))
+	}
+	return steps
+}
+
 // forwardingSettings keeps the routes whose provider sends a call's settings to its host, or every route when the call
 // has none, and refuses the call when no route sends them.
-func forwardingSettings(routes []chatRoute, settings []string) ([]chatRoute, error) {
-	if len(settings) == 0 {
-		return routes, nil
-	}
-	kept := slices.DeleteFunc(slices.Clone(routes), func(r chatRoute) bool {
+func forwardingSettings(settings []string) narrowing {
+	return keeping(len(settings) > 0, func(r chatRoute) bool {
 		plain, ok := r.Upstream.(Plain)
 		_, forwards := plain.Provider.(openaicompat.SettingsForwarder)
-		return !ok || !forwards
-	})
-	if len(kept) == 0 {
-		return nil, openaicompat.SettingsRefusal(settings[0])
-	}
-	return kept, nil
+		return ok && forwards
+	}, func([]chatRoute) error { return openaicompat.SettingsRefusal(settings[0]) })
 }
 
 // takingTools keeps the routes that send a key's chat its tools when the chat lets the model call one, and refuses the
 // chat when every route of its model is served without tools (tools false). Such a route drops a chat's tools, so the
 // model would answer in prose a call it was asked to make, and an agent waiting on a tool call would never see one. A
 // chat whose tool_choice is "none" lets the model call nothing, so its tools are dropped as before.
-func takingTools(routes []chatRoute, req *chat.Request) ([]chatRoute, error) {
-	if !callsTools(req) {
-		return routes, nil
-	}
-	kept := slices.DeleteFunc(slices.Clone(routes), func(r chatRoute) bool { return r.NoTools })
-	if len(kept) == 0 {
-		return nil, toolsRefusal(req.Model)
-	}
-	return kept, nil
+func takingTools(req *chat.Request) narrowing {
+	return keeping(callsTools(req), func(r chatRoute) bool { return !r.NoTools }, func([]chatRoute) error { return toolsRefusal(req.Model) })
 }
 
 // callsTools is whether a chat lets the model call a tool: it offers tools, or names a tool_choice that makes the model
@@ -284,16 +310,11 @@ func toolsRefusal(model string) error {
 
 // readingImages keeps the routes whose model reads images when a key's chat sends one, and refuses the chat, naming
 // what the model reads, when none does: its host would refuse the image in words that name neither, or drop it.
-func readingImages(routes []chatRoute, req *chat.Request) ([]chatRoute, error) {
-	if !sendsImage(req) {
-		return routes, nil
-	}
-	kept := slices.DeleteFunc(slices.Clone(routes), func(r chatRoute) bool { return !r.Inputs.Reads(catalog.ModalityImage) })
-	if len(kept) == 0 {
-		return nil, apierr.Invalid(http.StatusBadRequest, "unsupported_input",
+func readingImages(req *chat.Request) narrowing {
+	return keeping(sendsImage(req), func(r chatRoute) bool { return r.Inputs.Reads(catalog.ModalityImage) }, func(routes []chatRoute) error {
+		return apierr.Invalid(http.StatusBadRequest, "unsupported_input",
 			fmt.Sprintf("This request's messages carry an image, and %s reads %s only (its input_modalities in GET /v1/models). Send the request without image parts, or to a model whose input_modalities include image.", req.Model, routes[0].Inputs)).Naming("messages")
-	}
-	return kept, nil
+	})
 }
 
 func sendsImage(req *chat.Request) bool {
@@ -421,7 +442,7 @@ func (o *openedChat) run(_ context.Context, w *InProcess, h Handle, g Grant, rep
 		defer o.afterCut.stop()
 		ctx = o.afterCut.ctx
 	}
-	rw := newReplyWriter(reply)
+	rw := newReplyWriter(o.dialect.Errors(reply))
 	if o.veil != nil {
 		defer o.dropVeil()
 		if m, failed := o.applyVeil(ctx, w, rw); failed {
@@ -496,19 +517,9 @@ var (
 
 // withoutUnsealable drops the on-behalf endpoints from a request they cannot carry through their seal, and refuses it only
 // when no endpoint is left.
-func withoutUnsealable(routes []chatRoute, req *chat.Request) ([]chatRoute, error) {
-	if !slices.ContainsFunc(routes, func(r chatRoute) bool { return r.seals }) {
-		return routes, nil
-	}
+func withoutUnsealable(req *chat.Request) narrowing {
 	err := openaicompat.Unsealable(req)
-	if err == nil {
-		return routes, nil
-	}
-	kept := slices.DeleteFunc(slices.Clone(routes), func(r chatRoute) bool { return r.seals })
-	if len(kept) == 0 {
-		return nil, unsealableRefusal(err)
-	}
-	return kept, nil
+	return keeping(err != nil, func(r chatRoute) bool { return !r.seals }, func([]chatRoute) error { return unsealableRefusal(err) })
 }
 
 func unsealableRefusal(err error) error {
@@ -616,10 +627,11 @@ func (u Plain) serve(ctx context.Context, w *InProcess, o *openedChat, a attempt
 	retry := chat.BusyRetry{Provider: u.Provider, Waits: a.waits, HedgeAfter: a.hedgeAfter, StallAfter: a.stallAfter}
 	rv := a.veil
 	cut := newLimitCut(ctx, a.route, a.call)
+	encoder := o.reply()
 	if a.call.Stream {
-		got = stream(ctx, reply, http.NewResponseController(reply), retry, a.call, transcript, clock, w.keepaliveEvery, rv, cut)
+		got = stream(ctx, reply, http.NewResponseController(reply), retry, a.call, transcript, clock, w.keepaliveEvery, rv, cut, encoder)
 	} else {
-		got = complete(ctx, reply, retry, a.call, transcript, clock, rv, cut)
+		got = complete(ctx, reply, retry, a.call, transcript, clock, rv, cut, encoder)
 	}
 	got.transcript = transcript
 	return got
@@ -725,8 +737,8 @@ func (t *thinkingClock) thought() thought {
 	return thought{duration: cmp.Or(t.firstAnswer, t.now()).Sub(t.firstEvent), interleaved: t.interleaved}
 }
 
-func stream(ctx context.Context, w http.ResponseWriter, rc *http.ResponseController, prov chat.BusyRetry, c chat.Call, transcript *chat.Transcript, clock *thinkingClock, keepalive time.Duration, rv *replyVeil, cut *limitCut) served {
-	sw := &sseWriter{eventStream: eventStream{w: w, rc: rc}, transcript: transcript, clock: clock, veil: rv}
+func stream(ctx context.Context, w http.ResponseWriter, rc *http.ResponseController, prov chat.BusyRetry, c chat.Call, transcript *chat.Transcript, clock *thinkingClock, keepalive time.Duration, rv *replyVeil, cut *limitCut, encoder dialect.Encoder) served {
+	sw := &sseWriter{eventStream: eventStream{w: w, rc: rc}, encoder: encoder, transcript: transcript, clock: clock, veil: rv}
 	stop := func() {}
 	if clock != nil {
 		stop = sw.keepAlive(ctx, keepalive)
@@ -740,7 +752,7 @@ func stream(ctx context.Context, w http.ResponseWriter, rc *http.ResponseControl
 	switch {
 	case err == nil:
 		sw.closeVeil()
-		sw.done()
+		sw.done(reported)
 	case sw.started && ctx.Err() == nil && sw.err == nil:
 		sw.closeVeil()
 		sw.errorEvent()
@@ -748,7 +760,7 @@ func stream(ctx context.Context, w http.ResponseWriter, rc *http.ResponseControl
 	return served{reported: reported, attempts: attempts, reply: measure.Streamed{Events: sw.delivered, VisibleBytes: sw.visible}, finish: sw.finish, unanswered: unanswered(sw.finish, sw.sent), malformed: sw.calls.Malformed(sw.finish, c.Stops()), writeErr: sw.err, callErr: err, thought: clock.thought(), atLimit: cut.atLimit()}
 }
 
-func complete(ctx context.Context, w http.ResponseWriter, prov chat.BusyRetry, c chat.Call, transcript *chat.Transcript, clock *thinkingClock, rv *replyVeil, cut *limitCut) served {
+func complete(ctx context.Context, w http.ResponseWriter, prov chat.BusyRetry, c chat.Call, transcript *chat.Transcript, clock *thinkingClock, rv *replyVeil, cut *limitCut, encoder dialect.Encoder) served {
 	clock.startAtCall()
 	body, tokens, attempts, err := whole(ctx, prov, c, cut)
 	if err != nil {
@@ -765,7 +777,8 @@ func complete(ctx context.Context, w http.ResponseWriter, prov chat.BusyRetry, c
 	}
 	vendorBytes := len(chunkBytes(body))
 	body = rv.complete(body)
-	written, writeErr := body.WriteTo(w)
+	n, writeErr := w.Write(encoder.Whole(body, tokens))
+	written := int64(n)
 	if written > 0 {
 		transcript.Add(d)
 	}
@@ -774,4 +787,24 @@ func complete(ctx context.Context, w http.ResponseWriter, prov chat.BusyRetry, c
 		measured = vendorBytes
 	}
 	return served{reported: tokens, attempts: attempts, reply: measure.Buffered{Bytes: measured}, finish: d.Finish, unanswered: unanswered(d.Finish, d.Delivered()), malformed: calls.Malformed(d.Finish, c.Stops()), writeErr: writeErr, atLimit: cut.atLimit()}
+}
+
+var errDialectSealed = apierr.InvalidParameter("This route takes a plaintext request only. Send an end-to-end encrypted chat to POST /v1/chat/completions.")
+
+func (w *InProcess) decode(o Opening, p protocol, d dialect.Dialect) (dialect.Decoded, error) {
+	if p.scheme != nil || p.err != nil {
+		return dialect.Decoded{}, errDialectSealed
+	}
+	raw, err := io.ReadAll(o.Body)
+	if err != nil {
+		return dialect.Decoded{}, contentRefusal(err)
+	}
+	decoded, err := d.Decode(raw, func(model string) bool {
+		_, known := w.chats[model]
+		return known
+	})
+	if err != nil {
+		return dialect.Decoded{}, contentRefusal(err)
+	}
+	return decoded, nil
 }

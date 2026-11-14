@@ -28,7 +28,7 @@ This repository does not take pull requests. To report a bug, open an issue. To 
 
 - `cmd/worker` is the worker. `cmd/enclave` starts it with the credentials the host passes in, and drops every other setting. `internal/` holds their packages and the tests that need nothing outside this repo.
 - `internal/attestation/*_pins.json` pins the vendor enclaves the worker checks, as part of the image.
-- `check-enclave.py` checks the running enclaves. `check-door.py` watches the door, with `door_records.py`, `door_checks.py`, `rekor.py`, `revocation.py`, `signer_watch.py`, `signer.py`, their tests, and `check_door_fixtures.py`. `door_watch.py` runs it on a schedule and decides its alerts.
+- `check-enclave.py` checks the running enclaves, and `check-door.py` watches the door. Each is an entry point that declares its dependencies for `uv run` and calls `check_enclave.py` or `check_door.py`, which import `door_records.py`, `door_checks.py`, `door_git.py`, `github_read.py`, `rekor.py`, `revocation.py`, `signer_watch.py` and `signer.py` as ordinary modules. Their tests, and `check_door_fixtures.py`, sit beside them. `door_watch.py` runs it on a schedule and decides its alerts.
 - `deploy/enclave/build.sh` builds the image, from `prod.env` or `dev.env`. `deploy/enclave/veil-commit` names the version of [veil](https://github.com/Amnesic-Systems/veil) that serves the attestation document.
 - [`SERVICES.md`](SERVICES.md) lists every service the worker calls.
 

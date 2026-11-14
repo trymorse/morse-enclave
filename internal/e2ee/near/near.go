@@ -41,7 +41,7 @@ var (
 // bytes forwarded.
 func PromptComment(sealed string) []byte { return []byte(": wm-prompt " + sealed + "\n") }
 
-var Scheme = &chat.Scheme{Name: Protocol, Version: Version, Headers: []string{HeaderSigningAlgo, HeaderClientKey, HeaderModelKey, HeaderVersion, HeaderAllFields}, Parse: parse, ErrHeaderMissing: ErrHeaderMissing}
+var Scheme = &chat.Scheme{Name: Protocol, Version: Version, Headers: []string{HeaderSigningAlgo, HeaderClientKey, HeaderModelKey, HeaderVersion, HeaderAllFields}, Parse: parse, ErrHeaderMissing: ErrHeaderMissing, Vendor: "NEAR", ProviderRule: "is forwarded verbatim and may carry no provider field"}
 
 func parse(get func(name string) string) (chat.E2EE, bool, error) {
 	params, sealed, err := ParseHeaders(get)

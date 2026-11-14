@@ -16,6 +16,7 @@ import sys
 import tempfile
 import unittest
 import unittest.mock
+import urllib.error
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -239,6 +240,16 @@ class VerdictTest(Fixture):
         found, run = self.verdict("--attestation", str(self.door.root / "missing.json"))
         self.assertEqual((run.kind, run.retryable, found["checks"]), ("unread", True, []))
         self.assertTrue(found["error"].startswith("could not read the evidence: FileNotFoundError("), found["error"])
+
+    def test_a_github_outage_is_a_result_and_not_evidence_to_read_again(self):
+        def down(url, *_):
+            raise urllib.error.HTTPError(url, 502, "Bad Gateway", {}, None)
+
+        self.door.visibility = 502
+        self.door.fetch_github = down
+        found, run = self.verdict()
+        self.assertEqual((run.kind, run.retryable, found["error"]), ("failed", False, None))
+        self.assertEqual((found["failed"], found["unenforced"]), ([9], [7]))
 
 
 if __name__ == "__main__":

@@ -32,6 +32,7 @@ type InProcess struct {
 	plugins        *plugins.Relay
 	reports        Reporter
 	unpinned       func() []attested.UnpinnedRelease
+	vendorPins     func() *VendorPinsLag
 	now            func() time.Time
 	keepaliveEvery time.Duration
 	videoSubmit    time.Duration
@@ -77,6 +78,7 @@ type Config struct {
 	VideoSubmit   time.Duration
 	ProofBudget   time.Duration
 	Unpinned      func() []attested.UnpinnedRelease
+	VendorPins    func() *VendorPinsLag
 	PrivacyVeil   *PrivacyVeil
 }
 
@@ -90,7 +92,7 @@ func NewInProcess(cfg Config) (*InProcess, error) {
 		chats: indexChats(cfg.Models), images: map[string]media.ImageGenerator{}, videos: map[string]media.VideoGenerator{},
 		searches: map[string]web.Searcher{}, fetches: map[string]web.Fetcher{}, researchers: map[string]research.Researcher{}, transcribers: map[string]transcriber{},
 		endpoints: map[string]catalog.EndpointID{},
-		lookup:    cfg.Lookup, plugins: cfg.Plugins, reports: cfg.Reports, unpinned: cfg.Unpinned, privacyVeil: cfg.PrivacyVeil,
+		lookup:    cfg.Lookup, plugins: cfg.Plugins, reports: cfg.Reports, unpinned: cfg.Unpinned, vendorPins: cfg.VendorPins, privacyVeil: cfg.PrivacyVeil,
 		now: cfg.Now, keepaliveEvery: cmp.Or(cfg.Keepalive, keepalive), videoSubmit: cmp.Or(cfg.VideoSubmit, videoSubmitTimeout), proofBudget: cmp.Or(cfg.ProofBudget, proofBudget), opened: map[Handle]*entry{},
 		tiers: map[string]catalog.Tier{}, runs: map[Handle]*taskRun{}, taskLife: taskrun.RunLife,
 	}
@@ -141,11 +143,15 @@ const videoSubmitTimeout = 2 * time.Minute
 
 const proofBudget = 6 * time.Second
 
-func (w *InProcess) Unpinned(context.Context) ([]attested.UnpinnedRelease, error) {
-	if w.unpinned == nil {
-		return nil, nil
+func (w *InProcess) Unpinned(context.Context) (Unpinned, error) {
+	var u Unpinned
+	if w.unpinned != nil {
+		u.Releases = w.unpinned()
 	}
-	return w.unpinned(), nil
+	if w.vendorPins != nil {
+		u.VendorPins = w.vendorPins()
+	}
+	return u, nil
 }
 
 func (w *InProcess) Poll(ctx context.Context, route, vendorID string) (jobs.Poll, error) {

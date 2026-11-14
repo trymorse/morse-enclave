@@ -5,6 +5,9 @@ import (
 	"net/http"
 	"net/url"
 
+	"morse/backend/internal/dialect"
+	"morse/backend/internal/dialect/messages"
+	"morse/backend/internal/dialect/responses"
 	"morse/backend/internal/plugins"
 	"morse/backend/internal/worker/taskrun"
 )
@@ -12,6 +15,8 @@ import (
 const (
 	ChatPattern           = "POST /v1/chat/completions"
 	CompactPattern        = "POST /v1/chat/compact"
+	MessagesPattern       = "POST /v1/messages"
+	ResponsesPattern      = "POST /v1/responses"
 	ImagesPattern         = "POST /v1/images/generations"
 	VideosPattern         = "POST /v1/videos"
 	VideoContentPattern   = "GET /v1/videos/{id}/content"
@@ -24,8 +29,18 @@ const (
 	TranscriptionPattern  = "POST /v1/audio/transcriptions"
 )
 
+// Dialects are the chat routes whose clients speak a wire format other than Chat Completions, by route pattern. The
+// relay and the door write their refusals on such a route in its dialect's envelope.
+var Dialects = map[string]dialect.Dialect{MessagesPattern: messages.Dialect, ResponsesPattern: responses.Dialect}
+
 func pluginOpener(kind plugins.Kind) opener {
 	return func(w *InProcess, o Opening, _ func(string) string) (Admission, error) { return w.openPlugin(o, kind) }
+}
+
+func chatOpener(d dialect.Dialect, compaction bool) opener {
+	return func(w *InProcess, o Opening, _ func(string) string) (Admission, error) {
+		return w.openChat(o, d, compaction)
+	}
 }
 
 type opener func(w *InProcess, o Opening, pathValue func(string) string) (Admission, error)
@@ -34,8 +49,10 @@ var sealableRoutes = []struct {
 	pattern string
 	open    opener
 }{
-	{ChatPattern, func(w *InProcess, o Opening, _ func(string) string) (Admission, error) { return w.openChat(o, false) }},
-	{CompactPattern, func(w *InProcess, o Opening, _ func(string) string) (Admission, error) { return w.openChat(o, true) }},
+	{ChatPattern, chatOpener(dialect.Dialect{}, false)},
+	{CompactPattern, chatOpener(dialect.Dialect{}, true)},
+	{MessagesPattern, chatOpener(messages.Dialect, false)},
+	{ResponsesPattern, chatOpener(responses.Dialect, false)},
 	{ImagesPattern, func(w *InProcess, o Opening, _ func(string) string) (Admission, error) { return w.openImages(o) }},
 	{VideosPattern, func(w *InProcess, o Opening, _ func(string) string) (Admission, error) { return w.openVideo(o) }},
 	{VideoContentPattern, (*InProcess).openRead},
@@ -94,7 +111,7 @@ func (w *InProcess) Open(ctx context.Context, o Opening) (Admission, error) {
 	if o.Writing != nil && route != ChatPattern {
 		return nil, errExamplesNotChat
 	}
-	if route != ChatPattern && route != CompactPattern {
+	if route != ChatPattern && route != CompactPattern && route != MessagesPattern && route != ResponsesPattern {
 		if err := veilNotHere(o); err != nil {
 			return nil, err
 		}

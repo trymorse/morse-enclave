@@ -15,6 +15,8 @@ type Route struct {
 var Routes = []Route{
 	{Pattern: "POST /v1/chat/completions", Sealed: true},
 	{Pattern: "POST /v1/chat/compact", Sealed: true},
+	{Pattern: "POST /v1/messages", Sealed: true},
+	{Pattern: "POST /v1/responses", Sealed: true},
 	{Pattern: "POST /v1/images/generations", Sealed: true},
 	{Pattern: "POST /v1/videos", Sealed: true},
 	{Pattern: "GET /v1/videos/{id}/content", Sealed: true},

@@ -1,7 +1,6 @@
-"""Check 7 of check-door.py, which loads this file: the public image signer, sign.yml in trymorse/morse-pins. It reads
-GitHub's record of who pushed morse-pins main and which sign.yml runs there were, the .github trees on main, and the
-statements branch, whose statements signer.py verifies. check-door.py supplies git, descends, Note, Unenforced,
-read_github, signer and rekor before it runs this file."""
+"""Check 7 of check_door.py: the public image signer, sign.yml in trymorse/morse-pins. It reads GitHub's record of who
+pushed morse-pins main and which sign.yml runs there were, the .github trees on main, and the statements branch, whose
+statements signer.py verifies."""
 
 import json
 import os
@@ -12,6 +11,12 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+
+import rekor
+import signer
+from door_checks import Note, Unenforced
+from door_git import descends, git
+from github_read import read_github
 
 # The public image signer, sign.yml in trymorse/morse-pins, for check 7. Its code is the .github tree of the commit a
 # run signs, so a change to it shows twice in public: once as the commit, and once as a change to this allowlist.

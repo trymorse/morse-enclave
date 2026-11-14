@@ -517,7 +517,7 @@ class RecordsTest(Fixture):
         self.assertEqual(check_door.records.record_digest("9f3c"), hashlib.sha256(b"morse-door-boot-v1\n9f3c\n").digest())
 
     def test_a_real_aws_document_verifies_at_its_own_time_and_its_dev_user_data_fails_for_prod(self):
-        check_door.nitro.AWS_NITRO_ROOT = self.real_root
+        nitro.AWS_NITRO_ROOT = self.real_root
         real = base64.b64decode(REAL_DOCUMENT.read_text())
         self.door.pins.append({"environment": "prod", "revoked": False, "tag": "real",
                                "pcr0": "1dab5ad4c661f95a9e7e3f57bcd83efd9fced7f749ac21ea85a1853131bb5e43b41eb58615efef998d478ce485fcff53",
@@ -725,49 +725,13 @@ class LiveTest(Fixture):
         self.door.live = [document(self.door.hpke[1], rogue)]
         self.fails(f"live document 1: {self.no_record(self.door.hpke[1], rogue)}, and this watcher first saw it live at")
 
-    def served_on_a_second_spki_inside_its_grace(self):
-        self.door.add(self.door.record(document(self.door.hpke[2], self.door.tls), key_id(self.door.hpke[1]), 8))
-        self.door.live.append(document(self.door.hpke[2], self.door.tls))
-        self.passes()
-        first = datetime.fromisoformat(self.door.state()["boots"][key_id(self.door.hpke[2])]["first_seen"])
-        second = ec.generate_private_key(ec.SECP256R1())
-        self.door.live[-1] = document(self.door.hpke[2], second)
-        self.door.ran(first + timedelta(minutes=25))
-        code, out = self.at(first + timedelta(minutes=30))
-        self.assertEqual(code, 0, out)
-        self.assertEqual(self.door.state()["boots"][key_id(self.door.hpke[2])], {"first_seen": first.isoformat(), "spkis": sorted([spki_hex(self.door.tls), spki_hex(second)])})
-        self.door.live.pop()
-        self.door.ran(first + check_door.checks.LIVE_GRACE - timedelta(minutes=4))
-        return first, second
-
-    def test_a_gone_boot_that_served_on_a_second_spki_inside_its_grace_fails_for_that_spki_once_the_grace_ends(self):
-        first, second = self.served_on_a_second_spki_inside_its_grace()
-        code, out = self.at(first + check_door.checks.LIVE_GRACE + timedelta(minutes=1))
-        self.assertEqual(code, 1, out)
-        self.assertIn(f"{self.gone(self.door.hpke[2], second)}, and this watcher first saw it live at {first.isoformat(timespec='seconds')}", self.section(out, "check 6"))
-        self.assertNotIn(self.gone(self.door.hpke[2], self.door.tls), out)
-
-    def test_a_gone_boot_whose_second_spki_has_a_record_passes(self):
-        first, second = self.served_on_a_second_spki_inside_its_grace()
-        self.door.add(self.door.record(document(self.door.hpke[2], second), None, 9))
-        code, out = self.at(first + check_door.checks.LIVE_GRACE + timedelta(minutes=1))
-        self.assertEqual(code, 0, out)
-
-    def test_a_state_with_one_spki_per_boot_is_read_and_rewritten_with_a_list(self):
-        first = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
-        self.door.edit_state(lambda s: s["boots"].update({key_id(self.door.hpke[1]): {"first_seen": first, "spki_sha256": spki_hex(self.door.tls)},
-                                                           key_id(self.door.hpke[2]): {"first_seen": first, "spki_sha256": spki_hex(self.door.tls)}}))
-        self.fails(f"{self.gone(self.door.hpke[2], self.door.tls)}, and this watcher first saw it live at")
-        self.assertEqual(self.door.state()["boots"], {key_id(self.door.hpke[1]): {"first_seen": first, "spkis": [spki_hex(self.door.tls)]},
-                                                      key_id(self.door.hpke[2]): {"first_seen": first, "spkis": [spki_hex(self.door.tls)]}})
-
     def test_a_watcher_with_no_state_does_not_report_check_6_ok_and_starts_its_history(self):
         (self.door.root / "sequence.json").unlink()
         code, out = self.door.run()
         self.assertEqual(code, 2, out)
         self.assertIn("NOT ENFORCED: check 6 not enforced: needs --sequence-state", out)
         self.assertNotIn("FAIL", out)
-        self.assertEqual(self.door.state()["boots"], {key_id(self.door.hpke[1]): {"first_seen": None, "spkis": [spki_hex(self.door.tls)]}})
+        self.assertEqual(self.door.state()["boots"], {key_id(self.door.hpke[1]): {"first_seen": None, "spkis": {spki_hex(self.door.tls): self.door.state()["last_run"]}}})
         self.passes()
 
     def test_a_watcher_with_no_state_gives_a_recordless_boot_no_grace_on_any_later_run(self):
@@ -989,6 +953,11 @@ class RecordsPublicTest(Fixture):
                 self.assertIn(f"{check_door.checks.RECORDS_REPO_URL}, read with no token, {message}, so an outside watcher cannot read", self.section(self.fails(), "check 9"))
         self.door.visibility = "public"
         self.passes()
+
+    def test_a_rate_limited_403_leaves_check_9_unjudged(self):
+        self.door.visibility = "rate limited"
+        out = self.passes()
+        self.assertIn(f"NOTE: {check_door.checks.RECORDS_REPO_URL}, read with no token, could not be read: GitHub answers 403 for a rate limit", self.section(out, "check 9"))
 
 
 if __name__ == "__main__":

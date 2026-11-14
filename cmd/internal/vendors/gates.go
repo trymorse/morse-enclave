@@ -46,7 +46,12 @@ func (gs *Gates) Unpinned() []attested.UnpinnedRelease {
 	if gs == nil {
 		return nil
 	}
-	return gs.unpinned.Seen()
+	seen := gs.unpinned.Seen()
+	listed := Pinned(attestation.Vendors())
+	for i, r := range seen {
+		seen[i].Listed = listed(r.Vendor, r.Field, r.Release)
+	}
+	return seen
 }
 
 func (gs *Gates) observedBy(by *attester.Vendor) tee.Deps {

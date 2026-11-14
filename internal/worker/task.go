@@ -8,6 +8,7 @@ import (
 	"morse/backend/internal/apierr"
 	"morse/backend/internal/billing/measure"
 	"morse/backend/internal/catalog"
+	"morse/backend/internal/dialect"
 	"morse/backend/internal/jsonx"
 	"morse/backend/internal/taskmode"
 	"morse/backend/internal/taskseal"
@@ -23,9 +24,9 @@ func (w *InProcess) TaskAdopt(_ context.Context, h Handle, rev int64) (TaskAdopt
 	if t == nil {
 		return TaskAdopted{}, apierr.ErrUnavailable
 	}
-	key := w.sealing.tasks
-	if key == nil {
-		return TaskAdopted{}, errSealedUnavailable
+	key, err := w.sealing.taskKey()
+	if err != nil {
+		return TaskAdopted{}, err
 	}
 	rev, ok := w.sealing.floors.Reserve(t.task, rev)
 	if !ok {
@@ -68,6 +69,9 @@ type openedTask struct {
 func (*openedTask) cut(measure.Cut) {}
 
 func (w *InProcess) openTask(o Opening, route taskrun.BundleRoute) (Admission, error) {
+	if _, err := w.sealing.taskKey(); err == taskrun.ErrKeyPending {
+		return nil, err
+	}
 	b, err := taskrun.Read(o.Body, route)
 	if err != nil {
 		return nil, err
@@ -83,9 +87,9 @@ func (w *InProcess) openTask(o Opening, route taskrun.BundleRoute) (Admission, e
 }
 
 func (w *InProcess) TaskOpen(_ context.Context, o TaskOpening) (TaskOpened, error) {
-	key := w.sealing.tasks
-	if key == nil {
-		return TaskOpened{}, errSealedUnavailable
+	key, err := w.sealing.taskKey()
+	if err != nil {
+		return TaskOpened{}, err
 	}
 	if o.Epoch != key.Epoch() {
 		return TaskOpened{}, taskrun.EpochUnknown{Holds: key.Epoch()}
@@ -214,7 +218,7 @@ func (t taskSteps) Open(s *taskrun.Step) (Admission, error) {
 	var err error
 	switch s.Kind() {
 	case catalog.KindChat:
-		a, err = t.w.openChat(o, false)
+		a, err = t.w.openChat(o, dialect.Dialect{}, false)
 	case catalog.KindSearch:
 		a, err = t.w.openSearch(o)
 	default:

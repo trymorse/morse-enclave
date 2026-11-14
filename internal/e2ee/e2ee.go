@@ -148,7 +148,7 @@ var (
 
 var ErrNotApplied = errors.New("e2ee: upstream did not confirm E2EE v2 with the requested suite")
 
-var Scheme = &chat.Scheme{Name: Protocol, Version: Version, Headers: []string{HeaderVersion, HeaderClientKey, HeaderModelKey, HeaderNonce, HeaderTimestamp, HeaderLegacy, HeaderAlgo}, Parse: parse, ErrHeaderMissing: ErrHeaderMissing}
+var Scheme = &chat.Scheme{Name: Protocol, Version: Version, Headers: []string{HeaderVersion, HeaderClientKey, HeaderModelKey, HeaderNonce, HeaderTimestamp, HeaderLegacy, HeaderAlgo}, Parse: parse, ErrHeaderMissing: ErrHeaderMissing, Vendor: "Phala", ProviderRule: `must carry provider exactly {"aci_verified":true,"zdr":true}`}
 
 func parse(get func(name string) string) (chat.E2EE, bool, error) {
 	params, sealed, err := ParseHeaders(get)

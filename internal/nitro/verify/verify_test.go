@@ -93,6 +93,7 @@ type documentOptions struct {
 	tls         []byte
 	environment string
 	userData    []byte
+	nonce       []byte
 	pcrs        *struct{ pcr0, pcr1, pcr2 string }
 	digest      string
 	alg         int64
@@ -165,7 +166,7 @@ func (f *forge) document(o documentOptions) []byte {
 		"cabundle":    o.bundle,
 		"public_key":  o.tls,
 		"user_data":   o.userData,
-		"nonce":       nil,
+		"nonce":       o.nonce,
 	})
 	if err != nil {
 		panic(err)
