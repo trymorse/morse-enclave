@@ -478,6 +478,9 @@ func (o *openedChat) try(ctx context.Context, w *InProcess, a attempt, g ChatGra
 	opened := time.Now()
 	got := a.route.Upstream.serve(ctx, w, o, a, rw)
 	returned := time.Now()
+	if got.callErr == nil {
+		rw.sendHeldHeaderOfAnEmptyReply()
+	}
 	end := endingOf(ctx, got.writeErr, got.callErr)
 	if got.attempts.Refused {
 		// The retry loop held a busy refusal, which Anthropic sends inside a 200 stream with no status, so no

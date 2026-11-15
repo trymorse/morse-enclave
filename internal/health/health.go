@@ -111,7 +111,9 @@ type Observation struct {
 	Malformed bool `json:",omitempty"`
 	// Window is the context window the host stated when it refused the prompt as too long (ContextOverflow), or 0
 	// when it stated none.
-	Window int `json:",omitempty"`
+	Window     int           `json:",omitempty"`
+	FailedOver bool          `json:"-"`
+	VendorWait time.Duration `json:"-"`
 }
 
 // Recorded is the outcome the observation counts under: its own, or Malformed for an ok reply with an unusable call.
@@ -165,10 +167,12 @@ func (m *Meter) Key() (Key, bool) {
 type series struct {
 	requests                 atomic.Uint64
 	duration, ttft, overhead Histogram
+	vendorWait               Histogram
 	decodeRate               rateHistogram
 	outputTokens             atomic.Uint64
 	generationMicros         atomic.Uint64
 	retries, hedges          atomic.Uint64
+	failedOver               atomic.Uint64
 }
 
 func (m *Meter) Observe(o Observation) {
@@ -185,7 +189,7 @@ func (m *Meter) Observe(o Observation) {
 	for _, measured := range []struct {
 		hist *Histogram
 		took time.Duration
-	}{{&s.duration, o.Duration}, {&s.ttft, o.TTFT}, {&s.overhead, o.Overhead}} {
+	}{{&s.duration, o.Duration}, {&s.ttft, o.TTFT}, {&s.overhead, o.Overhead}, {&s.vendorWait, o.VendorWait}} {
 		if measured.took > 0 {
 			measured.hist.Record(measured.took)
 		}
@@ -200,6 +204,9 @@ func (m *Meter) Observe(o Observation) {
 	}
 	if o.Hedges > 0 {
 		s.hedges.Add(uint64(o.Hedges))
+	}
+	if o.FailedOver {
+		s.failedOver.Add(1)
 	}
 }
 
@@ -224,11 +231,13 @@ type Row struct {
 	OutputTokens     uint64
 	GenerationMicros uint64
 	Retries, Hedges  uint64
+	FailedOver       uint64
+	VendorWait       Counts
 }
 
 func (r Row) empty() bool {
 	return r.Requests == 0 && len(r.Duration) == 0 && len(r.TTFT) == 0 && len(r.Overhead) == 0 && len(r.DecodeRate) == 0 &&
-		r.OutputTokens == 0 && r.GenerationMicros == 0 && r.Retries == 0 && r.Hedges == 0
+		r.OutputTokens == 0 && r.GenerationMicros == 0 && r.Retries == 0 && r.Hedges == 0 && r.FailedOver == 0 && len(r.VendorWait) == 0
 }
 
 type Batch []Row
@@ -251,6 +260,7 @@ func (r *Recorder) Drain() Batch {
 					Key: m.key, Path: p, Outcome: o, Requests: s.requests.Swap(0),
 					Duration: s.duration.Drain(), TTFT: s.ttft.Drain(), Overhead: s.overhead.Drain(), DecodeRate: s.decodeRate.drain(),
 					OutputTokens: s.outputTokens.Swap(0), GenerationMicros: s.generationMicros.Swap(0), Retries: s.retries.Swap(0), Hedges: s.hedges.Swap(0),
+					FailedOver: s.failedOver.Swap(0), VendorWait: s.vendorWait.Drain(),
 				}
 				if !row.empty() {
 					batch = append(batch, row)

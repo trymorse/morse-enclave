@@ -12,6 +12,7 @@ RUN_GAP = timedelta(minutes=7)
 MAX_KEY_AGE = timedelta(days=60)
 POINTER_LATE = timedelta(minutes=20)
 WITNESS_LAPSE = timedelta(hours=24)
+ACK_BOOT = re.compile(r"([0-9a-f]{16})=(https://\S+)", re.ASCII)
 
 
 class Unenforced(str):
@@ -22,7 +23,7 @@ class Note(str):
     pass
 
 
-UNENFORCED = Unenforced("check 6 not enforced: needs --sequence-state from this watcher's earlier runs, which keeps every boot it has seen live and when it last ran, and this file has no last_run, so a boot that served before this run without a record cannot show")
+UNENFORCED = Unenforced("check 6 not enforced: needs --sequence-state from this watcher's earlier runs, which keeps every boot it has seen live and when it last ran, and this file has no last_run, so a boot listed before this run without a record cannot show")
 
 
 def level(failure):
@@ -76,6 +77,7 @@ class Evidence:
     checkpoints: dict = field(default_factory=dict)
     signer: list = field(default_factory=list)
     signer_state: object = None
+    acked_boots: list = field(default_factory=list)
 
     def recorded(self):
         return {v.spki_sha256 for v in self.verified}
@@ -203,8 +205,20 @@ def check_caa(ev):
     return failures
 
 
+def read_acked_boots(given):
+    acked, failures = {}, []
+    for a in given:
+        if match := ACK_BOOT.fullmatch(a):
+            acked[match[1]] = match[2]
+        else:
+            failures.append(f"--ack-boot {a!r} is not <HPKE key id, 16 hex digits>=<https URL of the public note>")
+    return acked, failures
+
+
 def check_live(ev):
-    pairs, failures, held = ev.pairs(), [], set()
+    pairs, held = ev.pairs(), set()
+    acked, failures = read_acked_boots(ev.acked_boots)
+    noted = set()
     if ev.last_run is not None and ev.now < ev.last_run - records.MAX_AHEAD:
         failures.append(f"this run's clock reads {ev.now.isoformat(timespec='seconds')}, before {ev.last_run.isoformat(timespec='seconds')}, when the last run wrote --sequence-state, and a clock that goes backwards stretches a boot's 2 hours")
     for n, seen in enumerate(ev.live, 1):
@@ -232,12 +246,20 @@ def check_live(ev):
                 h, sender = handed[0]
                 when = f"before it took SPKI {h} from boot {sender}" if None not in (boot.spkis[spki], boot.spkis[h]) else f"beside SPKI {h} it took from boot {sender}, though this watcher's older state did not record when it saw each key"
                 failures.append(Note(f"the boot with HPKE key {key_id} has no verified record of SPKI {spki}, which it held live {when}, so {spki} is taken as the key it was born with, which the door drops unlogged when it takes a key; check 1 still fails any certificate for it"))
+            elif key_id in acked:
+                noted.add(key_id)
+                failures.append(Note(f"acknowledged: the boot with HPKE key {key_id} has no verified record of SPKI {spki}, which it held live, and {boot.seen()}. --ack-boot {key_id} names it, with the public note {acked[key_id]} on why no record of it can exist"))
             else:
                 failures.append(f"the boot with HPKE key {key_id} has no verified record of SPKI {spki}, which it held live, and {boot.seen()}")
+    for key_id in sorted(acked.keys() - noted):
+        if key_id not in ev.boots:
+            failures.append(Note(f"--ack-boot {key_id} names no boot this watcher keeps, so its public note {acked[key_id]} has nothing here to acknowledge"))
+        else:
+            failures.append(f"--ack-boot {key_id} names a boot that does not hold, past its grace and no longer live, an SPKI with no verified record, so there is nothing to acknowledge")
     if ev.last_run is None:
         return failures + [UNENFORCED]
     if ev.now - ev.last_run > RUN_GAP:
-        return failures + [Unenforced(f"check 6 not enforced on this run: the last run was at {ev.last_run.isoformat(timespec='seconds')}, more than {RUN_GAP.seconds // 60} minutes before this one, so a boot that served only in between cannot show, and a state file restored from an older copy shows this way too")]
+        return failures + [Unenforced(f"check 6 not enforced on this run: the last run was at {ev.last_run.isoformat(timespec='seconds')}, more than {RUN_GAP.seconds // 60} minutes before this one, so a boot listed only in between cannot show, and a state file restored from an older copy shows this way too")]
     return failures
 
 

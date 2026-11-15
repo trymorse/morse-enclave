@@ -163,6 +163,39 @@ class CertificatesTest(Fixture):
         self.assertEqual(self.section(out, "check 1"), f"  NOTE: crt.sh could not be read, so this run judges check 1 from {ct} alone: "
                          f"LookupError('it returned no certificate covering inference.trymorse.ai in 3 reads, though {ct} returned 1')\n  OK")
 
+    def test_crtsh_with_no_certificate_while_the_other_source_cannot_be_read_leaves_the_evidence_unread(self):
+        unread = self.door.root / "certspotter.json"
+        verdict = self.door.root / "verdict.json"
+        sleeping, delays = self.crtsh_lags()
+        with sleeping:
+            code, out = self.door.run("--ct", "crt.sh", "--ct", str(unread), "--verdict", str(verdict))
+        self.assertEqual(code, 1, out)
+        self.assertEqual(delays, list(check_door.CRTSH_RETRY_DELAYS))
+        self.assertIn(f"FAIL: could not read the evidence: OSError(\"no CT source could be read: {unread}: FileNotFoundError(2, 'No such file or directory'); "
+                      "crt.sh: LookupError('it returned no certificate covering inference.trymorse.ai in 3 reads, "
+                      f"and {unread} could not be read')\")", out)
+        self.assertNotIn("  FAIL: ", out)
+        self.assertEqual({k: v for k, v in json.loads(verdict.read_text()).items() if k in ("kind", "retryable", "failed")},
+                         {"kind": "unread", "retryable": True, "failed": []})
+
+    def test_crtsh_that_answers_a_later_read_with_a_rogue_certificate_while_the_other_source_cannot_be_read_fails(self):
+        rogue = certificate(ec.generate_private_key(ec.SECP256R1()), self.door.ca, "inference.trymorse.ai", ["inference.trymorse.ai"], issuer_cn="test ca")
+        unread = self.door.root / "certspotter.json"
+        sleeping, _ = self.crtsh_lags([rogue])
+        with sleeping:
+            code, out = self.door.run("--ct", "crt.sh", "--ct", str(unread))
+        self.assertEqual(code, 1, out)
+        self.assertIn(f"NOTE: {unread} could not be read, so this run judges check 1 from crt.sh alone", out)
+        self.assertIn(f"FAIL: crt.sh 0 names inference.trymorse.ai {self.unrecorded(rogue)}, and CT made it public at", out)
+
+    def test_crtsh_with_only_a_rogue_certificate_while_the_other_source_cannot_be_read_fails(self):
+        rogue = certificate(ec.generate_private_key(ec.SECP256R1()), self.door.ca, "inference.trymorse.ai", ["inference.trymorse.ai"], issuer_cn="test ca")
+        self.crtsh_answers(rogue)
+        with unittest.mock.patch.object(check_door.time, "sleep", lambda delay: self.fail("crt.sh is read again")):
+            code, out = self.door.run("--ct", "crt.sh", "--ct", str(self.door.root / "certspotter.json"))
+        self.assertEqual(code, 1, out)
+        self.assertIn(f"FAIL: crt.sh 0 names inference.trymorse.ai {self.unrecorded(rogue)}, and CT made it public at", out)
+
     def test_crtsh_that_answers_on_a_later_read_is_judged_as_usual(self):
         ct = self.door.root / "ct.json"
         sleeping, delays = self.crtsh_lags([], [self.door.ct[0]])

@@ -65,24 +65,38 @@ const (
 	sealedPassage passage = iota + 1
 	plainPassage
 	carriedPassage
+	preflightPassage
 )
 
 type route struct {
 	passage passage
 	limit   int64
+	browser bool
 }
 
+var browserRoutes = []string{worker.ChatPattern}
+
 func passages() (map[string]route, error) {
-	table := map[string]route{seal.Endpoint: {carriedPassage, seal.MaxBody + seal.Overhead}}
+	table := map[string]route{seal.Endpoint: {passage: carriedPassage, limit: seal.MaxBody + seal.Overhead}}
 	for _, rt := range seal.Routes {
 		switch {
 		case rt.Sealed:
-			table[rt.Pattern] = route{sealedPassage, sealedLimit(rt.Pattern)}
+			table[rt.Pattern] = route{passage: sealedPassage, limit: sealedLimit(rt.Pattern)}
 		case strings.HasPrefix(rt.Pattern, http.MethodGet+" "):
 			table[rt.Pattern] = route{passage: plainPassage}
 		default:
 			return nil, fmt.Errorf("door: the plain route %q may carry a body, which the door forwards only inside a seal", rt.Pattern)
 		}
+	}
+	for _, pattern := range browserRoutes {
+		rt, ok := table[pattern]
+		if !ok || rt.passage != sealedPassage {
+			return nil, fmt.Errorf("door: the browser route %q is not a sealed route", pattern)
+		}
+		rt.browser = true
+		table[pattern] = rt
+		_, path, _ := strings.Cut(pattern, " ")
+		table[http.MethodOptions+" "+path] = route{passage: preflightPassage, browser: true}
 	}
 	return table, nil
 }
@@ -349,7 +363,7 @@ func (s *Server) pass(pattern string, rt route) http.HandlerFunc {
 			apierr.WriteError(w, errPlainBody)
 			return
 		}
-		if rt.passage != plainPassage {
+		if rt.passage == sealedPassage || rt.passage == carriedPassage {
 			if !bearerShaped(r.Header) {
 				apierr.WriteError(w, errNoBearer)
 				return
@@ -360,7 +374,7 @@ func (s *Server) pass(pattern string, rt route) http.HandlerFunc {
 			}
 		}
 		s.entrance.markBusy(r.Context())
-		resp, cek, err := s.send(r, rt.passage, peer.Addr(), body, f)
+		resp, cek, err := s.send(r, rt, peer.Addr(), body, f)
 		if err != nil {
 			if r.Context().Err() != nil {
 				return
@@ -493,10 +507,10 @@ func bodyRefusal(w http.ResponseWriter, err error) apierr.Error {
 	return errBodyUnread
 }
 
-func (s *Server) send(r *http.Request, p passage, client netip.Addr, inner seal.Inner, f *flight) (*http.Response, *[32]byte, error) {
+func (s *Server) send(r *http.Request, rt route, client netip.Addr, inner seal.Inner, f *flight) (*http.Response, *[32]byte, error) {
 	method, target, body := r.Method, r.URL.RequestURI(), inner.Body()
 	var cek *[32]byte
-	if p == sealedPassage {
+	if rt.passage == sealedPassage {
 		head := seal.Head{Method: r.Method, Path: target, Headers: flatten(worker.ContentHeaders(r.Header)), TS: time.Now().Unix()}
 		sealed, key, err := inner.Seal([][]byte{s.sealTo}, head)
 		if err != nil {
@@ -511,7 +525,7 @@ func (s *Server) send(r *http.Request, p passage, client netip.Addr, inner seal.
 	if len(body) > 0 {
 		req.Body, req.ContentLength = &sentBody{buf: body, flight: f.handoff()}, int64(len(body))
 	}
-	req.Header = outerHeader(r.Header, p, client)
+	req.Header = outerHeader(r.Header, rt, client)
 	resp, err := upstream.Do(s.client, req)
 	if err != nil {
 		return nil, nil, err
@@ -553,16 +567,22 @@ func flatten(h http.Header) map[string]string {
 	return flat
 }
 
-func outerHeader(in http.Header, p passage, client netip.Addr) http.Header {
+func outerHeader(in http.Header, rt route, client netip.Addr) http.Header {
 	out := http.Header{}
 	copyHeader(out, in, "Authorization")
-	switch p {
+	switch rt.passage {
 	case plainPassage:
 		copyHeader(out, in, "Accept")
 	case carriedPassage:
 		copyHeader(out, in, "Content-Type")
 	case sealedPassage:
 		out.Set("Content-Type", seal.ContentType)
+	case preflightPassage:
+		copyHeader(out, in, "Access-Control-Request-Method")
+		copyHeader(out, in, "Access-Control-Request-Headers")
+	}
+	if rt.browser {
+		copyHeader(out, in, "Origin")
 	}
 	out.Set(seal.DoorClientAddress, client.Unmap().WithZone("").String())
 	return out

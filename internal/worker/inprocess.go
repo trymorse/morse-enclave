@@ -33,6 +33,7 @@ type InProcess struct {
 	reports        Reporter
 	unpinned       func() []attested.UnpinnedRelease
 	vendorPins     func() *VendorPinsLag
+	vendorPinsMode string
 	now            func() time.Time
 	keepaliveEvery time.Duration
 	videoSubmit    time.Duration
@@ -67,19 +68,20 @@ func (NopReporter) UpstreamErrorChunk(string, chat.ErrorCode) {}
 func (NopReporter) VendorUsageMissing(string)                 {}
 
 type Config struct {
-	Models        map[string]Model
-	Lookup        *lookup.Relay
-	Plugins       *plugins.Relay
-	Reports       Reporter
-	Now           func() time.Time
-	CountingSlots int
-	Sealing       Sealing
-	Keepalive     time.Duration
-	VideoSubmit   time.Duration
-	ProofBudget   time.Duration
-	Unpinned      func() []attested.UnpinnedRelease
-	VendorPins    func() *VendorPinsLag
-	PrivacyVeil   *PrivacyVeil
+	Models         map[string]Model
+	Lookup         *lookup.Relay
+	Plugins        *plugins.Relay
+	Reports        Reporter
+	Now            func() time.Time
+	CountingSlots  int
+	Sealing        Sealing
+	Keepalive      time.Duration
+	VideoSubmit    time.Duration
+	ProofBudget    time.Duration
+	Unpinned       func() []attested.UnpinnedRelease
+	VendorPins     func() *VendorPinsLag
+	VendorPinsMode string
+	PrivacyVeil    *PrivacyVeil
 }
 
 func NewInProcess(cfg Config) (*InProcess, error) {
@@ -92,7 +94,7 @@ func NewInProcess(cfg Config) (*InProcess, error) {
 		chats: indexChats(cfg.Models), images: map[string]media.ImageGenerator{}, videos: map[string]media.VideoGenerator{},
 		searches: map[string]web.Searcher{}, fetches: map[string]web.Fetcher{}, researchers: map[string]research.Researcher{}, transcribers: map[string]transcriber{},
 		endpoints: map[string]catalog.EndpointID{},
-		lookup:    cfg.Lookup, plugins: cfg.Plugins, reports: cfg.Reports, unpinned: cfg.Unpinned, vendorPins: cfg.VendorPins, privacyVeil: cfg.PrivacyVeil,
+		lookup:    cfg.Lookup, plugins: cfg.Plugins, reports: cfg.Reports, unpinned: cfg.Unpinned, vendorPins: cfg.VendorPins, vendorPinsMode: cfg.VendorPinsMode, privacyVeil: cfg.PrivacyVeil,
 		now: cfg.Now, keepaliveEvery: cmp.Or(cfg.Keepalive, keepalive), videoSubmit: cmp.Or(cfg.VideoSubmit, videoSubmitTimeout), proofBudget: cmp.Or(cfg.ProofBudget, proofBudget), opened: map[Handle]*entry{},
 		tiers: map[string]catalog.Tier{}, runs: map[Handle]*taskRun{}, taskLife: taskrun.RunLife,
 	}
@@ -144,7 +146,7 @@ const videoSubmitTimeout = 2 * time.Minute
 const proofBudget = 6 * time.Second
 
 func (w *InProcess) Unpinned(context.Context) (Unpinned, error) {
-	var u Unpinned
+	u := Unpinned{VendorPinsMode: w.vendorPinsMode}
 	if w.unpinned != nil {
 		u.Releases = w.unpinned()
 	}

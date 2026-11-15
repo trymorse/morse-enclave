@@ -28,21 +28,27 @@ RUN_URL = "https://example.test/run"
 FAILED = "2 certificates in CT cover inference.trymorse.ai.\n\nmorse-records is public (check 9)\n  FAIL: https://api.github.com/repos/trymorse/morse-records, read with no token, answers 404\n"
 UNREAD = "FAIL: could not read the evidence: <HTTPError 502: 'Bad Gateway'>\n"
 PASSED = "0 certificates in CT cover inference.trymorse.ai.\n\nmorse-records is public (check 9)\n  OK\n"
-GAP = "The door's live attestation names only boots with verified records (check 6)\n  NOT ENFORCED: check 6 not enforced on this run\n"
+GAP = "Every boot this watcher saw the door's live attestation list has a verified record of each key it held, 2 hours after it first saw it (check 6)\n  NOT ENFORCED: check 6 not enforced on this run\n"
 SIGNER = "Only the publisher pushes data to morse-pins main (check 7)\n  NOT ENFORCED: check 7 not enforced on this run: sign.yml's runs could not be read\n"
 
 
-def verdict(kind, unenforced=()):
+BAD_GATEWAY = "<HTTPError 502: 'Bad Gateway'>"
+BOTH_READ = {"crt.sh": None, "certspotter": None}
+CRTSH_DOWN = {"crt.sh": BAD_GATEWAY, "certspotter": None}
+
+
+def verdict(kind, unenforced=(), failed=(), ct=None):
     code = {"passed": 0, "failed": 1, "unenforced": 2, "unread": 1}[kind]
-    return {"kind": kind, "exit": code, "retryable": kind == "unread", "failed": [1] if kind == "failed" else [], "unenforced": list(unenforced), "checks": []}
+    ct = {} if kind == "unread" else BOTH_READ if ct is None else ct
+    return {"kind": kind, "exit": code, "retryable": kind == "unread", "failed": list(failed), "unenforced": list(unenforced), "checks": [], "ct": ct}
 
 
-def passed():
-    return {"code": 0, "output": PASSED, "verdict": verdict("passed")}
+def passed(ct=None):
+    return {"code": 0, "output": PASSED, "verdict": verdict("passed", ct=ct)}
 
 
-def failed():
-    return {"code": 1, "output": FAILED, "verdict": verdict("failed")}
+def failed(*checks):
+    return {"code": 1, "output": FAILED, "verdict": verdict("failed", failed=checks or (1,))}
 
 
 def unread():
@@ -81,6 +87,9 @@ class Watched:
     body: str
     summary: str
     slept: list
+    ct_alert: str
+    ct_title: str
+    ct_body: str
 
 
 class Watcher:
@@ -88,11 +97,11 @@ class Watcher:
         self.root = Path(root)
         (self.root / "stand_in.py").write_text(STAND_IN)
 
-    def run(self, *attempts, alerts=True, restored=True, setup=None):
+    def run(self, *attempts, alerts=True, restored=True, setup=None, sent=True):
         (self.root / "script.json").write_text(json.dumps(list(attempts)))
-        for name in ("outputs", "summary", "alert.md"):
+        for name in ("outputs", "summary", "alert.md", "ct-alert.md"):
             (self.root / name).unlink(missing_ok=True)
-        argv = ["--state", str(self.root / "door-state"), "--run-url", RUN_URL, "--alert-body", str(self.root / "alert.md")]
+        argv = ["--state", str(self.root / "door-state"), "--run-url", RUN_URL, "--alert-body", str(self.root / "alert.md"), "--ct-alert-body", str(self.root / "ct-alert.md")]
         argv += ["--alerts"] if alerts else []
         argv += ["--restored", "door-watch-1-1"] if restored else []
         if setup is not None:
@@ -107,8 +116,13 @@ class Watcher:
         if left and setup is None:
             raise AssertionError(f"door_watch.py left {len(left)} attempts unrun")
         outputs = dict(line.split("=", 1) for line in self.read("outputs").splitlines())
+        if sent and outputs.get("ct_alert"):
+            streaks = json.loads(self.read("door-state/ct-streak"))
+            for source in outputs["ct_alert"].split(","):
+                streaks[source]["alerted"] = True
+            (self.root / "door-state" / "ct-streak").write_text(json.dumps(streaks))
         return Watched(code, out.getvalue(), outputs.get("alert", ""), outputs.get("label", ""), outputs.get("title", ""), outputs.get("hours", ""),
-                       self.read("alert.md"), self.read("summary"), slept)
+                       self.read("alert.md"), self.read("summary"), slept, outputs.get("ct_alert", ""), outputs.get("ct_title", ""), self.read("ct-alert.md"))
 
     def read(self, name):
         path = self.root / name
@@ -133,7 +147,20 @@ class WatchTest(unittest.TestCase):
     def test_a_failed_check_alerts_at_once_under_its_own_label(self):
         w = self.watcher.run(failed())
         self.assertEqual((w.code, w.alert, w.label, w.hours, w.title), (1, "failed", "door-watch-failed", "0", "The inference door's watcher failed a check"))
-        self.assertEqual(w.body, f"check-door.py exited 1 and failed a check. A certificate for inference.trymorse.ai whose key no verified record attests can be a rogue certificate: read check 1 first, in {RUN_URL}\n\n```\n{FAILED}```\n")
+        self.assertEqual(w.body, f"check-door.py exited 1 and failed check 1. A certificate for inference.trymorse.ai whose key no verified record attests can be a rogue certificate: read check 1 first, in {RUN_URL}\n\n```\n{FAILED}```\n")
+
+    def test_a_failed_check_6_alone_points_at_check_6_not_check_1(self):
+        w = self.watcher.run(failed(6))
+        self.assertEqual((w.code, w.alert, w.label), (1, "failed", "door-watch-failed"))
+        self.assertIn("check-door.py exited 1 and failed check 6. Check 6 failing usually means /v1/attestation listed a boot that has no verified record", w.body)
+        self.assertIn("The FAIL lines below give the cause", w.body)
+        self.assertIn("A boot that died before it could log its record never will", w.body)
+        self.assertNotIn("check 1", w.body)
+
+    def test_a_run_failing_checks_1_and_6_names_both_and_check_1_first(self):
+        w = self.watcher.run(failed(6, 1))
+        self.assertIn("failed check 1, check 6. A certificate", w.body)
+        self.assertLess(w.body.index("read check 1 first"), w.body.index("Check 6 failing usually means"))
 
     def test_a_failed_check_outranks_lost_state_and_says_the_state_was_lost(self):
         w = self.watcher.run(failed(), restored=False)
@@ -200,6 +227,63 @@ class WatchTest(unittest.TestCase):
         for run in (failed(), unenforced(6), crashed(), passed()):
             self.assertEqual(self.watcher.run(run).slept, [])
 
+    def crtsh_down(self, runs, **kwargs):
+        return self.runs(*[passed(CRTSH_DOWN)] * runs, **kwargs)
+
+    def test_a_ct_source_down_on_fewer_runs_in_a_row_than_the_threshold_alerts_no_one(self):
+        runs = self.crtsh_down(door_watch.CT_ALERT_AFTER - 1)
+        self.assertEqual({(w.code, w.alert, w.ct_alert, w.ct_body) for w in runs}, {(0, "", "", "")})
+        self.assertIn(f"crt.sh could not be read on {door_watch.CT_ALERT_AFTER - 1} run(s) in a row.", runs[-1].summary)
+
+    def test_a_ct_source_down_on_the_threshold_alerts_once_under_its_own_label(self):
+        runs = self.crtsh_down(door_watch.CT_ALERT_AFTER + 5)
+        self.assertEqual([i for i, w in enumerate(runs, 1) if w.ct_alert], [door_watch.CT_ALERT_AFTER])
+        w = runs[door_watch.CT_ALERT_AFTER - 1]
+        self.assertEqual((w.code, w.alert, w.ct_alert, w.ct_title), (0, "", "crt.sh", f"The inference door's watcher could not read crt.sh on {door_watch.CT_ALERT_AFTER} or more runs in a row"))
+        since = json.loads(self.watcher.read("door-state/ct-streak"))["crt.sh"]["since"]
+        self.assertTrue(w.ct_body.startswith(f"crt.sh could not be read on {door_watch.CT_ALERT_AFTER} door-watch runs in a row, since {since}, so check 1 has judged the door's certificates from certspotter alone"), w.ct_body)
+        self.assertIn(f"Its last error: {BAD_GATEWAY}\n\nThe last of those runs is {RUN_URL}\n\n```\n{PASSED}```\n", w.ct_body)
+        self.assertEqual(door_watch.compose_ct({"crt.sh": {"count": door_watch.CT_ALERT_AFTER, "since": since, "why": BAD_GATEWAY}}, door_watch.judge(0, PASSED, verdict("passed", ct=CRTSH_DOWN)), RUN_URL).label, "door-watch-ct")
+
+    def test_a_run_that_reads_the_source_restarts_its_count(self):
+        runs = self.crtsh_down(door_watch.CT_ALERT_AFTER - 1) + self.runs(passed()) + self.crtsh_down(door_watch.CT_ALERT_AFTER - 1)
+        self.assertEqual([w.ct_alert for w in runs if w.ct_alert], [])
+        self.assertEqual(json.loads(self.watcher.read("door-state/ct-streak"))["crt.sh"]["count"], door_watch.CT_ALERT_AFTER - 1)
+        self.assertEqual(self.crtsh_down(1)[0].ct_alert, "crt.sh")
+        later = self.runs(passed()) + self.crtsh_down(door_watch.CT_ALERT_AFTER)
+        self.assertEqual([i for i, w in enumerate(later) if w.ct_alert], [door_watch.CT_ALERT_AFTER])
+
+    def test_a_run_that_read_no_evidence_neither_counts_nor_restarts_a_ct_source(self):
+        self.crtsh_down(door_watch.CT_ALERT_AFTER - 1)
+        runs = self.runs(*[[unread()] * 3] * 4, passed(CRTSH_DOWN), [unread()] * 3)
+        self.assertEqual([w.ct_alert for w in runs], ["", "", "", "", "crt.sh", ""])
+
+    def test_a_ct_source_down_on_a_run_that_failed_a_check_still_counts_and_alerts_both(self):
+        self.crtsh_down(door_watch.CT_ALERT_AFTER - 1)
+        w = self.watcher.run({**failed(), "verdict": verdict("failed", failed=(1,), ct=CRTSH_DOWN)})
+        self.assertEqual((w.code, w.alert, w.ct_alert), (1, "failed", "crt.sh"))
+
+    def test_without_alerts_a_ct_source_is_counted_and_alerts_no_one(self):
+        runs = self.crtsh_down(door_watch.CT_ALERT_AFTER, alerts=False)
+        self.assertEqual({(w.code, w.ct_alert) for w in runs}, {(0, "")})
+        self.assertEqual(json.loads(self.watcher.read("door-state/ct-streak"))["crt.sh"]["count"], door_watch.CT_ALERT_AFTER)
+
+    def test_alerts_turned_on_after_the_threshold_alert_on_the_next_run_with_its_count(self):
+        self.crtsh_down(door_watch.CT_ALERT_AFTER + 4, alerts=False)
+        runs = self.crtsh_down(3)
+        self.assertEqual([w.ct_alert for w in runs], ["crt.sh", "", ""])
+        self.assertTrue(runs[0].ct_body.startswith(f"crt.sh could not be read on {door_watch.CT_ALERT_AFTER + 5} door-watch runs in a row"), runs[0].ct_body)
+
+    def test_an_alert_that_was_not_sent_is_decided_again_on_the_next_run(self):
+        self.crtsh_down(door_watch.CT_ALERT_AFTER - 1)
+        runs = self.crtsh_down(2, sent=False) + self.crtsh_down(3)
+        self.assertEqual([w.ct_alert for w in runs], ["crt.sh", "crt.sh", "crt.sh", "", ""])
+
+    def test_a_source_that_reads_again_alerts_again_on_its_next_outage(self):
+        first = self.crtsh_down(door_watch.CT_ALERT_AFTER + 2)
+        later = self.runs(passed()) + self.crtsh_down(door_watch.CT_ALERT_AFTER + 2)
+        self.assertEqual(([i for i, w in enumerate(first, 1) if w.ct_alert], [i for i, w in enumerate(later) if w.ct_alert]), ([door_watch.CT_ALERT_AFTER], [door_watch.CT_ALERT_AFTER]))
+
     def test_each_run_writes_its_output_to_the_summary(self):
         w = self.watcher.run(unenforced(6))
         self.assertEqual(w.summary, f"check-door.py exited 2: unenforced, 1 run(s) in a row.\n\n```\n{GAP}```\n")
@@ -218,6 +302,7 @@ class VerdictTest(Fixture):
         found, run = self.verdict()
         self.assertEqual((run.kind, found["failed"], found["unenforced"], run.retryable), ("passed", [], [], False))
         self.assertEqual([c["check"] for c in found["checks"]], list(range(1, 10)))
+        self.assertEqual(found["ct"], {str(self.door.root / "ct.json"): None})
         self.assertEqual(found["checks"][0]["title"], "Every certificate in CT for the door's name holds a key a verified record attests")
 
     def test_a_failed_check_is_failed_and_names_its_check(self):
@@ -238,8 +323,15 @@ class VerdictTest(Fixture):
 
     def test_evidence_that_could_not_be_read_may_be_tried_again(self):
         found, run = self.verdict("--attestation", str(self.door.root / "missing.json"))
-        self.assertEqual((run.kind, run.retryable, found["checks"]), ("unread", True, []))
+        self.assertEqual((run.kind, run.retryable, found["checks"], found["ct"], run.ct), ("unread", True, [], {}, ()))
         self.assertTrue(found["error"].startswith("could not read the evidence: FileNotFoundError("), found["error"])
+
+    def test_a_ct_source_that_cannot_be_read_is_named_with_why_and_the_one_read_is_null(self):
+        self.door.crtsh = {check_door.CRTSH_URL.format("trymorse.ai"): urllib.error.URLError(OSError(101, "Network is unreachable"))}
+        ct = str(self.door.root / "ct.json")
+        found, run = self.verdict("--ct", "crt.sh", "--ct", ct)
+        self.assertEqual((run.kind, found["ct"]), ("passed", {"crt.sh": "URLError(OSError(101, 'Network is unreachable'))", ct: None}))
+        self.assertEqual(dict(run.ct), found["ct"])
 
     def test_a_github_outage_is_a_result_and_not_evidence_to_read_again(self):
         def down(url, *_):

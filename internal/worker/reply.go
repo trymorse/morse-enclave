@@ -1,6 +1,7 @@
 package worker
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"net/http"
@@ -27,6 +28,7 @@ type replyWriter struct {
 	firstBody time.Time
 	writeErr  error
 	claim     func() bool
+	heldCode  int
 }
 
 var errLostTheReply = errors.New("worker: another endpoint's call began the reply first")
@@ -54,7 +56,19 @@ func (w *replyWriter) unsent(callErr error) bool { return callErr != nil && w.at
 
 func (w *replyWriter) Header() http.Header { return w.header }
 
+func (w *replyWriter) holdsItsHeaderUntilItsFirstBodyByte() bool { return w.claim != nil }
+
 func (w *replyWriter) WriteHeader(code int) {
+	if !w.holdsItsHeaderUntilItsFirstBodyByte() {
+		w.sendHeader(code)
+		return
+	}
+	if w.heldCode == 0 {
+		w.heldCode = code
+	}
+}
+
+func (w *replyWriter) sendHeader(code int) {
 	if w.at != unclaimed {
 		return
 	}
@@ -70,8 +84,17 @@ func (w *replyWriter) WriteHeader(code int) {
 	w.outer.WriteHeader(code)
 }
 
+func (w *replyWriter) sendHeldHeaderOfAnEmptyReply() {
+	if w.heldCode != 0 {
+		w.sendHeader(w.heldCode)
+	}
+}
+
 func (w *replyWriter) Write(p []byte) (int, error) {
-	w.WriteHeader(http.StatusOK)
+	if len(p) == 0 && w.at == unclaimed && w.holdsItsHeaderUntilItsFirstBodyByte() {
+		return 0, nil
+	}
+	w.sendHeader(cmp.Or(w.heldCode, http.StatusOK))
 	if w.at == lost {
 		return 0, errLostTheReply
 	}
@@ -86,11 +109,11 @@ func (w *replyWriter) Write(p []byte) (int, error) {
 }
 
 func (w *replyWriter) FlushError() error {
-	if w.claim != nil {
-		w.WriteHeader(http.StatusOK)
-	}
 	if w.at == lost {
 		return errLostTheReply
+	}
+	if w.at == unclaimed && w.holdsItsHeaderUntilItsFirstBodyByte() {
+		return nil
 	}
 	err := http.NewResponseController(w.outer).Flush()
 	if w.writeErr == nil {

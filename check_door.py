@@ -155,9 +155,9 @@ def read_covering(source, name):
     return [(der, cert) for der, cert in certs if any(covers(n, name) for n in cert.names)]
 
 
-def reread_crtsh(name, read):
+def reread_crtsh(name, read, unread):
     """crt.sh sometimes answers with none of the certificates another CT source returns, and has them again minutes
-    later. Reads it again, and if it still has none, returns why this run takes it as unread rather than empty."""
+    later."""
     why = None
     for delay in CRTSH_RETRY_DELAYS:
         time.sleep(delay)
@@ -171,7 +171,8 @@ def reread_crtsh(name, read):
         why = None
     if why is None:
         others = ", ".join(f"{s} returned {len(c)}" for s, c in read.items() if c)
-        why = LookupError(f"it returned no certificate covering {name} in {len(CRTSH_RETRY_DELAYS) + 1} reads, though {others}")
+        why = LookupError(f"it returned no certificate covering {name} in {len(CRTSH_RETRY_DELAYS) + 1} reads, " +
+                          (f"though {others}" if others else f"and {', '.join(unread)} could not be read"))
     return [], why
 
 
@@ -337,7 +338,7 @@ CHECKS = [
     (3, "Every record's custody ends at a born record, with one origin per key and a floor that never falls", checks.check_custody),
     (4, "Each Rekor shard's checkpoint verifies and extends the last one this watcher accepted", checks.check_logs),
     (5, "CAA names only Morse's ACME accounts and dns-01", checks.check_caa),
-    (6, "The door's live attestation names only boots with verified records", checks.check_live),
+    (6, "Every boot this watcher saw the door's live attestation list has a verified record of each key it held, 2 hours after it first saw it", checks.check_live),
     (7, "Only the publisher pushes data to morse-pins main, the signer's code is on the allowlist, every statement verifies, and no sign.yml run is missing", signer_watch.check),
     (8, "The shard's witnesses match this watcher's policy and the newest pinned image's", checks.check_witnesses),
     (9, "morse-records is public", checks.check_records_public),
@@ -385,8 +386,8 @@ def gather(args):
             read[source] = read_covering(source, args.name)
         except CT_UNREAD as e:
             ct_unread[source] = e
-    if read.get("crt.sh") == [] and any(read.values()):
-        read["crt.sh"], why = reread_crtsh(args.name, read)
+    if read.get("crt.sh") == [] and (any(read.values()) or ct_unread):
+        read["crt.sh"], why = reread_crtsh(args.name, read, ct_unread)
         if why is not None:
             del read["crt.sh"]
             ct_unread["crt.sh"] = why
@@ -489,7 +490,7 @@ def gather(args):
             boot = boots.get(seen_.key_id, checks.Boot(dated, {}))
             boots[seen_.key_id] = checks.Boot(boot.first_seen, {seen_.spki_sha256: now} | boot.spkis)
     ev = checks.Evidence(args.name, args.environment, certificates, ct_counts, pointers, list(verified_.values()), notes, shard_failures, caa_history, accounts,
-                         live, tips, rewound, witnesses, trust, records_visibility(), policy, now, boots, last_run, ct_unread=ct_unread, checkpoints=checkpoints)
+                         live, tips, rewound, witnesses, trust, records_visibility(), policy, now, boots, last_run, ct_unread=ct_unread, checkpoints=checkpoints, acked_boots=args.ack_boot)
     ev.revocations = {c.der: revocation.revocation(c.der, fetch) for c in checks.failing(ev)}
 
     ev.signer, ev.signer_state = signer_watch.watch(pins_dir, args, saved["signer"], now, trusted_root, shards, policy)
@@ -543,20 +544,21 @@ def main(argv=None):
     parser.add_argument("--cache", help="a directory for the TUF metadata and the entries already proven; beside --sequence-state if omitted")
     parser.add_argument("--enclave", required=True, help="a checkout of trymorse/morse-enclave with its tags, for check 8's reading of the newest pinned image's trust.go")
     signer_watch.add_arguments(parser)
+    parser.add_argument("--ack-boot", action="append", default=[], metavar="KEY_ID=URL", help="the HPKE key id of a boot that held an SPKI live and died before it could log a record of it, and the URL of the public note that says so; check 6 prints a note for that boot on every run instead of failing, and fails if the boot it names is kept but holds nothing unrecorded")
     parser.add_argument("--ct", action="append", metavar="SOURCE", help="crt.sh, certspotter, or a JSON file of certspotter issuances with cert_der; both CT services if omitted")
     parser.add_argument("--attestation", default=ATTESTATION_URL, help="the door's /v1/attestation URL, or a file holding its answer")
     parser.add_argument("--no-caa-sample", action="store_true", help="check the CAA history without adding a sample")
     parser.add_argument("--since", type=lambda s: datetime.fromisoformat(s).replace(tzinfo=timezone.utc), help="skip certificates that expired before this date")
     parser.add_argument("--environment", default="prod")
     parser.add_argument("--name", default=NAME)
-    parser.add_argument("--verdict", help="a file to write this run's verdict to as JSON: its kind (passed, failed, unenforced or unread), exit code, whether a retry may read the evidence, the checks that failed and the checks not enforced, and each check's messages")
+    parser.add_argument("--verdict", help="a file to write this run's verdict to as JSON: its kind (passed, failed, unenforced or unread), exit code, whether a retry may read the evidence, the checks that failed and the checks not enforced, each check's messages, and each CT source with why it could not be read, or null when it was read (none when the evidence was unread)")
     args = parser.parse_args(argv)
 
     try:
         ev = gather(args)
     except Exception as e:
         print(f"FAIL: could not read the evidence: {e!r}")
-        write_verdict(args.verdict, {"kind": "unread", "exit": 1, "retryable": True, "error": f"could not read the evidence: {e!r}", "failed": [], "unenforced": [], "checks": []})
+        write_verdict(args.verdict, {"kind": "unread", "exit": 1, "retryable": True, "error": f"could not read the evidence: {e!r}", "failed": [], "unenforced": [], "checks": [], "ct": {}})
         sys.exit(1)
     print(f"{len(ev.certificates)} certificates in CT cover {ev.name}. morse-records has {len(ev.pointers)} {ev.environment} pointers, and {len(ev.verified)} of their entries verify.\n")
 
@@ -576,7 +578,8 @@ def main(argv=None):
     failed = [r["check"] for r in results if any(m["level"] == "FAIL" for m in r["messages"])]
     unenforced = [r["check"] for r in results if any(m["level"] == "NOT ENFORCED" for m in r["messages"])]
     kind, code = ("failed", 1) if failed else ("unenforced", 2) if unenforced else ("passed", 0)
-    write_verdict(args.verdict, {"kind": kind, "exit": code, "retryable": False, "error": None, "failed": failed, "unenforced": unenforced, "checks": results})
+    ct = {source: None for source in ev.ct_counts} | {source: repr(e) for source, e in ev.ct_unread.items()}
+    write_verdict(args.verdict, {"kind": kind, "exit": code, "retryable": False, "error": None, "failed": failed, "unenforced": unenforced, "checks": results, "ct": ct})
     write_state(Path(args.sequence_state), ev)
     sys.exit(code)
 

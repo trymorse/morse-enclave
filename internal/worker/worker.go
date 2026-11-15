@@ -50,8 +50,9 @@ type Worker interface {
 }
 
 type Unpinned struct {
-	Releases   []attested.UnpinnedRelease `json:"releases"`
-	VendorPins *VendorPinsLag             `json:"vendor_pins,omitempty"`
+	Releases       []attested.UnpinnedRelease `json:"releases"`
+	VendorPins     *VendorPinsLag             `json:"vendor_pins,omitempty"`
+	VendorPinsMode string                     `json:"vendor_pins_mode,omitempty"`
 }
 
 type VendorPinsLag struct {

@@ -160,7 +160,8 @@ func build(getenv func(string) string, log *logger) (built, error) {
 			}
 			return &worker.VendorPinsLag{Worker: instance, Newest: lag.Newest, Taken: lag.Taken, Behind: lag.Behind}
 		},
-		PrivacyVeil: veil,
+		VendorPinsMode: string(mode),
+		PrivacyVeil:    veil,
 	})
 	if err != nil {
 		return built{}, err

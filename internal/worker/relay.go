@@ -38,8 +38,8 @@ func (rw *relayWriter) begin(head chat.Relayed) io.Writer {
 	}
 	rw.w.WriteHeader(http.StatusOK)
 	rw.atLineStart = true
-	if rw.eventStream && len(rw.lead) > 0 {
-		_, rw.err = rw.w.Write(rw.lead)
+	if !rw.eventStream {
+		rw.lead = nil
 	}
 	return rw
 }
@@ -58,6 +58,12 @@ func (rw *relayWriter) Write(p []byte) (int, error) {
 	}
 	if len(p) == 0 {
 		return 0, nil
+	}
+	if len(rw.lead) > 0 {
+		if _, rw.err = rw.w.Write(rw.lead); rw.err != nil {
+			return 0, rw.err
+		}
+		rw.lead = nil
 	}
 	if rw.pad && rw.eventStream && rw.atLineStart {
 		if _, rw.err = rw.w.Write(e2ee.PadComment(filler())); rw.err != nil {
