@@ -60,7 +60,7 @@ var capabilities = map[Provider]capability{
 	ProviderGemini: {
 		kinds:                servedAt{catalog.KindChat: anonOnly, catalog.KindImage: anonOnly},
 		needsKey:             true,
-		lacks:                []string{chat.NoEffort, "xhigh", "max"},
+		lacks:                []string{chat.NoEffort, "max"},
 		hides:                true,
 		reasonsUnasked:       true,
 		silentWhileReasoning: true,

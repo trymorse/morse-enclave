@@ -366,6 +366,9 @@
     {"id": "google/gemini-4-argon", "app_only": true, "hides_reasoning": true, "input_modalities": ["text","image"], "lab": "Google", "label": "Gemini 4 Argon", "reasoning_efforts": ["low","medium","high"], "prices": {"anon": {"prompt_micros_per_mtok":2000000,"cached_prompt_micros_per_mtok":100000,"completion_micros_per_mtok":10000000}}, "uncensored": false, "endpoints": [
       {"id": "gemini", "api_key_env": "GEMINI_API_KEY", "base_url": "https://generativelanguage.googleapis.com", "context_tokens": 1048576, "decode_max_tps": 270, "default_max_tokens": 65536, "hidden_reasoning_tps": 145, "max_output_tokens": 65536, "openrouter_id": "google/gemini-4-argon", "owned_by": "Google", "provider": "gemini", "provider_name": "gemini", "quantization": "unknown", "tier": "anon", "upstream_model": "gemini-4-argon"}
     ]},
+    {"id": "google/gemini-4-hydrogen", "app_only": true, "hides_reasoning": true, "input_modalities": ["text","image"], "lab": "Google", "label": "Gemini 4 Hydrogen", "reasoning_efforts": ["low","medium","high","xhigh"], "prices": {"anon": {"prompt_micros_per_mtok":1500000,"cached_prompt_micros_per_mtok":75000,"completion_micros_per_mtok":7500000}}, "uncensored": false, "endpoints": [
+      {"id": "gemini", "api_key_env": "GEMINI_API_KEY", "base_url": "https://generativelanguage.googleapis.com", "context_tokens": 1048576, "decode_max_tps": 300, "default_max_tokens": 65536, "hidden_reasoning_tps": 155, "max_output_tokens": 65536, "openrouter_id": "google/gemini-4-hydrogen", "owned_by": "Google", "provider": "gemini", "provider_name": "gemini", "quantization": "unknown", "tier": "anon", "upstream_model": "gemini-4-hydrogen"}
+    ]},
     {"id": "google/gemini-3.8-flash", "app_only": true, "hides_reasoning": true, "input_modalities": ["text","image"], "lab": "Google", "label": "Gemini 3.8 Flash", "reasoning_efforts": ["low","medium","high"], "prices": {"anon": {"prompt_micros_per_mtok":750000,"cached_prompt_micros_per_mtok":75000,"completion_micros_per_mtok":3750000}}, "uncensored": false, "endpoints": [
       {"id": "gemini", "api_key_env": "GEMINI_API_KEY", "base_url": "https://generativelanguage.googleapis.com", "context_tokens": 1048576, "decode_max_tps": 450, "default_max_tokens": 65536, "hidden_reasoning_tps": 250, "included": {"from":"pro"}, "max_output_tokens": 65536, "openrouter_id": "google/gemini-3.8-flash", "owned_by": "Google", "provider": "gemini", "provider_name": "gemini", "quantization": "unknown", "tier": "anon", "upstream_model": "gemini-3.8-flash"}
     ]},
@@ -442,15 +445,15 @@
       {"id": "gemini", "api_key_env": "GEMINI_API_KEY", "base_url": "https://generativelanguage.googleapis.com", "included": {"from":"pro"}, "owned_by": "Google", "price": {"hold_micros_per_image":40000,"hold_micros_per_reference":300}, "provider": "gemini", "provider_name": "gemini", "tier": "anon", "upstream_model": "gemini-3.1-flash-lite-image"}
     ]},
     {"id": "parallel/search", "app_only": true, "kind": "search", "lab": "Parallel", "label": "Parallel Search", "prices": {"anon": {"micros_per_call":1000}, "private": {"micros_per_call":1000}}, "uncensored": false, "endpoints": [
-      {"id": "parallel", "api_key_env": "PARALLEL_API_KEY", "base_url": "https://api.parallel.ai", "included": {"from":"free","quota":"web_calls"}, "owned_by": "Parallel", "provider": "parallel", "provider_name": "parallel", "tier": "anon", "upstream_model": "fast"},
+      {"id": "parallel", "api_key_env": "PARALLEL_API_KEY", "base_url": "https://api.parallel.ai", "included": {"from":"free","quota":"web_calls"}, "owned_by": "Parallel", "provider": "parallel", "provider_name": "parallel", "retention": "zdr", "tier": "anon", "upstream_model": "fast"},
       {"id": "parallel-zdr", "api_key_env": "PARALLEL_API_KEY", "base_url": "https://api.parallel.ai", "included": {"from":"free","quota":"web_calls"}, "owned_by": "Parallel", "provider": "parallel", "provider_name": "parallel", "retention": "zdr", "tier": "private", "upstream_model": "fast"}
     ]},
     {"id": "parallel/extract", "app_only": true, "kind": "fetch", "lab": "Parallel", "label": "Parallel Extract", "prices": {"anon": {"micros_per_call":1000}, "private": {"micros_per_call":1000}}, "uncensored": false, "endpoints": [
-      {"id": "parallel", "api_key_env": "PARALLEL_API_KEY", "base_url": "https://api.parallel.ai", "included": {"from":"free","quota":"web_calls"}, "owned_by": "Parallel", "provider": "parallel", "provider_name": "parallel", "tier": "anon", "upstream_model": "extract"},
+      {"id": "parallel", "api_key_env": "PARALLEL_API_KEY", "base_url": "https://api.parallel.ai", "included": {"from":"free","quota":"web_calls"}, "owned_by": "Parallel", "provider": "parallel", "provider_name": "parallel", "retention": "zdr", "tier": "anon", "upstream_model": "extract"},
       {"id": "parallel-zdr", "api_key_env": "PARALLEL_API_KEY", "base_url": "https://api.parallel.ai", "included": {"from":"free","quota":"web_calls"}, "owned_by": "Parallel", "provider": "parallel", "provider_name": "parallel", "retention": "zdr", "tier": "private", "upstream_model": "extract"}
     ]},
     {"id": "parallel/research", "app_only": true, "kind": "research", "lab": "Parallel", "label": "Parallel Deep Research", "prices": {"anon": {"micros_per_call":100000}}, "uncensored": false, "endpoints": [
-      {"id": "parallel", "api_key_env": "PARALLEL_API_KEY", "base_url": "https://api.parallel.ai", "included": {"from":"pro"}, "owned_by": "Parallel", "provider": "parallel", "provider_name": "parallel", "requires_plan": "pro", "tier": "anon", "upstream_model": "pro"}
+      {"id": "parallel", "api_key_env": "PARALLEL_API_KEY", "base_url": "https://api.parallel.ai", "included": {"from":"pro"}, "owned_by": "Parallel", "provider": "parallel", "provider_name": "parallel", "requires_plan": "pro", "retention": "zdr", "tier": "anon", "upstream_model": "pro"}
     ]},
     {"id": "openai/whisper-large-v3", "app_only": true, "kind": "transcription", "lab": "OpenAI", "label": "Whisper Large v3", "open_weights": true, "prices": {"tee": {"micros_per_call":200}}, "uncensored": false, "endpoints": [
       {"id": "near-tee", "api_key_env": "NEAR_TRANSCRIPTION_API_KEY", "attester": "near", "base_url": "https://cloud-api.near.ai", "included": {"from":"free","quota":"transcriptions"}, "owned_by": "OpenAI", "provider_name": "near", "retention": "zdr", "tier": "tee", "upstream_model": "openai/whisper-large-v3"}
@@ -550,6 +553,7 @@
     {"name": "claude-haiku-5-5", "model": "anthropic/claude-haiku-5.5", "endpoint": "anthropic"},
     {"name": "gemini-4-carbon", "model": "google/gemini-4-carbon", "endpoint": "gemini"},
     {"name": "gemini-4-argon", "model": "google/gemini-4-argon", "endpoint": "gemini"},
+    {"name": "gemini-4-hydrogen", "model": "google/gemini-4-hydrogen", "endpoint": "gemini"},
     {"name": "gemini-3.8-flash", "model": "google/gemini-3.8-flash", "endpoint": "gemini"},
     {"name": "muse-wonder-1.0", "model": "meta/muse-wonder-1.0", "endpoint": "openai-responses"},
     {"name": "muse-spark-1.3", "model": "meta/muse-spark-1.3", "endpoint": "openai-responses"},

@@ -43,4 +43,4 @@ Attestation checks for the NEAR AI, Phala and Tinfoil enclaves:
 
 Each plugin is the user's own account at its vendor. The worker calls the vendor's MCP server with the user's token, and sends the sign-in code and refresh token to the vendor's sign-in host. `internal/plugins/servers.go` pins each one's hosts:
 
-Notion, Todoist, Trello, Linear, Granola, Wix, Airtable, Atlassian, Sentry, Vercel, monday, Neon, PostHog, Fireflies, Apollo, Grafana, tl;dv, Stripe, PayPal, Cloudflare, Zapier, ClickUp, Webflow, Netlify, Attio, Close, Calendly, Pipedream, Supabase, Miro and Jam.
+Notion, Todoist, Trello, Linear, Granola, Wix, Airtable, Atlassian, Sentry, Vercel, monday, Neon, PostHog, Apollo, Grafana, Stripe, PayPal, Cloudflare, Zapier, ClickUp, Webflow, Netlify, Attio, Close, Calendly, Pipedream, Miro and Jam.
