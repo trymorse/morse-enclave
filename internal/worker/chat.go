@@ -109,6 +109,8 @@ type openedChat struct {
 	// veil is set on a chat that asked for the Privacy Veil, from /open until its run ends, and veilMeasure once it ran.
 	veil        *openedVeil
 	veilMeasure *VeilMeasure
+	runStart    time.Time
+	veilTook    time.Duration
 	dialect     dialect.Dialect
 	reply       func() dialect.Encoder
 	relayNamed  bool
@@ -460,7 +462,7 @@ func (r chatRoute) hedge(c chat.Call) chat.Hedge {
 // promptTokens is the prompt's size in tokens at the bytes a token the included window counts.
 func (o *openedChat) promptTokens() int { return o.promptBytes / limits.IncludedWindowBytesPerToken }
 
-func (o *openedChat) run(_ context.Context, w *InProcess, h Handle, g Grant, reply http.ResponseWriter) Measured {
+func (o *openedChat) run(called context.Context, w *InProcess, h Handle, g Grant, reply http.ResponseWriter) Measured {
 	cg, ok := g.(ChatGrant)
 	if !ok {
 		return unrunnable(reply)
@@ -476,11 +478,14 @@ func (o *openedChat) run(_ context.Context, w *InProcess, h Handle, g Grant, rep
 		ctx = o.afterCut.ctx
 	}
 	rw := newReplyWriter(o.dialect.Errors(reply))
+	o.runStart = runStartOf(called)
 	if o.veil != nil {
 		defer o.dropVeil()
+		scanned := time.Now()
 		if m, failed := o.applyVeil(ctx, w, rw); failed {
 			return m
 		}
+		o.veilTook = time.Since(scanned)
 		ctx = upstream.WithEgress(ctx, o.veil.veil.Egress)
 	}
 	end := o.walk(ctx, w, granted, cg, rw)
@@ -525,6 +530,9 @@ func (o *openedChat) try(ctx context.Context, w *InProcess, a attempt, g ChatGra
 	m.Health = rw.observed(ctx, got.callErr, false, opened, returned)
 	m.Health.Malformed = got.malformed && m.Health.Outcome == health.OK
 	m.Health.Retries, m.Health.Hedges, m.Health.OutputTokens = got.attempts.Retries, got.attempts.Hedges, a.route.tokensAfterFirstByte(got.reported)
+	if !got.firstAnswer.IsZero() {
+		m.Timing = &RunTiming{FirstAnswer: got.firstAnswer.Sub(opened)}
+	}
 	refused, isRefusal := errors.AsType[upstream.Refused](got.callErr)
 	if isRefusal && vendorFaults[m.Health.Outcome] {
 		w.reports.VendorRefused(a.call.Model, refused.Status)
@@ -691,6 +699,7 @@ type served struct {
 	malformed         bool
 	writeErr, callErr error
 	thought           thought
+	firstAnswer       time.Time
 	transcript        *chat.Transcript
 	unproven          *unproven
 	atLimit           bool
@@ -795,7 +804,7 @@ func stream(ctx context.Context, w *replyWriter, rc *http.ResponseController, pr
 		sw.closeVeil()
 		sw.errorEvent()
 	}
-	return served{reported: reported, attempts: attempts, reply: measure.Streamed{Events: sw.delivered, VisibleBytes: sw.visible}, finish: sw.finish, unanswered: unanswered(sw.finish, sw.sent), answer: measure.AnswerOf(sw.answered, sw.unreadable), malformed: sw.calls.Malformed(sw.finish, c.Stops()), writeErr: sw.err, callErr: err, thought: clock.thought(), atLimit: cut.atLimit()}
+	return served{reported: reported, attempts: attempts, reply: measure.Streamed{Events: sw.delivered, VisibleBytes: sw.visible}, finish: sw.finish, unanswered: unanswered(sw.finish, sw.sent), answer: measure.AnswerOf(sw.answered, sw.unreadable), malformed: sw.calls.Malformed(sw.finish, c.Stops()), writeErr: sw.err, callErr: err, thought: clock.thought(), firstAnswer: sw.firstAnswer, atLimit: cut.atLimit()}
 }
 
 func complete(ctx context.Context, w http.ResponseWriter, prov chat.BusyRetry, c chat.Call, transcript *chat.Transcript, clock *thinkingClock, rv *replyVeil, cut *limitCut, encoder dialect.Encoder) served {

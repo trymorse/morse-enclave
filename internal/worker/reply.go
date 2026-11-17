@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	"morse/backend/internal/health"
@@ -29,6 +30,8 @@ type replyWriter struct {
 	writeErr  error
 	claim     func() bool
 	heldCode  int
+	since     time.Time
+	firstByte atomic.Int64
 }
 
 var errLostTheReply = errors.New("worker: another endpoint's call began the reply first")
@@ -37,11 +40,13 @@ func newReplyWriter(outer http.ResponseWriter) *replyWriter {
 	return &replyWriter{outer: outer, header: http.Header{}}
 }
 
-func claiming(outer http.ResponseWriter, claim func() bool) *replyWriter {
+func claiming(outer http.ResponseWriter, since time.Time, claim func() bool) *replyWriter {
 	w := newReplyWriter(outer)
-	w.claim = claim
+	w.claim, w.since = claim, since
 	return w
 }
+
+func (w *replyWriter) firstByteAfter() time.Duration { return time.Duration(w.firstByte.Load()) }
 
 func (w *replyWriter) phase() replyPhase { return w.at }
 
@@ -93,6 +98,9 @@ func (w *replyWriter) sendHeldHeaderOfAnEmptyReply() {
 func (w *replyWriter) Write(p []byte) (int, error) {
 	if len(p) == 0 && w.at == unclaimed && w.holdsItsHeaderUntilItsFirstBodyByte() {
 		return 0, nil
+	}
+	if len(p) > 0 && w.claim != nil && w.firstByte.Load() == 0 {
+		w.firstByte.Store(int64(max(time.Since(w.since), 1)))
 	}
 	w.sendHeader(cmp.Or(w.heldCode, http.StatusOK))
 	if w.at == lost {

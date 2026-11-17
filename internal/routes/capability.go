@@ -153,6 +153,9 @@ var capabilities = map[Provider]capability{
 	},
 	ProviderRunware: {kinds: servedAt{catalog.KindImage: anonOnly, catalog.KindVideo: anonOnly}, needsKey: true},
 	ProviderFal:     {kinds: servedAt{catalog.KindImage: anonOnly, catalog.KindVideo: anonOnly}, needsKey: true},
+	// why: spicyapi.ai keeps prompts and outputs for a window and names no model host (spicyapi.ai/legal/privacy), and
+	// answers a dry balance or spend cap 402 (40201, 40202), which maps to upstream_unavailable (docs.spicyapi.ai/docs/errors).
+	ProviderSpicyAPI: {kinds: servedAt{catalog.KindImage: anonOnly}, needsKey: true, refusesDryAccount: true},
 	// A private Parallel route stands on our zero data retention agreement with Parallel, which covers the account
 	// that owns the route's key: it sends the same request as an anon route, and no reply is checked for it, unlike xAI's.
 	ProviderParallel: {

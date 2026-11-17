@@ -339,7 +339,7 @@ func (o *openedChat) applyVeil(ctx context.Context, w *InProcess, rw http.Respon
 	pv.unknownLabels(scanned.Usage.UnknownLabels)
 	switch {
 	case err == nil:
-	case errors.Is(err, privacyveil.ErrUnattested):
+	case errors.Is(err, privacyveil.ErrUnattested), errors.Is(err, apierr.ErrUnattested):
 		return fail(VeilUnattested)
 	case errors.Is(err, privacyveil.ErrSpan), errors.Is(err, privacyveil.ErrMalformed):
 		return fail(VeilMalformed)

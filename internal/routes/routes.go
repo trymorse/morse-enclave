@@ -29,6 +29,7 @@ const (
 	ProviderNovita
 	ProviderMorph
 	ProviderDeepInfra
+	ProviderSpicyAPI
 )
 
 var providerNames = enum.Names[Provider]{
@@ -46,6 +47,7 @@ var providerNames = enum.Names[Provider]{
 	ProviderNovita:          "novita",
 	ProviderMorph:           "morph",
 	ProviderDeepInfra:       "deepinfra",
+	ProviderSpicyAPI:        "spicyapi",
 }
 
 func (p Provider) String() string { return providerNames.String(p) }

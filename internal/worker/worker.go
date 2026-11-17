@@ -18,6 +18,7 @@ import (
 	"morse/backend/internal/jobs"
 	"morse/backend/internal/media"
 	"morse/backend/internal/plans/limits"
+	"morse/backend/internal/upstream"
 )
 
 // A Worker admits a request, then runs or submits it once under the relay's grant.
@@ -281,7 +282,35 @@ type Measured struct {
 	Late        <-chan Try    `json:"-"`
 	Lingers     bool          `json:",omitempty"`
 	Counted     <-chan Count  `json:"-"`
+	Timing      *RunTiming    `json:",omitempty"`
 }
+
+type RunTiming struct {
+	Queued      time.Duration `json:",omitempty"`
+	FirstAnswer time.Duration `json:",omitempty"`
+	Legs        []Leg         `json:",omitempty"`
+}
+
+type Leg struct {
+	Endpoint  catalog.EndpointID
+	Role      LegRole
+	Won       bool               `json:",omitempty"`
+	FirstByte time.Duration      `json:",omitempty"`
+	Silent    time.Duration      `json:",omitempty"`
+	Call      upstream.CallTimes `json:",omitzero"`
+}
+
+type LegRole string
+
+const (
+	RolePrimary   LegRole = "primary"
+	RoleFailover  LegRole = "failover"
+	RoleHedge     LegRole = "hedge"
+	RoleRetry     LegRole = "retry"
+	RoleSelfHedge LegRole = "self_hedge"
+)
+
+var LegRoles = []LegRole{RolePrimary, RoleFailover, RoleHedge, RoleRetry, RoleSelfHedge}
 
 type Try struct {
 	Endpoint catalog.EndpointID

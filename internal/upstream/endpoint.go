@@ -205,6 +205,9 @@ func (e Endpoint) send(ctx context.Context, r Request) (*http.Response, error) {
 		}
 	}
 	maps.Copy(h, e.Auth)
+	if clock := callClockOf(ctx); clock != nil {
+		ctx = clock.trace(ctx)
+	}
 	req, err := http.NewRequestWithContext(ctx, r.Method, e.BaseURL+r.Path, nil)
 	if err != nil {
 		return nil, notSent(ErrUnreachable)

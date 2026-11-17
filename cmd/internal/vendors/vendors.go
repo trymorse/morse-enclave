@@ -21,6 +21,7 @@ import (
 	"morse/backend/internal/phala"
 	"morse/backend/internal/routes"
 	"morse/backend/internal/runware"
+	"morse/backend/internal/spicyapi"
 	"morse/backend/internal/tee"
 	"morse/backend/internal/tokenizer"
 	"morse/backend/internal/upstream"
@@ -32,12 +33,21 @@ import (
 const (
 	responseHeaderTimeout = 2 * time.Minute
 	maxIdleConnsPerHost   = 64
+	// why: Go's default 90 s drop made a send after a pause pay a new TCP and TLS handshake through the
+	// enclave's egress; a vendor that closes an idle connection sooner tells the transport, which dials afresh.
+	idleConnTimeout = 15 * time.Minute
+	// why: a free HTTP/2 PING on a quiet connection finds one the path dropped silently, which the longer idle
+	// keep would otherwise hand a request that then waits out responseHeaderTimeout.
+	sendPingTimeout = 30 * time.Second
+	pingTimeout     = 10 * time.Second
 )
 
 func NewClient() (*http.Transport, *http.Client) {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.ResponseHeaderTimeout = responseHeaderTimeout
 	transport.MaxIdleConnsPerHost = maxIdleConnsPerHost
+	transport.IdleConnTimeout = idleConnTimeout
+	transport.HTTP2 = &http.HTTP2Config{SendPingTimeout: sendPingTimeout, PingTimeout: pingTimeout}
 	return transport, &http.Client{Transport: transport}
 }
 
@@ -84,12 +94,13 @@ func withOpenAIHosts(m map[routes.Provider]newChatProvider) map[routes.Provider]
 }
 
 var builders = withChat(map[routes.Provider]map[catalog.Kind]build{
-	routes.ProviderOpenAI:  {catalog.KindTranscription: erase(openAITranscription)},
-	routes.ProviderGemini:  {catalog.KindImage: erase(imagesBy(gemini.NewImages))},
-	routes.ProviderXAI:     {catalog.KindImage: erase(imagesBy(xai.NewImages)), catalog.KindVideo: erase(videosBy(xai.NewVideos))},
-	routes.ProviderRunware: {catalog.KindImage: erase(imagesBy(runware.NewImages)), catalog.KindVideo: erase(videosBy(runware.NewVideos))},
-	routes.ProviderFal:     {catalog.KindImage: erase(imagesBy(fal.NewImages)), catalog.KindVideo: erase(videosBy(fal.NewVideos))},
-	routes.ProviderVenice:  {catalog.KindImage: erase(imagesBy(venice.NewImages))},
+	routes.ProviderOpenAI:   {catalog.KindTranscription: erase(openAITranscription)},
+	routes.ProviderGemini:   {catalog.KindImage: erase(imagesBy(gemini.NewImages))},
+	routes.ProviderXAI:      {catalog.KindImage: erase(imagesBy(xai.NewImages)), catalog.KindVideo: erase(videosBy(xai.NewVideos))},
+	routes.ProviderRunware:  {catalog.KindImage: erase(imagesBy(runware.NewImages)), catalog.KindVideo: erase(videosBy(runware.NewVideos))},
+	routes.ProviderFal:      {catalog.KindImage: erase(imagesBy(fal.NewImages)), catalog.KindVideo: erase(videosBy(fal.NewVideos))},
+	routes.ProviderVenice:   {catalog.KindImage: erase(imagesBy(venice.NewImages))},
+	routes.ProviderSpicyAPI: {catalog.KindImage: erase(imagesBy(spicyapi.NewImages))},
 	routes.ProviderParallel: {
 		catalog.KindSearch:   erase(parallelSearch),
 		catalog.KindFetch:    erase(parallelFetch),

@@ -194,12 +194,17 @@ func (s *Stream) emitWaiting() {
 
 func (s *Stream) emitHead() {
 	if s.head != nil {
-		s.emit(s.head, false)
+		s.send(s.head, false)
 		s.head = nil
 	}
 }
 
 func (s *Stream) emit(data []byte, final bool) {
+	s.send(data, final)
+	s.last = time.Now()
+}
+
+func (s *Stream) send(data []byte, final bool) {
 	if s.err != nil {
 		return
 	}
@@ -212,7 +217,6 @@ func (s *Stream) emit(data []byte, final bool) {
 		return
 	}
 	s.flush()
-	s.last = time.Now()
 }
 
 type Reply struct {

@@ -129,6 +129,7 @@ func (w *InProcess) takeCount(h Handle) <-chan Count {
 }
 
 func (w *InProcess) Run(ctx context.Context, h Handle, g Grant, reply http.ResponseWriter) Measured {
+	ctx = context.WithValue(ctx, runStartKey{}, time.Now())
 	return w.serve(h, reply, func(e *entry, reply http.ResponseWriter) Measured {
 		r, ok := e.opened.(runs)
 		if !ok {
@@ -231,4 +232,13 @@ func (c cuts) cut(reason measure.Cut, endsWithCaller bool) {
 	if reason != measure.CutByClient || endsWithCaller {
 		c.cancel(cause)
 	}
+}
+
+type runStartKey struct{}
+
+func runStartOf(ctx context.Context) time.Time {
+	if at, ok := ctx.Value(runStartKey{}).(time.Time); ok {
+		return at
+	}
+	return time.Now()
 }

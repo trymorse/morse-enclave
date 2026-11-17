@@ -137,18 +137,19 @@ func writeEvent(w io.Writer, name string, data []byte) error {
 
 type sseWriter struct {
 	eventStream
-	encoder    dialect.Encoder
-	delivered  int
-	visible    int
-	shown      bool
-	sent       bool
-	answered   bool
-	unreadable bool
-	finish     chat.Finish
-	calls      chat.ToolCalls
-	transcript *chat.Transcript
-	clock      *thinkingClock
-	veil       *replyVeil
+	encoder     dialect.Encoder
+	delivered   int
+	visible     int
+	shown       bool
+	sent        bool
+	answered    bool
+	unreadable  bool
+	finish      chat.Finish
+	calls       chat.ToolCalls
+	transcript  *chat.Transcript
+	clock       *thinkingClock
+	veil        *replyVeil
+	firstAnswer time.Time
 }
 
 func (s *sseWriter) emit(c chat.Chunk) error {
@@ -164,6 +165,9 @@ func (s *sseWriter) emit(c chat.Chunk) error {
 		s.delivered++
 		s.visible += d.VisibleBytes()
 		s.finish, s.shown, s.sent = finish, shown, sent
+		if !s.answered && d.Answers() {
+			s.firstAnswer = time.Now()
+		}
 		s.answered, s.unreadable = s.answered || d.Answers(), s.unreadable || d.Unreadable
 		s.transcript.Add(d)
 		if d.ToolCalled {

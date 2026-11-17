@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"morse/backend/internal/billing/measure"
+	"morse/backend/internal/upstream"
 )
 
 // A leg is one endpoint's try in a walk. It writes through its own writer, which reaches the client only once the leg
@@ -21,7 +22,11 @@ type leg struct {
 	opened time.Time
 	hedge  *time.Timer
 	// silent is set once the leg has been silent for its hedge wait, after which the next endpoint may race it.
-	silent bool
+	silent              bool
+	role                LegRole
+	clock               *upstream.CallClock
+	ended               time.Time
+	retried, selfHedged bool
 }
 
 type legEnd struct {
@@ -52,13 +57,20 @@ func (o *openedChat) walk(ctx context.Context, w *InProcess, granted []chatRoute
 	var failed []legEnd
 	next, retries, hedges := 0, 0, 0
 	races := func(i int) bool { return i < len(granted) && granted[i].hedge(o.call).After > 0 }
-	start := func() {
+	var legs []*leg
+	start := func(role LegRole) {
 		i := next
 		next++
 		h := granted[i].hedge(o.call)
 		away := races(i + 1)
-		l := &leg{at: i, a: o.attempt(granted[i], g, i == len(granted)-1, !away), opened: time.Now()}
-		l.rw = claiming(rw, func() bool { return claim.CompareAndSwap(nil, l) || claim.Load() == l })
+		l := &leg{at: i, a: o.attempt(granted[i], g, i == len(granted)-1, !away), opened: time.Now(), role: role}
+		l.rw = claiming(rw, l.opened, func() bool { return claim.CompareAndSwap(nil, l) || claim.Load() == l })
+		legs = append(legs, l)
+		tryCtx := ctx
+		if o.call.Stream {
+			l.clock = new(upstream.CallClock)
+			tryCtx = upstream.WithCallClock(ctx, l.clock)
+		}
 		l.rw.Header().Set(HeaderTier, l.a.route.tier.String())
 		if wait := h.Wait(o.promptTokens()); away && wait > 0 {
 			l.hedge = time.AfterFunc(wait, func() { silent <- l })
@@ -68,12 +80,14 @@ func (o *openedChat) walk(ctx context.Context, w *InProcess, granted []chatRoute
 			end := legEnd{leg: l}
 			defer func() {
 				end.panicked = recover()
+				l.ended = time.Now()
 				ended <- end
 			}()
-			end.got, end.e, end.m = o.try(ctx, w, l.a, g, l.rw)
+			end.got, end.e, end.m = o.try(tryCtx, w, l.a, g, l.rw)
+			l.retried, l.selfHedged = end.m.Health.Retries > 0, end.m.Health.Hedges > 0
 		}()
 	}
-	start()
+	start(RolePrimary)
 	// answered says the walk has its answer: a try served, or one stands that no earlier try can overtake and that now
 	// holds the reply, so a try left running can no longer write to the client.
 	answered := func() bool {
@@ -109,10 +123,10 @@ func (o *openedChat) walk(ctx context.Context, w *InProcess, granted []chatRoute
 		case claim.Load() != nil, stood != nil, panicked != nil, next == len(granted):
 		case len(flying) == 0:
 			retries++
-			start()
+			start(RoleFailover)
 		case len(flying) == 1 && flying[0].silent && races(next):
 			hedges++
-			start()
+			start(RoleHedge)
 		}
 	}
 	final := cmp.Or(won, stood)
@@ -126,6 +140,11 @@ func (o *openedChat) walk(ctx context.Context, w *InProcess, granted []chatRoute
 		final, failed = &failed[len(failed)-1], failed[:len(failed)-1]
 	}
 	m := &final.m
+	if o.call.Stream {
+		m.Timing = cmp.Or(m.Timing, new(RunTiming))
+		m.Timing.Queued = max(opened.Sub(o.runStart)-o.veilTook, 0)
+		m.Timing.Legs = timedLegs(legs, flying, final, time.Now())
+	}
 	for _, f := range failed {
 		m.FailedOver = append(m.FailedOver, Try{Endpoint: f.a.route.endpoint, Health: f.m.Health})
 	}
@@ -159,4 +178,32 @@ func lingering(reports Reporter, ended <-chan legEnd, n int) <-chan Try {
 		}
 	}()
 	return late
+}
+
+func timedLegs(legs, flying []*leg, final *legEnd, now time.Time) []Leg {
+	timed := make([]Leg, 0, len(legs))
+	for _, l := range legs {
+		t := Leg{Endpoint: l.a.route.endpoint, Role: l.role, Won: l == final.leg && final.rw.phase().holdsTheReply()}
+		running := slices.Contains(flying, l)
+		switch {
+		case running:
+		case l.retried:
+			t.Role = RoleRetry
+		case l.selfHedged:
+			t.Role = RoleSelfHedge
+		}
+		switch first := l.rw.firstByteAfter(); {
+		case first > 0:
+			t.FirstByte = first
+		case running:
+			t.Silent = now.Sub(l.opened)
+		default:
+			t.Silent = l.ended.Sub(l.opened)
+		}
+		if l.clock != nil {
+			t.Call = l.clock.Times()
+		}
+		timed = append(timed, t)
+	}
+	return timed
 }
