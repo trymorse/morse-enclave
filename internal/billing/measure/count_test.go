@@ -14,7 +14,7 @@ func TestACountIsCalibratedOnlyWhereAFigureIsLearnedAndNeverOnTheCompletionOfARo
 		{Route: "m", Figure: measure.FigurePromptOverhead, Median: 6, Accounts: measure.MinLearningAccounts},
 		{Route: "m", Figure: measure.FigureCompletionOffset, Median: -4, Accounts: measure.MinLearningAccounts},
 	})
-	raw := measure.RawCount{Prompt: 20, Visible: 10}
+	raw := measure.RawCount{Prompt: 20, Visible: 10, Plain: true}
 	for name, tc := range map[string]struct {
 		l    measure.Learned
 		e    measure.Evidence
@@ -30,6 +30,34 @@ func TestACountIsCalibratedOnlyWhereAFigureIsLearnedAndNeverOnTheCompletionOfARo
 	} {
 		if got := tc.l.Counted("m", tc.e, tc.raw); got != tc.want {
 			t.Errorf("%s: counted %+v, want %+v", name, got, tc.want)
+		}
+	}
+}
+
+func TestAnUnlearnedPromptCountBillsTheCountAndATemplateAllowanceEachMessageWhenThatIsUnderTheEstimate(t *testing.T) {
+	const window = 1 << 20
+	long := measure.Evidence{PromptBytes: 276_514, PromptBound: window}
+	raw := measure.RawCount{Prompt: 72_000, Messages: 100}
+	plain := measure.RawCount{Prompt: 72_000, Messages: 100, Plain: true}
+	allowed := raw.Prompt + measure.TemplateTokensPerMessage*(raw.Messages+2)
+	learned := measure.NewLearned([]measure.LearnedFigure{{Route: "m", Figure: measure.FigurePromptOverhead, Median: 6, Accounts: measure.MinLearningAccounts}})
+	for name, tc := range map[string]struct {
+		l    measure.Learned
+		e    func(measure.Evidence) measure.Evidence
+		raw  measure.RawCount
+		want measure.Reading
+	}{
+		"budgeted":                    {measure.Learned{}, func(e measure.Evidence) measure.Evidence { e.Budgeted = true; return e }, raw, counted(allowed, measure.MethodCounted)},
+		"on credits":                  {measure.Learned{}, func(e measure.Evidence) measure.Evidence { return e }, raw, counted(allowed, measure.MethodCounted)},
+		"learned, plain text":         {learned, func(e measure.Evidence) measure.Evidence { e.Budgeted = true; return e }, plain, counted(raw.Prompt+6, measure.MethodCalibrated)},
+		"learned, tools or calls":     {learned, func(e measure.Evidence) measure.Evidence { e.Budgeted = true; return e }, raw, counted(allowed, measure.MethodCounted)},
+		"learned, over the estimate":  {learned, func(e measure.Evidence) measure.Evidence { e.PromptBytes = 88; return e }, measure.RawCount{Prompt: 2, Messages: 1}, measure.Reading{}},
+		"sealed whole":                {measure.Learned{}, func(e measure.Evidence) measure.Evidence { e.SealedWhole = true; return e }, raw, measure.Reading{}},
+		"allowance over the estimate": {measure.Learned{}, func(e measure.Evidence) measure.Evidence { e.PromptBytes = 88; return e }, measure.RawCount{Prompt: 2, Messages: 1}, measure.Reading{}},
+		"prompt not countable":        {measure.Learned{}, func(e measure.Evidence) measure.Evidence { e.Budgeted = true; return e }, measure.RawCount{}, measure.Reading{}},
+	} {
+		if got := tc.l.Counted("m", tc.e(long), tc.raw).Prompt; got != tc.want {
+			t.Errorf("%s: prompt counted %+v, want %+v", name, got, tc.want)
 		}
 	}
 }

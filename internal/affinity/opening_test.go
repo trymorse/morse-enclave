@@ -17,7 +17,7 @@ func digestOf(t *testing.T, body string) string {
 	if err != nil {
 		t.Fatalf("parse %s: %v", body, err)
 	}
-	d := affinity.DigestOf(req)
+	d, _ := affinity.DigestOf(req)
 	if d.IsZero() {
 		return ""
 	}
@@ -157,5 +157,31 @@ func TestAKeyEqualToAnOpeningsBytesNamesAnotherConversation(t *testing.T) {
 	keyJSON, _ = json.Marshal(encoding)
 	if got := digestOf(t, body(t, `"session_id":`+string(keyJSON), hello)); got == opening || got == "" {
 		t.Error("a session_id equal to an opening's bytes names that opening's conversation")
+	}
+}
+
+func TestOnlyADigestTheOpeningNamesIsMarkedAsTheOpenings(t *testing.T) {
+	opening := []any{msg("user", "plan a trip to Lisbon")}
+	for name, c := range map[string]struct {
+		extra string
+		want  bool
+	}{
+		"the opening":               {"", true},
+		"an empty session_id":       {`"session_id":""`, true},
+		"a prompt_cache_key":        {`"prompt_cache_key":"end-user-42"`, false},
+		"an empty prompt_cache_key": {`"prompt_cache_key":""`, false},
+		"a session_id":              {`"session_id":"end-user-42"`, false},
+	} {
+		req, err := chat.ParseRequest(strings.NewReader(body(t, c.extra, opening...)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if d, byOpening := affinity.DigestOf(req); byOpening != c.want || (byOpening && d.IsZero()) {
+			t.Errorf("%s: by opening %t, digest zero %t, want by opening %t", name, byOpening, d.IsZero(), c.want)
+		}
+	}
+	req, _ := chat.ParseRequest(strings.NewReader(body(t, "", msg("user", ""))))
+	if _, byOpening := affinity.DigestOf(req); byOpening {
+		t.Error("an empty-text opening was marked as named by its opening")
 	}
 }

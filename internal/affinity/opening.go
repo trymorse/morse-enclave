@@ -15,17 +15,18 @@ const openingTextCap = 64 << 10
 // the conversation first, and an empty one opts out. A session_id comes next. Otherwise the messages up to and
 // including the first user message name it. Each source hashes under its own tag, so a key whose bytes equal some
 // opening's encoding still names a different conversation.
-func DigestOf(req *chat.Request) Digest {
+func DigestOf(req *chat.Request) (Digest, bool) {
 	if key, ok := stringField(req, "prompt_cache_key"); ok {
 		if key == "" {
-			return Digest{}
+			return Digest{}, false
 		}
-		return tagged("key", key)
+		return tagged("key", key), false
 	}
 	if session, ok := stringField(req, "session_id"); ok && session != "" {
-		return tagged("session", session)
+		return tagged("session", session), false
 	}
-	return openingDigest(req)
+	d := openingDigest(req)
+	return d, !d.IsZero()
 }
 
 func stringField(req *chat.Request, name string) (string, bool) {

@@ -27,6 +27,7 @@ type common struct {
 	Included      *Included          `json:"included"`
 	RequiresPlan  string             `json:"requires_plan"`
 	AppOnly       bool               `json:"app_only"`
+	Picks         []string           `json:"picks"`
 	RebateShare   *int64             `json:"rebate_share_bps"`
 	OnBehalfOf    catalog.EndpointID `json:"on_behalf_of"`
 }

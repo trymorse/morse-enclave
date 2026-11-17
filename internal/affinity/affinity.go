@@ -11,6 +11,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"math/bits"
+	"time"
 
 	"morse/backend/internal/catalog"
 )
@@ -130,4 +131,17 @@ func (k Key) Partition(day string, credential []byte) []byte {
 	mac.Write([]byte("privacy-veil-partition|" + day + "|"))
 	mac.Write(credential)
 	return mac.Sum(nil)[:16]
+}
+
+func (k Key) CacheKey(now time.Time, vendor catalog.EndpointID, s Scope, d Digest) string {
+	if !k.Set() || d.IsZero() || vendor == "" {
+		return ""
+	}
+	c := k.Conversation(s, d)
+	mac := hmac.New(sha256.New, k.secret)
+	mac.Write([]byte("morse/prompt-cache-key/v2\x00" + now.UTC().Format(time.DateOnly) + "\x00"))
+	mac.Write(binary.BigEndian.AppendUint32(nil, uint32(len(vendor))))
+	mac.Write([]byte(vendor))
+	mac.Write(c[:])
+	return hex.EncodeToString(mac.Sum(nil)[:16])
 }

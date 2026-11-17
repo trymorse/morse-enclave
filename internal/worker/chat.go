@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -110,6 +111,8 @@ type openedChat struct {
 	veilMeasure *VeilMeasure
 	dialect     dialect.Dialect
 	reply       func() dialect.Encoder
+	relayNamed  bool
+	ownCacheKey func(catalog.EndpointID) string
 }
 
 // played is the character the chat plays: the launch the proxy checked, the user's own character whose rules it
@@ -155,8 +158,9 @@ func (w *InProcess) openChat(o Opening, d dialect.Dialect, compaction bool) (Adm
 	}
 	ask := askOf(p, o.KeyCaller, req)
 	var digest affinity.Digest
+	var byOpening bool
 	if o.inTheClear(ask) {
-		digest = affinity.DigestOf(req)
+		digest, byOpening = affinity.DigestOf(req)
 	}
 	routes, err := name.reach(p, ask, compaction, want, o.KeyFloor)
 	if err != nil && ask == askLooksSealed {
@@ -192,7 +196,8 @@ func (w *InProcess) openChat(o Opening, d dialect.Dialect, compaction bool) (Adm
 		}
 	}
 	route := routes[0]
-	oc := &openedChat{cuts: newCuts(), routes: routes, first: route, protocol: p, call: chat.Call{Request: req, RouteEffort: route.DefaultReasoningEffort, Efforts: route.ReasoningEfforts, Settings: settings}, launch: o.Launch, own: o.Own, writing: o.Writing, dialect: d, reply: reply}
+	oc := &openedChat{cuts: newCuts(), routes: routes, first: route, protocol: p, call: chat.Call{Request: req, RouteEffort: route.DefaultReasoningEffort, Efforts: route.ReasoningEfforts, Settings: settings}, launch: o.Launch, own: o.Own, writing: o.Writing, dialect: d, reply: reply,
+		relayNamed: o.inTheClear(ask), ownCacheKey: w.ownCacheKey(o, ask, name.model, req)}
 	if compaction {
 		err = oc.compact(o.Cast)
 	} else {
@@ -208,7 +213,7 @@ func (w *InProcess) openChat(o Opening, d dialect.Dialect, compaction bool) (Adm
 		return nil, err
 	}
 	admission := ChatAdmission{
-		admitted: admitted{w.keep(o, oc)}, Model: name.model, Candidates: endpointsOf(routes), Affinity: digest, MaxPrice: want.maxPrice, Sealable: name.sealable(), OnBehalf: route.onBehalf,
+		admitted: admitted{w.keep(o, oc)}, Model: name.model, Candidates: endpointsOf(routes), Affinity: digest, ByOpening: byOpening, MaxPrice: want.maxPrice, Sealable: name.sealable(), OnBehalf: route.onBehalf,
 		PromptSize: oc.call.Size(), PromptBytes: limits.KibibytesCovering(oc.promptBytes), TextMessages: textMessages(oc.call), PromptCounted: promptCounted(oc.call), OutputAsked: oc.asked,
 		Stream: req.Stream, Compaction: compaction, Character: oc.character,
 	}
@@ -404,6 +409,7 @@ type attempt struct {
 func (o *openedChat) attempt(r chatRoute, g ChatGrant, last, hedgesInPlace bool) attempt {
 	c := o.call
 	c.RouteEffort, c.Efforts, c.OutputLimit = r.DefaultReasoningEffort, r.ReasoningEfforts, r.clamp(g.OutputLimit, o.asked)
+	c.CacheKey = o.cacheKey(r, g)
 	a := attempt{route: r, call: c, promptBound: g.PromptBound, veil: o.veil.reply()}
 	if last {
 		a.waits = r.Upstream.busyWaits()
@@ -414,6 +420,33 @@ func (o *openedChat) attempt(r chatRoute, g ChatGrant, last, hedgesInPlace bool)
 		a.hedgeAfter = h.Wait(o.promptTokens())
 	}
 	return a
+}
+
+func (o *openedChat) cacheKey(r chatRoute, g ChatGrant) string {
+	switch {
+	case o.relayNamed:
+		return g.CacheKeys[r.endpoint]
+	case o.ownCacheKey == nil:
+		return ""
+	}
+	return o.ownCacheKey(r.endpoint)
+}
+
+func (w *InProcess) ownCacheKey(o Opening, ask chatAsk, model catalog.ModelID, req *chat.Request) func(catalog.EndpointID) string {
+	if o.cek == nil || o.KeyCaller || ask != askPlain {
+		return nil
+	}
+	partition, err := base64.RawURLEncoding.DecodeString(o.veilPartition)
+	if err != nil {
+		return nil
+	}
+	digest, byOpening := affinity.DigestOf(req)
+	if !byOpening {
+		return nil
+	}
+	return func(endpoint catalog.EndpointID) string {
+		return w.sealing.cacheKey().CacheKey(w.now(), endpoint, model, partition, digest)
+	}
 }
 
 // hedge is the route's Hedge for c. Only a stream hedges.
@@ -654,6 +687,7 @@ type served struct {
 	reply             measure.Reply
 	finish            chat.Finish
 	unanswered        bool
+	answer            measure.Answer
 	malformed         bool
 	writeErr, callErr error
 	thought           thought
@@ -681,6 +715,7 @@ func (s served) evidence(end ending, a attempt, g ChatGrant) measure.Evidence {
 		Reply:              s.reply,
 		Finish:             s.finish,
 		Unanswered:         s.unanswered,
+		Answer:             s.answer,
 		ReasoningRequested: c.Reasoned(r.Reasoning),
 		HidesReasoning:     r.HidesReasoning,
 		OutputLimit:        c.OutputLimit,
@@ -760,14 +795,14 @@ func stream(ctx context.Context, w *replyWriter, rc *http.ResponseController, pr
 		sw.closeVeil()
 		sw.errorEvent()
 	}
-	return served{reported: reported, attempts: attempts, reply: measure.Streamed{Events: sw.delivered, VisibleBytes: sw.visible}, finish: sw.finish, unanswered: unanswered(sw.finish, sw.sent), malformed: sw.calls.Malformed(sw.finish, c.Stops()), writeErr: sw.err, callErr: err, thought: clock.thought(), atLimit: cut.atLimit()}
+	return served{reported: reported, attempts: attempts, reply: measure.Streamed{Events: sw.delivered, VisibleBytes: sw.visible}, finish: sw.finish, unanswered: unanswered(sw.finish, sw.sent), answer: measure.AnswerOf(sw.answered, sw.unreadable), malformed: sw.calls.Malformed(sw.finish, c.Stops()), writeErr: sw.err, callErr: err, thought: clock.thought(), atLimit: cut.atLimit()}
 }
 
 func complete(ctx context.Context, w http.ResponseWriter, prov chat.BusyRetry, c chat.Call, transcript *chat.Transcript, clock *thinkingClock, rv *replyVeil, cut *limitCut, encoder dialect.Encoder) served {
 	clock.startAtCall()
 	body, tokens, attempts, err := whole(ctx, prov, c, cut)
 	if err != nil {
-		return served{reported: tokens, attempts: attempts, reply: measure.Buffered{}, callErr: err, thought: clock.thought()}
+		return served{reported: tokens, attempts: attempts, reply: measure.Buffered{}, answer: measure.NotAnswered, callErr: err, thought: clock.thought()}
 	}
 	w.Header().Set("Content-Type", "application/json")
 	d := body.Delta()
@@ -789,7 +824,7 @@ func complete(ctx context.Context, w http.ResponseWriter, prov chat.BusyRetry, c
 	if rv != nil && written > 0 {
 		measured = vendorBytes
 	}
-	return served{reported: tokens, attempts: attempts, reply: measure.Buffered{Bytes: measured}, finish: d.Finish, unanswered: unanswered(d.Finish, d.Delivered()), malformed: calls.Malformed(d.Finish, c.Stops()), writeErr: writeErr, atLimit: cut.atLimit()}
+	return served{reported: tokens, attempts: attempts, reply: measure.Buffered{Bytes: measured}, finish: d.Finish, unanswered: unanswered(d.Finish, d.Delivered()), answer: measure.AnswerOf(writeErr == nil && d.Answers(), d.Unreadable), malformed: calls.Malformed(d.Finish, c.Stops()), writeErr: writeErr, atLimit: cut.atLimit()}
 }
 
 var errDialectSealed = apierr.InvalidParameter("This route takes a plaintext request only. Send an end-to-end encrypted chat to POST /v1/chat/completions.")

@@ -11,6 +11,7 @@ import (
 	"os"
 	"reflect"
 	"regexp"
+	"slices"
 	"strings"
 
 	"morse/backend/internal/billing/money"
@@ -210,6 +211,7 @@ func (c common) route(serves Serves) (Route, error) {
 		Included:      c.Included,
 		RequiresPlan:  requires,
 		AppOnly:       c.AppOnly,
+		Pick:          slices.Contains(c.Picks, tier.String()),
 		RebateShare:   share,
 		OnBehalfOf:    c.OnBehalfOf,
 	}

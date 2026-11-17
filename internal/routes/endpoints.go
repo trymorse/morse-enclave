@@ -20,7 +20,7 @@ var (
 	endpointIDPattern = regexp.MustCompile(catalog.EndpointIDPattern)
 )
 
-var ModelFields = []string{"label", "lab", "open_weights", "uncensored", "kind", "reasoning_efforts", "input_modalities", "hides_reasoning", "answers_in_reasoning", "tools", "characters", "markup", "app_only", "prices", "rebate_share_bps"}
+var ModelFields = []string{"label", "lab", "open_weights", "uncensored", "kind", "reasoning_efforts", "input_modalities", "hides_reasoning", "answers_in_reasoning", "tools", "characters", "markup", "app_only", "picks", "prices", "rebate_share_bps"}
 
 // FallbackFields are the fields in which a later e2ee endpoint of a model may differ from the first, whose fallback it
 // is.
@@ -239,6 +239,9 @@ func parseModel(raw json.RawMessage) (model, error) {
 			}
 		}
 		m.endpoints = append(m.endpoints, e)
+	}
+	if err := m.checkPicks(); err != nil {
+		return model{}, err
 	}
 	return m, m.checkPrices()
 }

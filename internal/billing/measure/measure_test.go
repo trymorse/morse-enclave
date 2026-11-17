@@ -233,15 +233,26 @@ func TestBilledTokensTakeTheUpstreamsCountPerSideAndTheEstimateOnlyWhereItSentNo
 	}
 }
 
-func TestTheReasoningPartOfAReportChangesNoMeasurement(t *testing.T) {
+func TestTheReasoningPartOfAReportIsKeptAndChangesNoBill(t *testing.T) {
 	for _, o := range []measure.Outcome{measure.Completed, measure.Rejected, measure.Failed, measure.Cancelled} {
 		plain := measure.Evidence{Outcome: o, Upstream: chat.Usage{PromptTokens: 1249, CompletionTokens: 79, CachedPromptTokens: 1152}, HidesReasoning: true, ReasoningRequested: true, Reply: measure.Streamed{Events: 1}}
 		reasoned := plain
 		reasoned.Upstream.ReasoningTokens = 74
 		got, want := reasoned.Measure(), plain.Measure()
+		if got.Tokens.ReasoningTokens != 74 || want.Tokens.ReasoningTokens != 0 {
+			t.Errorf("%v: kept %d reasoning tokens of a report that said 74, and %d of one that said none", o, got.Tokens.ReasoningTokens, want.Tokens.ReasoningTokens)
+		}
+		got.Tokens.ReasoningTokens = 0
 		if got != want || got.Tokens != plain.Upstream {
 			t.Errorf("%v: measured %+v with 74 of the 79 completion tokens marked as reasoning, want %+v", o, got, want)
 		}
+	}
+}
+
+func TestReasoningIsKeptOnlyWhenTheHostReportedTheCompletion(t *testing.T) {
+	e := measure.Evidence{Outcome: measure.Cancelled, Cut: measure.CutByClient, Upstream: chat.Usage{PromptTokens: 12, ReasoningTokens: 30}, Counted: measure.Counted{Completion: measure.Reading{Tokens: 5, Method: measure.MethodCounted}}, PromptBound: 100, OutputLimit: 100, ReasoningCap: 100, Reply: measure.Streamed{Events: 5}}
+	if m := e.Measure(); m.Tokens.ReasoningTokens != 0 || m.Tokens.CompletionTokens != 5 {
+		t.Errorf("measured %+v, want the 5 counted completion tokens and no reasoning count, since the host reported no completion", m.Tokens)
 	}
 }
 

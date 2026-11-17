@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -293,5 +295,58 @@ func TestAReplyNovitaCompletedAllAsReasoningReachesTheClientAsContent(t *testing
 	chunk, _, err := Novita.NewChat(srv.URL, "sk-nv", "inclusionai/ling-3.0-flash", catalog.Fixes{AnswersInReasoning: true}, srv.Client()).Complete(context.Background(), call(t, `{"model":"m","messages":[{"role":"user","content":"hi"}]}`))
 	if d := chunk.Delta(); err != nil || d.Content != `*She smiles.* "Follow me."` || d.Finish != chat.FinishStop {
 		t.Fatalf("content %q finish %s err %v, want the reasoning as content", d.Content, d.Finish, err)
+	}
+}
+
+func TestOnlyDeepInfraIsSentTheCallsCacheKeyInTheBodyMorphInItsHeaderAndNoHostTheClients(t *testing.T) {
+	for _, h := range Hosts() {
+		for _, stream := range []bool{false, true} {
+			s := stub(t)
+			c := call(t, `{"model":"m","stream":`+strconv.FormatBool(stream)+`,"prompt_cache_key":"pk-client","messages":[{"role":"user","content":"hello"}]}`)
+			c.CacheKey = "0123456789abcdef0123456789abcdef"
+			p := h.NewChat(s.srv.URL, "k", "m", catalog.Fixes{}, s.srv.Client())
+			var err error
+			if stream {
+				_, err = p.Stream(context.Background(), c, func(chat.Chunk) error { return nil })
+			} else {
+				_, _, err = p.Complete(context.Background(), c)
+			}
+			if err != nil {
+				t.Fatalf("%s: %v", h.Name, err)
+			}
+			body := s.requests()[0].body
+			if strings.Contains(body, "pk-client") {
+				t.Errorf("%s was sent the client's prompt_cache_key: %s", h.Name, body)
+			}
+			sentKey := strings.Contains(body, `"prompt_cache_key":"0123456789abcdef0123456789abcdef"`)
+			if want := h.Name == DeepInfra.Name; sentKey != want || strings.Count(body, "prompt_cache_key") > 1 {
+				t.Errorf("%s (stream %t) was sent %s, want the call's cache key %t", h.Name, stream, body, want)
+			}
+			header := s.requests()[0].header
+			if got, want := header.Values("X-Session-Id"), h.Name == Morph.Name; want != slices.Equal(got, []string{c.CacheKey}) || !want && len(got) != 0 {
+				t.Errorf("%s (stream %t) was sent X-Session-Id %v, want the call's cache key %t", h.Name, stream, got, want)
+			}
+			for name, values := range header {
+				if slices.ContainsFunc(values, func(v string) bool { return strings.Contains(v, "pk-client") }) {
+					t.Errorf("%s was sent the client's prompt_cache_key in %s", h.Name, name)
+				}
+			}
+		}
+	}
+	for _, h := range Hosts() {
+		s := stub(t)
+		if _, _, err := h.NewChat(s.srv.URL, "k", "m", catalog.Fixes{}, s.srv.Client()).Complete(context.Background(), call(t, `{"model":"m","session_id":"end-user-42","messages":[{"role":"user","content":"hello"}]}`)); err != nil {
+			t.Fatal(err)
+		}
+		if r := s.requests()[0]; strings.Contains(r.body, "end-user-42") || r.header.Get("X-Session-Id") != "" {
+			t.Errorf("%s was sent %v %s for a call with no cache key, want no session id", h.Name, r.header, r.body)
+		}
+	}
+	s := stub(t)
+	if _, _, err := DeepInfra.NewChat(s.srv.URL, "k", "m", catalog.Fixes{}, s.srv.Client()).Complete(context.Background(), call(t, `{"model":"m","messages":[{"role":"user","content":"hello"}]}`)); err != nil {
+		t.Fatal(err)
+	}
+	if body := s.requests()[0].body; strings.Contains(body, "prompt_cache_key") {
+		t.Errorf("DeepInfra was sent %s for a call with no cache key, want no prompt_cache_key", body)
 	}
 }

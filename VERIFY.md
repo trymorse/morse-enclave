@@ -2,7 +2,7 @@
 
 ## How releases are published
 
-Each commit here is one image Morse pinned for production, exported from Morse's private monorepo with exactly the files the image build reads. A bot makes the commit and tags it with the release, such as `v2026.10.1`, or `v2026.10.5-pins-6ab5d36` for an image rebuilt with newer pins. The commit message, and the GitHub Release on newer tags, list the image's PCR0, PCR1, and PCR2. Morse does not publish its day-to-day commits. The first release here is `v2026.10.1`. [morse-pins](https://github.com/trymorse/morse-pins) also lists older prod images, `v0.6.26` to `v0.6.34`, with no source here. An entry marked `revoked: true` is an image the app no longer accepts, and an image revoked before it deployed may have no tag here.
+Each commit here is one image Morse pinned for production, exported from Morse's private monorepo with exactly the files the image build reads. A bot makes the commit and tags it with the release, such as `v2026.10.1`, `v2026.10.5-pins-6ab5d36` for an image rebuilt with newer pins, or `v2026.10.5-routes-0123456789ab` for a release's code rebuilt with the `routes.json` of a later commit, which adds or reprices models and changes no code. The commit message, and the GitHub Release on newer tags, list the image's PCR0, PCR1, and PCR2. Morse does not publish its day-to-day commits. The first release here is `v2026.10.1`. [morse-pins](https://github.com/trymorse/morse-pins) also lists older prod images, `v0.6.26` to `v0.6.34`, with no source here. An entry marked `revoked: true` is an image the app no longer accepts, and an image revoked before it deployed may have no tag here.
 
 ## Rebuild notes
 

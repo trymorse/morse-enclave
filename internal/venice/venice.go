@@ -30,5 +30,8 @@ func NewChat(baseURL, apiKey, model string, client *http.Client) *Chat {
 		// into text on its own services.
 		Admit:        openaicompat.FunctionToolsTextAndImages,
 		ChargeFields: []string{"cost"},
+		// why: Venice documents prompt_cache_key as a routing hint: "Requests with the same key are more likely to hit
+		// the same server with warm cache" (https://docs.venice.ai/guides/features/prompt-caching.md).
+		SendsCacheKey: true,
 	}}
 }

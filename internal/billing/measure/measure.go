@@ -39,6 +39,7 @@ type Evidence struct {
 	Reply              Reply
 	Finish             chat.Finish
 	Unanswered         bool
+	Answer             Answer
 	ReasoningRequested bool
 	HidesReasoning     bool
 	OutputLimit        int
@@ -50,6 +51,24 @@ type Evidence struct {
 	// sent no usage, since it never reached its last chunk, and it may have generated a few tokens more than the client
 	// was shown. The completion is billed at most OutputLimit, which is what the hold reserved.
 	AtLimit bool
+}
+
+type Answer uint8
+
+const (
+	AnswerUnknown Answer = iota
+	Answered
+	NotAnswered
+)
+
+func AnswerOf(answered, unreadable bool) Answer {
+	switch {
+	case answered:
+		return Answered
+	case unreadable:
+		return AnswerUnknown
+	}
+	return NotAnswered
 }
 
 type ThinkingTime struct {
@@ -199,7 +218,8 @@ type Measurement struct {
 	Thinking   Thinking
 	Finish     chat.Finish
 	Unanswered bool
-	Unsent     bool `json:",omitzero"`
+	Unsent     bool   `json:",omitzero"`
+	Answer     Answer `json:",omitzero"`
 }
 
 func (m Measurement) Source() UsageSource { return m.Sides.source(m.unmeasured()) }
@@ -209,7 +229,7 @@ func (e Evidence) Measure() Measurement {
 	reported := e.Upstream.Normalized()
 	if e.Outcome == Rejected || e.Unsent {
 		m := measured(e.Outcome, reported, Sides{Prompt: upstreamSide(reported.PromptTokens), Completion: upstreamSide(reported.CompletionTokens)})
-		m.Unsent = e.Unsent
+		m.Unsent, m.Answer = e.Unsent, e.Answer
 		return m
 	}
 	prompt := rung(reported.PromptTokens, e.Counted.Prompt, e.promptEstimate())
@@ -222,18 +242,20 @@ func (e Evidence) Measure() Measurement {
 	if prompt.Method == MethodReported {
 		u.CachedPromptTokens, u.CacheWritePromptTokens = reported.CachedPromptTokens, reported.CacheWritePromptTokens
 	}
+	if completion.Method == MethodReported {
+		u.ReasoningTokens = reported.ReasoningTokens
+	}
 	sides := Sides{Prompt: prompt.Method, Completion: completion.Method}
 	if hidden.Tokens > 0 {
 		sides.Hidden = MethodThinkingTime
 	}
 	m := measured(e.Outcome, u, sides)
-	m.Thinking, m.Finish, m.Unanswered = hidden, e.Finish, e.Unanswered
+	m.Thinking, m.Finish, m.Unanswered, m.Answer = hidden, e.Finish, e.Unanswered, e.Answer
 	return m
 }
 
 func measured(o Outcome, u chat.Usage, sides Sides) Measurement {
 	u = u.Normalized()
-	u.ReasoningTokens = 0
 	return Measurement{Outcome: o, Tokens: u, Sides: sides}
 }
 

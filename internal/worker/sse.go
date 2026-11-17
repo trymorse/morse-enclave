@@ -142,6 +142,8 @@ type sseWriter struct {
 	visible    int
 	shown      bool
 	sent       bool
+	answered   bool
+	unreadable bool
 	finish     chat.Finish
 	calls      chat.ToolCalls
 	transcript *chat.Transcript
@@ -162,6 +164,7 @@ func (s *sseWriter) emit(c chat.Chunk) error {
 		s.delivered++
 		s.visible += d.VisibleBytes()
 		s.finish, s.shown, s.sent = finish, shown, sent
+		s.answered, s.unreadable = s.answered || d.Answers(), s.unreadable || d.Unreadable
 		s.transcript.Add(d)
 		if d.ToolCalled {
 			s.calls.Add(c)

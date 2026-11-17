@@ -41,6 +41,7 @@ type Call struct {
 	// Settings are the request fields an API key lets reach the host beside the ones every chat sends, such as
 	// temperature; nil sends none.
 	Settings []string
+	CacheKey string
 }
 
 var (
@@ -346,6 +347,41 @@ func (r *Request) PromptTexts() ([]string, bool) {
 		}
 	}
 	return texts, true
+}
+
+func (r *Request) RenderedPromptTexts() ([]string, int, bool) {
+	msgs, err := r.Messages()
+	if err != nil {
+		return nil, 0, false
+	}
+	var texts []string
+	if tools := r.fields["tools"]; len(tools) > 0 {
+		texts = append(texts, string(tools))
+	}
+	for _, m := range msgs {
+		text, ok := m.Text()
+		if !ok {
+			return nil, 0, false
+		}
+		if reasoning := cmp.Or(m.replayedReasoning("reasoning_content"), m.replayedReasoning("reasoning")); reasoning != "" {
+			texts = append(texts, reasoning)
+		}
+		if calls := m.ToolCalls(); len(calls) > 0 {
+			texts = append(texts, string(calls))
+		}
+		if text != "" {
+			texts = append(texts, text)
+		}
+	}
+	return texts, len(msgs), true
+}
+
+func (m Message) replayedReasoning(key string) string {
+	var s string
+	if m.Role != "assistant" || json.Unmarshal(m.raw[key], &s) != nil {
+		return ""
+	}
+	return s
 }
 
 // PromptTextBytes is the size of the text the model reads: every text part of every message, the assistant's

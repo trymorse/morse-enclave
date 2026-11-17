@@ -72,6 +72,8 @@ type Provider struct {
 	ContinuousUsage bool
 	Fixes           catalog.Fixes
 	ThinkingField   string
+	SendsCacheKey   bool
+	CacheKeyHeader  string
 	Admit           func(chat.Call) error
 	Headers         func(chat.Call) http.Header
 	ChargeFields    []string
@@ -499,6 +501,9 @@ func (p *Provider) encode(c chat.Call, stream bool) ([]byte, error) {
 	if p.turnsThinkingOff(c) {
 		set[p.ThinkingField] = json.RawMessage("false")
 	}
+	if p.SendsCacheKey && c.CacheKey != "" {
+		set["prompt_cache_key"], _ = json.Marshal(c.CacheKey)
+	}
 	if stream {
 		set["stream"] = json.RawMessage("true")
 		set["stream_options"] = json.RawMessage(`{"include_usage":true}`)
@@ -526,10 +531,18 @@ func (p *Provider) encode(c chat.Call, stream bool) ([]byte, error) {
 }
 
 func (p *Provider) headers(c chat.Call) http.Header {
-	if p.Headers == nil {
-		return nil
+	var h http.Header
+	if p.Headers != nil {
+		h = p.Headers(c)
 	}
-	return p.Headers(c)
+	if p.CacheKeyHeader != "" && c.CacheKey != "" {
+		h = h.Clone()
+		if h == nil {
+			h = http.Header{}
+		}
+		h.Set(p.CacheKeyHeader, c.CacheKey)
+	}
+	return h
 }
 
 type HTTPSender struct{ upstream.Endpoint }

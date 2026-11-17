@@ -6,22 +6,25 @@ import (
 	"morse/backend/internal/chat"
 )
 
-// RawCount is one tokenizer pass over a request: the prompt, 0 when it was not countable, and
-// the visible text of the reply.
-type RawCount struct{ Prompt, Visible int }
+type RawCount struct {
+	Prompt, Messages, Visible int
+	Plain                     bool
+}
 
-// Counted ranks a raw count for the ladder. A prompt count is used only once the route's overhead
-// has been learned, because the upstream's chat template adds tokens the proxy never sees; the
-// visible completion stands on its own, and a learned offset corrects it only where the route
-// shows its reasoning, since a hidden route's offset is the reasoning the thinking bound bills.
+const TemplateTokensPerMessage = 32
+
 func (l Learned) Counted(route string, e Evidence, raw RawCount) Counted {
 	return l.Figures(route, ThinkingTerms{}).Counted(e, raw)
 }
 
 func (f RouteFigures) Counted(e Evidence, raw RawCount) Counted {
 	var c Counted
-	if raw.Prompt > 0 && f.PromptOverhead.Learned {
+	switch {
+	case raw.Prompt <= 0 || e.SealedWhole:
+	case f.PromptOverhead.Learned && raw.Plain:
 		c.Prompt = Reading{Tokens: max(raw.Prompt+f.PromptOverhead.Offset, 0), Method: MethodCalibrated}
+	case raw.Prompt+TemplateTokensPerMessage*(raw.Messages+2) < e.promptEstimate().Tokens:
+		c.Prompt = Reading{Tokens: raw.Prompt + TemplateTokensPerMessage*(raw.Messages+2), Method: MethodCounted}
 	}
 	if raw.Visible > 0 {
 		c.Completion = Reading{Tokens: raw.Visible, Method: MethodCounted}

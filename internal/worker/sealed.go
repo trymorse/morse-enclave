@@ -10,6 +10,7 @@ import (
 	"slices"
 	"time"
 
+	"morse/backend/internal/affinity"
 	"morse/backend/internal/apierr"
 	"morse/backend/internal/audio"
 	"morse/backend/internal/billing/measure"
@@ -67,6 +68,16 @@ func (k Keys) Tasks() *taskseal.Key {
 	}
 	key, _ := k.tasks.Key()
 	return key
+}
+
+const cacheKeyInfo = "morse-prompt-cache-key-v1"
+
+func (k Keys) cacheKey() affinity.WorkerKey {
+	tasks := k.Tasks()
+	if tasks == nil {
+		return affinity.WorkerKey{}
+	}
+	return affinity.NewWorkerKey(tasks.Derive(cacheKeyInfo))
 }
 
 func (k Keys) taskKey() (*taskseal.Key, error) {

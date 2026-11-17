@@ -86,6 +86,7 @@ type Route struct {
 	OnBehalfOf    catalog.EndpointID `json:",omitempty"`
 	Order         int
 	AppOnly       bool
+	Pick          bool
 	RebateShare   money.RebateShare
 }
 

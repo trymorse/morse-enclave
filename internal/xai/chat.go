@@ -13,7 +13,9 @@ import (
 
 func NewChat(baseURL, apiKey, model string, retention catalog.Retention, client *http.Client) *openaicompat.Provider {
 	vendor := endpoint(baseURL, apiKey, client, Confirmation(retention))
-	return &openaicompat.Provider{Sender: openaicompat.HTTPSender{Endpoint: vendor}, Model: model, LimitField: openaicompat.MaxCompletionTokens, ChargeFields: []string{"cost_in_usd_ticks"}, Bill: reasoningAsCompletion}
+	// why: xAI documents that x-grok-conv-id "routes requests with the same conversation ID to the same server", where
+	// its cache lives (https://docs.x.ai/developers/advanced-api-usage/prompt-caching/maximizing-cache-hits).
+	return &openaicompat.Provider{Sender: openaicompat.HTTPSender{Endpoint: vendor}, Model: model, LimitField: openaicompat.MaxCompletionTokens, CacheKeyHeader: "X-Grok-Conv-Id", ChargeFields: []string{"cost_in_usd_ticks"}, Bill: reasoningAsCompletion}
 }
 
 // xAI reports reasoning tokens outside completion_tokens and bills them at the completion rate, so its

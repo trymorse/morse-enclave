@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"expvar"
+	"slices"
 	"sync"
 	"time"
 
@@ -86,7 +87,7 @@ func (w *InProcess) counts(h Handle, work func(ctx context.Context) Count) <-cha
 
 func (w *InProcess) startCount(h Handle, p *pendingCount, f measure.RouteFigures) <-chan Count {
 	return w.counts(h, func(ctx context.Context) Count {
-		raw, ok := w.count(ctx, p)
+		raw, ok := w.count(ctx, p, billedPrompt)
 		if !ok {
 			return Count{}
 		}
@@ -115,7 +116,7 @@ func (w *InProcess) startSample(h Handle, p *pendingCount) <-chan Count {
 		var raw measure.RawCount
 		if p.count != nil {
 			var ok bool
-			if raw, ok = w.count(ctx, p); !ok {
+			if raw, ok = w.count(ctx, p, sampledPrompt); !ok {
 				return Count{}
 			}
 		}
@@ -123,7 +124,20 @@ func (w *InProcess) startSample(h Handle, p *pendingCount) <-chan Count {
 	})
 }
 
-func (w *InProcess) count(ctx context.Context, p *pendingCount) (measure.RawCount, bool) {
+type promptOf func(chat.Call) (texts []string, messages int, plain, ok bool)
+
+func billedPrompt(c chat.Call) ([]string, int, bool, bool) {
+	texts, messages, ok := c.RenderedPromptTexts()
+	plainTexts, plain := c.PromptTexts()
+	return texts, messages, plain && slices.Equal(texts, plainTexts), ok
+}
+
+func sampledPrompt(c chat.Call) ([]string, int, bool, bool) {
+	texts, ok := c.PromptTexts()
+	return texts, 0, ok, ok
+}
+
+func (w *InProcess) count(ctx context.Context, p *pendingCount, prompt promptOf) (measure.RawCount, bool) {
 	select {
 	case w.counters.slots <- struct{}{}:
 	default:
@@ -134,7 +148,7 @@ func (w *InProcess) count(ctx context.Context, p *pendingCount) (measure.RawCoun
 	ctx, cancel := context.WithTimeout(ctx, countBudget)
 	defer cancel()
 	defer context.AfterFunc(w.counters.ctx, cancel)()
-	raw, err := p.raw(ctx)
+	raw, err := p.raw(ctx, prompt)
 	switch {
 	case err == nil:
 		return raw, true
@@ -146,7 +160,7 @@ func (w *InProcess) count(ctx context.Context, p *pendingCount) (measure.RawCoun
 	return measure.RawCount{}, false
 }
 
-func (p *pendingCount) raw(ctx context.Context) (measure.RawCount, error) {
+func (p *pendingCount) raw(ctx context.Context, prompt promptOf) (measure.RawCount, error) {
 	var raw measure.RawCount
 	sum := func(texts []string) (int, error) {
 		n := 0
@@ -159,12 +173,12 @@ func (p *pendingCount) raw(ctx context.Context) (measure.RawCount, error) {
 		}
 		return n, nil
 	}
-	if texts, ok := p.call.PromptTexts(); ok {
+	if texts, messages, plain, ok := prompt(p.call); ok {
 		n, err := sum(texts)
 		if err != nil {
 			return measure.RawCount{}, err
 		}
-		raw.Prompt = n
+		raw.Prompt, raw.Messages, raw.Plain = n, messages, plain
 	}
 	n, err := sum(p.transcript.Texts())
 	if err != nil {

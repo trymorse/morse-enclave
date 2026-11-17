@@ -136,6 +136,7 @@ type ChatAdmission struct {
 	// Affinity is the conversation digest of an unsealed sk_ request (affinity.DigestOf), and zero for every other
 	// request.
 	Affinity    affinity.Digest `json:",omitzero"`
+	ByOpening   bool            `json:",omitempty"`
 	MaxPrice    money.PriceCap  `json:",omitzero"`
 	Sealable    bool
 	OnBehalf    bool
@@ -198,6 +199,7 @@ type ChatGrant struct {
 	Budgeted     bool
 	Figures      measure.RouteFigures
 	Sample       bool
+	CacheKeys    map[catalog.EndpointID]string `json:",omitempty"`
 }
 
 func (ChatGrant) kind() grantKind { return grantsChat }
