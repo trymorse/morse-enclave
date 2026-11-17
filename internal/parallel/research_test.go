@@ -225,11 +225,11 @@ const (
 
 const eiffelReferences = "\n\n## References\n\n1. *133 years and 330 metres - The Eiffel Tower*. https://www.toureiffel.paris/en/news/history-and-culture/133-years-and-1083-feet\n"
 
-func unwrapping(t *testing.T, s *standIn) (*Research, *[]string) {
+func unwrapping(t *testing.T, s *standIn) (*Research, *int) {
 	t.Helper()
 	srv := s.serve(t)
-	var runs []string
-	r, err := NewResearch(srv.URL, apiKey, "pro", srv.Client(), func(id string) { runs = append(runs, id) })
+	var runs int
+	r, err := NewResearch(srv.URL, apiKey, "pro", srv.Client(), func() { runs++ })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -246,14 +246,14 @@ func TestAReportWrittenAsParallelsAnswerObjectIsTheAnswerAndTheReferencesAfterIt
 	if len(out.Citations) != 1 || out.Citations[0].URL != "https://www.toureiffel.paris/en/news/history-and-culture/133-years-and-1083-feet" {
 		t.Errorf("citations %+v", out.Citations)
 	}
-	if !slices.Equal(*runs, []string{testRunID}) {
-		t.Errorf("reported runs %q, want the one run", *runs)
+	if *runs != 1 {
+		t.Errorf("reported %d unwrapped reports, want the one", *runs)
 	}
 
 	r, runs = unwrapping(t, &standIn{reply: replying(200, plainResult)})
 	out, err = r.Output(context.Background(), testRunID)
-	if want := "The Eiffel Tower opened in **1889**. [1]" + eiffelReferences; err != nil || out.Content != want || len(*runs) != 0 {
-		t.Errorf("a markdown report: content %q err %v reported runs %q", out.Content, err, *runs)
+	if want := "The Eiffel Tower opened in **1889**. [1]" + eiffelReferences; err != nil || out.Content != want || *runs != 0 {
+		t.Errorf("a markdown report: content %q err %v reported %d unwrapped", out.Content, err, *runs)
 	}
 }
 
@@ -288,8 +288,8 @@ func TestOnlyAnObjectWithAnAnswerThatIsNonEmptyTextIsUnwrappedAndAnythingElseIsT
 		if err != nil || out.Content != c.want {
 			t.Errorf("%s: content %q err %v, want %q", name, out.Content, err, c.want)
 		}
-		if _, asWritten := untouched[name]; asWritten != (len(*runs) == 0) {
-			t.Errorf("%s: reported runs %q", name, *runs)
+		if _, asWritten := untouched[name]; asWritten != (*runs == 0) {
+			t.Errorf("%s: reported %d unwrapped", name, *runs)
 		}
 	}
 }

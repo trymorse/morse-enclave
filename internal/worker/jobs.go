@@ -158,8 +158,10 @@ func (w *InProcess) readResearch(ctx context.Context, rw *replyWriter, id string
 		view.Output = &output
 	}
 	rw.Header().Set("Cache-Control", "no-store")
-	apierr.WriteJSON(rw, http.StatusOK, view)
-	return Measured{Served: true}
+	rw.Header().Set("Content-Type", "application/json")
+	rw.WriteHeader(http.StatusOK)
+	err := json.NewEncoder(rw).Encode(view)
+	return Measured{Served: true, Downloaded: view.Output != nil && err == nil}
 }
 
 func (w *InProcess) relayEvents(ctx context.Context, rw *replyWriter, g ResearchEventsGrant) Measured {

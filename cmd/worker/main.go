@@ -121,7 +121,7 @@ func build(getenv func(string) string, log *logger) (built, error) {
 		Observe: log.vendorPins,
 		OnSwap:  gates.Wake,
 	})
-	unwrapped := func(string) { log.log(researchUnwrapped, fields{}) }
+	unwrapped := func() { log.log(researchUnwrapped, fields{}) }
 	keys, err := vendors.ReadKeys(rts, getenv)
 	if err != nil {
 		return built{}, err

@@ -44,7 +44,7 @@ func NewClient() (*http.Transport, *http.Client) {
 type Deps struct {
 	Client              *http.Client
 	Gates               *Gates
-	OnResearchUnwrapped func(runID string)
+	OnResearchUnwrapped func()
 }
 
 type builder[S routes.Serves] func(rt routes.Route, s S, key string, d Deps) (worker.Serving, error)
@@ -338,7 +338,7 @@ func parallelFetch(rt routes.Route, _ routes.PerCall, key string, d Deps) (worke
 func parallelResearch(rt routes.Route, _ routes.PerCall, key string, d Deps) (worker.Serving, error) {
 	unwrapped := d.OnResearchUnwrapped
 	if unwrapped == nil {
-		unwrapped = func(string) {}
+		unwrapped = func() {}
 	}
 	researcher, err := parallel.NewResearch(rt.BaseURL, key, rt.UpstreamModel, d.Client, unwrapped)
 	if err != nil {

@@ -36,17 +36,15 @@ var (
 type Research struct {
 	client
 	processor string
-	unwrapped func(runID string)
+	unwrapped func()
 }
 
-// unwrapped, when not nil, is called with the run id each time Output reads a report that Parallel wrote as its
-// answer object.
-func NewResearch(baseURL, apiKey, processor string, httpClient *http.Client, unwrapped func(runID string)) (*Research, error) {
+func NewResearch(baseURL, apiKey, processor string, httpClient *http.Client, unwrapped func()) (*Research, error) {
 	if !slices.Contains(processors, processor) {
 		return nil, fmt.Errorf("%q is not a research processor parallel serves, one of %s", processor, strings.Join(processors, ", "))
 	}
 	if unwrapped == nil {
-		unwrapped = func(string) {}
+		unwrapped = func() {}
 	}
 	return &Research{client: newClient(baseURL, apiKey, httpClient, researchErrors), processor: processor, unwrapped: unwrapped}, nil
 }
@@ -151,7 +149,7 @@ func (r *Research) Output(ctx context.Context, id string) (research.Output, erro
 		return research.Output{}, research.ErrUpstream
 	}
 	if answer, leaked := unwrapAnswer(content); leaked {
-		r.unwrapped(id)
+		r.unwrapped()
 		content = answer
 	}
 	var cited research.Citations
