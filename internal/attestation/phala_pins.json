@@ -67,6 +67,11 @@
       "source": "https://github.com/Dstack-TEE/private-ai-gateway.git@e9b6ae8a22ff9d8623b280d53bb4164cfe9d0521",
       "compose_hash": "66e91ac6c2325537851bc95fc0e4489df119b7b0204d27f2bae91ec1324ecf1f",
       "launcher_image": "ghcr.io/redpill-ai/private-ai-launcher@sha256:c083ff9e6a5ddf10f6c9e9bb1f74cc618deebecfea5208b563c574399db4637c"
+    },
+    {
+      "source": "https://github.com/Dstack-TEE/private-ai-gateway.git@8d0018f81e8dbadfe7b733bb294a0350f82b338c",
+      "compose_hash": "04d79a230db9bb467ced4b3a0822042c5751c32d89a2b1c6801368e648356085",
+      "launcher_image": "ghcr.io/redpill-ai/private-ai-launcher@sha256:c083ff9e6a5ddf10f6c9e9bb1f74cc618deebecfea5208b563c574399db4637c"
     }
   ],
   "images": [
