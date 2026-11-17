@@ -411,7 +411,7 @@
     {"id": "civitai/realvisxl-5", "app_only": true, "kind": "image", "lab": "Stable Diffusion XL fine-tunes", "label": "RealVisXL V5.0 (Uncensored)", "open_weights": true, "uncensored": true, "endpoints": [
       {"id": "runware", "api_key_env": "RUNWARE_API_KEY", "base_url": "https://api.runware.ai", "included": {"from":"pro"}, "owned_by": "SG_161222", "price": {"hold_micros_per_image":5000}, "provider": "runware", "provider_name": "runware", "tier": "anon", "upstream_model": "civitai:139562@789646"}
     ]},
-    {"id": "civitai/cyberillustrious", "app_only": true, "kind": "image", "lab": "Stable Diffusion XL fine-tunes", "label": "CyberRealistic (Uncensored)", "open_weights": true, "uncensored": true, "endpoints": [
+    {"id": "civitai/cyberillustrious", "app_only": true, "kind": "image", "lab": "Stable Diffusion XL fine-tunes", "label": "CyberIllustrious (Uncensored)", "open_weights": true, "uncensored": true, "endpoints": [
       {"id": "runware", "api_key_env": "RUNWARE_API_KEY", "base_url": "https://api.runware.ai", "included": {"from":"pro"}, "owned_by": "Cyberdelia", "price": {"hold_micros_per_image":5000}, "provider": "runware", "provider_name": "runware", "tier": "anon", "upstream_model": "civitai:1125067@1471829"}
     ]},
     {"id": "civitai/hassaku-xl", "app_only": true, "kind": "image", "lab": "Stable Diffusion XL fine-tunes", "label": "Hassaku XL Anime (Uncensored)", "open_weights": true, "uncensored": true, "endpoints": [
