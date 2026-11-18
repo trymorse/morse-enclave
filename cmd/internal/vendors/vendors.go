@@ -21,6 +21,7 @@ import (
 	"morse/backend/internal/phala"
 	"morse/backend/internal/routes"
 	"morse/backend/internal/runware"
+	"morse/backend/internal/speech"
 	"morse/backend/internal/spicyapi"
 	"morse/backend/internal/tee"
 	"morse/backend/internal/tokenizer"
@@ -94,13 +95,14 @@ func withOpenAIHosts(m map[routes.Provider]newChatProvider) map[routes.Provider]
 }
 
 var builders = withChat(map[routes.Provider]map[catalog.Kind]build{
-	routes.ProviderOpenAI:   {catalog.KindTranscription: erase(openAITranscription)},
-	routes.ProviderGemini:   {catalog.KindImage: erase(imagesBy(gemini.NewImages))},
-	routes.ProviderXAI:      {catalog.KindImage: erase(imagesBy(xai.NewImages)), catalog.KindVideo: erase(videosBy(xai.NewVideos))},
-	routes.ProviderRunware:  {catalog.KindImage: erase(imagesBy(runware.NewImages)), catalog.KindVideo: erase(videosBy(runware.NewVideos))},
-	routes.ProviderFal:      {catalog.KindImage: erase(imagesBy(fal.NewImages)), catalog.KindVideo: erase(videosBy(fal.NewVideos))},
-	routes.ProviderVenice:   {catalog.KindImage: erase(imagesBy(venice.NewImages))},
-	routes.ProviderSpicyAPI: {catalog.KindImage: erase(imagesBy(spicyapi.NewImages))},
+	routes.ProviderOpenAI:    {catalog.KindTranscription: erase(openAITranscription)},
+	routes.ProviderDeepInfra: {catalog.KindSpeech: erase(openAISpeech)},
+	routes.ProviderGemini:    {catalog.KindImage: erase(imagesBy(gemini.NewImages))},
+	routes.ProviderXAI:       {catalog.KindImage: erase(imagesBy(xai.NewImages)), catalog.KindVideo: erase(videosBy(xai.NewVideos))},
+	routes.ProviderRunware:   {catalog.KindImage: erase(imagesBy(runware.NewImages)), catalog.KindVideo: erase(videosBy(runware.NewVideos))},
+	routes.ProviderFal:       {catalog.KindImage: erase(imagesBy(fal.NewImages)), catalog.KindVideo: erase(videosBy(fal.NewVideos))},
+	routes.ProviderVenice:    {catalog.KindImage: erase(imagesBy(venice.NewImages))},
+	routes.ProviderSpicyAPI:  {catalog.KindImage: erase(imagesBy(spicyapi.NewImages)), catalog.KindVideo: erase(videosBy(spicyapi.NewVideos))},
 	routes.ProviderParallel: {
 		catalog.KindSearch:   erase(parallelSearch),
 		catalog.KindFetch:    erase(parallelFetch),
@@ -306,6 +308,10 @@ func attestedTranscription(rt routes.Route, attested routes.Attested, key string
 
 func openAITranscription(rt routes.Route, _ routes.PerCall, key string, d Deps) (worker.Serving, error) {
 	return worker.Transcription{Transcriber: audio.NewOpenAI(rt.BaseURL, key, rt.UpstreamModel, d.Client)}, nil
+}
+
+func openAISpeech(rt routes.Route, _ routes.PerCall, key string, d Deps) (worker.Serving, error) {
+	return worker.Speech{Speaker: speech.NewOpenAI(rt.BaseURL, key, rt.UpstreamModel, d.Client)}, nil
 }
 
 type newGenerator[G any] func(baseURL, apiKey, model string, client *http.Client) (G, error)

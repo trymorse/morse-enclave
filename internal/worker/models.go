@@ -13,6 +13,7 @@ import (
 	"morse/backend/internal/chat"
 	"morse/backend/internal/media"
 	"morse/backend/internal/research"
+	"morse/backend/internal/speech"
 	"morse/backend/internal/tokenizer"
 	"morse/backend/internal/web"
 )
@@ -123,6 +124,8 @@ type Fetch struct{ web.Fetcher }
 
 type Research struct{ research.Researcher }
 
+type Speech struct{ speech.Speaker }
+
 // Transcription serves a transcription model. Attester attests it, and is set exactly on an attested tier.
 type Transcription struct {
 	audio.Transcriber
@@ -167,6 +170,16 @@ func (f Fetch) validate(catalog.Tier) error {
 func (r Research) validate(catalog.Tier) error {
 	if r.Researcher == nil {
 		return errors.New("serves research with no vendor")
+	}
+	return nil
+}
+
+func (s Speech) validate(tier catalog.Tier) error {
+	switch {
+	case s.Speaker == nil:
+		return errors.New("serves speech with no vendor")
+	case tier.Attested():
+		return fmt.Errorf("is tier %s and serves speech, which no attested tier serves", tier)
 	}
 	return nil
 }

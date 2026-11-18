@@ -27,6 +27,7 @@ const (
 	ResearchEventsPattern = "GET /v1/research/{id}/events"
 	LookupPattern         = "GET /v1/lookup/{service}/{path...}"
 	TranscriptionPattern  = "POST /v1/audio/transcriptions"
+	SpeechPattern         = "POST /v1/audio/speech"
 )
 
 // Dialects are the chat routes whose clients speak a wire format other than Chat Completions, by route pattern. The
@@ -63,6 +64,7 @@ var sealableRoutes = []struct {
 	{ResearchEventsPattern, (*InProcess).openRead},
 	{LookupPattern, (*InProcess).openLookup},
 	{TranscriptionPattern, func(w *InProcess, o Opening, _ func(string) string) (Admission, error) { return w.openTranscription(o) }},
+	{SpeechPattern, func(w *InProcess, o Opening, _ func(string) string) (Admission, error) { return w.openSpeech(o) }},
 	{PluginCallPattern, pluginOpener(plugins.KindCall)},
 	{PluginTokenPattern, pluginOpener(plugins.KindToken)},
 	{PluginRevokePattern, pluginOpener(plugins.KindRevoke)},

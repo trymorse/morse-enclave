@@ -404,6 +404,26 @@ func (c *Client) Poll(ctx context.Context, route, vendorID string) (jobs.Poll, e
 	return p, nil
 }
 
+func (c *Client) Discard(ctx context.Context, route, vendorID string) error {
+	ctx, cancel := context.WithTimeout(ctx, pollTimeout)
+	defer cancel()
+	deadline, _ := ctx.Deadline()
+	resp, err := c.send(ctx, "/discard", pollRequest{Route: route, VendorID: vendorID, Deadline: deadline})
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	switch {
+	case resp.StatusCode == http.StatusAccepted:
+		return media.ErrVideoRunning
+	case resp.StatusCode == http.StatusConflict && resp.Header.Get(headerVendorStatus) == strconv.Itoa(http.StatusForbidden):
+		return media.ErrPurgeRefused
+	case resp.StatusCode >= 400:
+		return wireRefusal(resp)
+	}
+	return nil
+}
+
 func (c *Client) Attest(ctx context.Context, v Vendor, nonce string, f Format) (chat.Attestation, error) {
 	var att attestationWire
 	if err := c.evidence(ctx, "/attest", attestRequest(v, nonce, f), &att); err != nil {

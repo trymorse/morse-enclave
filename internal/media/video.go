@@ -27,6 +27,8 @@ const VendorKeep = VideoKeep + 3*time.Minute
 var (
 	VideoAspectRatios = []string{"16:9", "9:16", "1:1"}
 	ErrVideoGone      = errors.New("media: the video is no longer stored")
+	ErrVideoRunning   = errors.New("media: the vendor is still making the video")
+	ErrPurgeRefused   = errors.New("media: the vendor does not permit this key to purge a video, so its retention window clears each one")
 )
 
 type VideoRequest struct {
@@ -125,13 +127,22 @@ type Submitted struct{ VendorID string }
 
 var Statuses = enum.Names[jobs.Status]{jobs.Queued: "queued", jobs.Running: "in_progress", jobs.Completed: "completed", jobs.Failed: "failed", jobs.Expired: "expired"}
 
-type Output struct{ URL string }
+type Output struct {
+	URL      string
+	VendorID string
+}
 
 type VideoGenerator interface {
 	ResolveVideo(req VideoRequest) (VideoRequest, error)
 	SubmitVideo(ctx context.Context, req *VideoRequest, s Submission) (Submitted, error)
 	PollVideo(ctx context.Context, vendorID string) (jobs.Poll, error)
 	OpenVideo(ctx context.Context, out Output) (io.ReadCloser, int64, error)
+}
+
+// why: a vendor that keeps its own copy of a clip can destroy it only once it stops working on it, which can be after
+// the job ended here, so ErrVideoRunning asks to be called again later.
+type VideoDiscarder interface {
+	DiscardVideo(ctx context.Context, vendorID string) error
 }
 
 type VendorHosted struct {

@@ -96,9 +96,10 @@ const (
 	KindFetch
 	KindResearch
 	KindTranscription
+	KindSpeech
 )
 
-var kindNames = enum.Names[Kind]{KindChat: "chat", KindImage: "image", KindVideo: "video", KindSearch: "search", KindFetch: "fetch", KindResearch: "research", KindTranscription: "transcription"}
+var kindNames = enum.Names[Kind]{KindChat: "chat", KindImage: "image", KindVideo: "video", KindSearch: "search", KindFetch: "fetch", KindResearch: "research", KindTranscription: "transcription", KindSpeech: "speech"}
 
 type kindTerms struct {
 	attestable bool

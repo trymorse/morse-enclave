@@ -97,7 +97,7 @@ func parseRoute(f flatEndpoint, defaultMarkup money.Markup) (Route, error) {
 		rt, err = one[imageRoute](object, defaultMarkup)
 	case catalog.KindVideo:
 		rt, err = one[videoRoute](object, defaultMarkup)
-	case catalog.KindSearch, catalog.KindFetch, catalog.KindResearch, catalog.KindTranscription:
+	case catalog.KindSearch, catalog.KindFetch, catalog.KindResearch, catalog.KindTranscription, catalog.KindSpeech:
 		rt, err = one[callRoute](object, defaultMarkup)
 	default:
 		rt, err = one[chatRoute](object, defaultMarkup)

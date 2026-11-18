@@ -132,8 +132,28 @@ type record struct {
 	Output    struct {
 		Assets []asset `json:"assets"`
 	} `json:"output"`
-	Cost    string `json:"cost"`
-	Settled bool   `json:"settled"`
+	Cost         string `json:"cost"`
+	Settled      bool   `json:"settled"`
+	ContentState string `json:"contentState"`
+	CompletedAt  string `json:"completedAt"`
+	Retention    struct {
+		OutputsExpireAt string `json:"outputsExpireAt"`
+	} `json:"retention"`
+}
+
+// why: once retention has run, or its window has passed, spicyapi.ai holds no content for purge to destroy
+// (https://docs.spicyapi.ai/docs/retention).
+func (r record) cleared(now time.Time) bool {
+	if r.ContentState == expired || r.ContentState == "purged" {
+		return true
+	}
+	if at, err := time.Parse(time.RFC3339, r.Retention.OutputsExpireAt); err == nil {
+		return now.After(at)
+	}
+	if at, err := time.Parse(time.RFC3339, r.CompletedAt); err == nil {
+		return now.After(at.Add(media.VendorKeep))
+	}
+	return false
 }
 
 // why: spicyapi.ai asks that every state but queued and running count as final, and a pending asset is still being
@@ -179,11 +199,15 @@ type task struct {
 
 // why: an accepted task is billed and cannot be cancelled, so every attempt carries one Idempotency-Key and a retry
 // gets back the task the first made (https://docs.spicyapi.ai/docs/idempotency).
-func (c client) create(ctx context.Context, t task, idempotencyKey string) (record, error) {
+func (c client) create(ctx context.Context, t task, idempotencyKey string, wait int, keep time.Duration) (record, error) {
 	h := http.Header{}
 	h.Set("Idempotency-Key", idempotencyKey)
-	h.Set("X-Spicy-Retention", strconv.Itoa(int(retention/time.Second)))
-	req := upstream.Request{Method: http.MethodPost, Path: createPath + "?wait=" + strconv.Itoa(waitSeconds), Header: h, Body: jsonx.Encode(t)}
+	h.Set("X-Spicy-Retention", strconv.Itoa(int(keep/time.Second)))
+	path := createPath
+	if wait > 0 {
+		path += "?wait=" + strconv.Itoa(wait)
+	}
+	req := upstream.Request{Method: http.MethodPost, Path: path, Header: h, Body: jsonx.Encode(t)}
 	var rec record
 	var err error
 	for range attempts {
@@ -246,10 +270,19 @@ func (c client) settle(ctx context.Context, rec record) record {
 
 // why: purge destroys a final task's prompt, result and files at once, is idempotent, and never refunds or cancels
 // (https://docs.spicyapi.ai/docs/retention#destroying-content-on-demand-post-jobspurge).
-func (c client) purge(ctx context.Context, id string) {
+func (c client) purge(ctx context.Context, id string) error {
 	ctx, stop := context.WithTimeout(context.WithoutCancel(ctx), purgeWithin)
 	defer stop()
-	c.api.Call(ctx, upstream.Request{Method: http.MethodPost, Path: purgePath, Body: jsonx.Encode(map[string]string{"taskId": id})}, media.MaxReplyBody)
+	reply, err := c.api.Call(ctx, upstream.Request{Method: http.MethodPost, Path: purgePath, Body: jsonx.Encode(map[string]string{"taskId": id})}, media.MaxReplyBody)
+	switch {
+	case err != nil:
+		return err
+	case reply.Status == http.StatusForbidden:
+		return media.ErrPurgeRefused
+	case upstream.Refused{Status: reply.Status}.Transient():
+		return refusal(reply)
+	}
+	return nil
 }
 
 func (c client) storageAt(link string) upstream.Endpoint {

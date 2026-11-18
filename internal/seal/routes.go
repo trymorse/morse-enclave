@@ -27,6 +27,7 @@ var Routes = []Route{
 	{Pattern: "GET /v1/research/{id}/events", Sealed: true},
 	{Pattern: "GET /v1/lookup/{service}/{path...}", Sealed: true},
 	{Pattern: "POST /v1/audio/transcriptions", Sealed: true},
+	{Pattern: "POST /v1/audio/speech", Sealed: true},
 	{Pattern: "POST /v1/plugins/call", Sealed: true},
 	{Pattern: "POST /v1/plugins/token", Sealed: true},
 	{Pattern: "POST /v1/plugins/revoke", Sealed: true},

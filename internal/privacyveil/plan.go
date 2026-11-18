@@ -12,6 +12,10 @@ const (
 	// windowOverlap is how far the windows of a segment longer than a piece overlap, so no detail is cut in two.
 	windowOverlap = 2 << 10
 	joint         = "\n\n"
+	// why: Tinfoil's filter runs four inference processes and one call runs on one, so four calls of a quarter of
+	// the text end about when one such call would; each call also costs ~0.4 s whatever its size.
+	Windows   = 4
+	minWindow = 8 << 10
 )
 
 // A Piece is text the filter reads in one call: whole segments, or windows of a long one, joined by blank lines.
@@ -28,6 +32,34 @@ type placed struct {
 // Plan cuts the segments that need a scan into pieces of at most MaxPiece bytes, in order. A segment longer than a
 // piece is cut into windows that overlap, at a space where it can.
 func Plan(segments []Segment, needs func(i int) bool) []Piece {
+	return plan(segments, needs, MaxPiece)
+}
+
+func Spread(segments []Segment, needs func(i int) bool, whole []Piece) []Piece {
+	total := Bytes(whole)
+	if total < 2*minWindow {
+		return whole
+	}
+	lo := min(MaxPiece, max(minWindow, (total+Windows-1)/Windows+windowOverlap))
+	if pieces := plan(segments, needs, lo); len(pieces) <= Windows || lo == MaxPiece {
+		return pieces
+	}
+	hi, best := MaxPiece, whole
+	if len(best) > Windows {
+		return best
+	}
+	for hi-lo > 1<<9 {
+		mid := lo + (hi-lo)/2
+		if pieces := plan(segments, needs, mid); len(pieces) <= Windows {
+			hi, best = mid, pieces
+		} else {
+			lo = mid
+		}
+	}
+	return best
+}
+
+func plan(segments []Segment, needs func(i int) bool, size int) []Piece {
 	var pieces []Piece
 	var cur Piece
 	var text strings.Builder
@@ -42,8 +74,8 @@ func Plan(segments []Segment, needs func(i int) bool) []Piece {
 		if seg.Text == "" || !needs(i) {
 			continue
 		}
-		for _, w := range windows(seg.Text) {
-			if text.Len() > 0 && text.Len()+len(joint)+(w[1]-w[0]) > MaxPiece {
+		for _, w := range windows(seg.Text, size) {
+			if text.Len() > 0 && text.Len()+len(joint)+(w[1]-w[0]) > size {
 				flush()
 			}
 			if text.Len() > 0 {
@@ -57,18 +89,16 @@ func Plan(segments []Segment, needs func(i int) bool) []Piece {
 	return pieces
 }
 
-// windows cuts text into runs of at most MaxPiece bytes that overlap by windowOverlap, each ending at a space in
-// its second half where there is one, and every one on a rune boundary.
-func windows(text string) [][2]int {
+func windows(text string, size int) [][2]int {
 	var runs [][2]int
 	for start := 0; ; {
-		end := start + MaxPiece
+		end := start + size
 		if end >= len(text) {
 			return append(runs, [2]int{start, len(text)})
 		}
 		end = runeStart(text, end)
-		if space := strings.LastIndexAny(text[start+MaxPiece/2:end], " \n\t"); space >= 0 {
-			end = start + MaxPiece/2 + space + 1
+		if space := strings.LastIndexAny(text[start+size/2:end], " \n\t"); space >= 0 {
+			end = start + size/2 + space + 1
 		}
 		runs = append(runs, [2]int{start, end})
 		start = max(runeStart(text, end-windowOverlap), start+1)

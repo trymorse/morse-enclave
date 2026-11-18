@@ -5,6 +5,7 @@ import (
 	"maps"
 	"slices"
 	"strconv"
+	"strings"
 
 	"morse/backend/internal/chat"
 	"morse/backend/internal/privacyveil"
@@ -16,13 +17,16 @@ var replyFields = []string{"content", "reasoning_content", "reasoning", "refusal
 // replyVeil restores one attempt's reply: each text field of each choice through its own restorer, and each tool
 // call's arguments through one that releases only what the chat's ask grants.
 type replyVeil struct {
-	veil     *privacyveil.Veil
-	ask      privacyveil.Ask
-	unveiled []string
-	prose    map[string]*privacyveil.Restorer
-	calls    map[string]*heldCall
-	order    []string
-	envelope map[string]json.RawMessage
+	veil      *privacyveil.Veil
+	ask       privacyveil.Ask
+	unveiled  []string
+	prose     map[string]*privacyveil.Restorer
+	calls     map[string]*heldCall
+	order     []string
+	envelope  map[string]json.RawMessage
+	content   map[int]*strings.Builder
+	kept      int
+	keepLimit int
 }
 
 type heldCall struct {
@@ -35,7 +39,38 @@ func (v *openedVeil) reply() *replyVeil {
 	if v == nil || v.veil == nil {
 		return nil
 	}
-	return &replyVeil{veil: v.veil, ask: v.ask, unveiled: v.unveiled, prose: map[string]*privacyveil.Restorer{}, calls: map[string]*heldCall{}}
+	rv := &replyVeil{veil: v.veil, ask: v.ask, unveiled: v.unveiled, prose: map[string]*privacyveil.Restorer{}, calls: map[string]*heldCall{}}
+	if v.keepsReply {
+		rv.content, rv.keepLimit = map[int]*strings.Builder{}, v.keepLimit
+	}
+	return rv
+}
+
+func (rv *replyVeil) keep(choice int, text string) {
+	if rv.content == nil || text == "" {
+		return
+	}
+	if rv.kept += len(text); rv.kept > rv.keepLimit {
+		rv.content = nil
+		return
+	}
+	b, ok := rv.content[choice]
+	if !ok {
+		b = &strings.Builder{}
+		rv.content[choice] = b
+	}
+	b.WriteString(text)
+}
+
+func (rv *replyVeil) said() ([]string, bool) {
+	if rv.content == nil {
+		return nil, false
+	}
+	var texts []string
+	for _, choice := range slices.Sorted(maps.Keys(rv.content)) {
+		texts = append(texts, rv.content[choice].String())
+	}
+	return texts, len(texts) > 0
 }
 
 // chunk restores one streamed chunk. A chunk it cannot read goes out as it came: it carries no text a person reads.
@@ -109,6 +144,9 @@ func (rv *replyVeil) fields(choice int, fields map[string]json.RawMessage, flush
 		restored := r.Next(text)
 		if flush {
 			restored += r.Flush()
+		}
+		if name == "content" {
+			rv.keep(choice, restored)
 		}
 		if present || restored != "" {
 			fields[name] = marshalText(restored)
@@ -217,6 +255,9 @@ func (rv *replyVeil) closing() []chat.Chunk {
 			if field == "audio" {
 				byChoice[choice]["audio"], _ = json.Marshal(map[string]json.RawMessage{"transcript": marshalText(text)})
 				continue
+			}
+			if field == "content" {
+				rv.keep(choice, text)
 			}
 			byChoice[choice][field] = marshalText(text)
 		}

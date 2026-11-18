@@ -144,7 +144,7 @@ func (p *Images) run(ctx context.Context, req *media.ImageRequest) (media.Images
 	if err != nil {
 		return media.Images{}, err
 	}
-	rec, err := p.create(ctx, p.task(req, refs), uuid.Format(uuid.New()))
+	rec, err := p.create(ctx, p.task(req, refs), uuid.Format(uuid.New()), waitSeconds, retention)
 	if err != nil {
 		return media.Images{}, err
 	}

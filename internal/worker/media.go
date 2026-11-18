@@ -1,6 +1,7 @@
 package worker
 
 import (
+	"cmp"
 	"context"
 	"io"
 	"net/http"
@@ -89,15 +90,20 @@ func (o *openedImages) run(_ context.Context, w *InProcess, h Handle, g Grant, r
 }
 
 func writeJSONBody(w http.ResponseWriter, write func(io.Writer) error) error {
-	w.Header().Set("Content-Type", "application/json")
+	return writeBody(w, "application/json", write)
+}
+
+func writeBody(w http.ResponseWriter, contentType string, write func(io.Writer) error) error {
+	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Cache-Control", "no-store")
 	return write(w)
 }
 
 type openedCall struct {
 	cuts
-	endpoint catalog.EndpointID
-	call     func(ctx context.Context) (func(io.Writer) error, error)
+	endpoint    catalog.EndpointID
+	call        func(ctx context.Context) (func(io.Writer) error, error)
+	contentType string
 }
 
 func (w *InProcess) openSearch(o Opening) (Admission, error) {
@@ -151,7 +157,7 @@ func (o *openedCall) run(_ context.Context, w *InProcess, h Handle, g Grant, rep
 	returned := time.Now()
 	var writeErr error
 	if err == nil {
-		writeErr = writeJSONBody(rw, write)
+		writeErr = writeBody(rw, cmp.Or(o.contentType, "application/json"), write)
 	}
 	end := endingOf(o.cuts.client, writeErr, err)
 	m := Measured{Measurement: measure.Measurement{Outcome: end.outcome()}, Cut: end.cut(), Served: err == nil, Refusal: end.refusal(err), Endpoint: o.endpoint}

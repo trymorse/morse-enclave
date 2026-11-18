@@ -13,10 +13,15 @@ import (
 type servedAt map[catalog.Kind][]catalog.Tier
 
 type capability struct {
-	kinds    servedAt
-	zdrAt    []catalog.Tier
-	zdrWhy   string
-	needsKey bool
+	kinds          servedAt
+	zdrAt          []catalog.Tier
+	zdrWhy         string
+	zdrLink        string
+	zdrLinkChecked string
+	zdrAgreed      string
+	zdrHeld        Held
+	makes          map[string]string
+	needsKey       bool
 	// lacks lists the efforts on chat.EffortLadder the provider's API has no level for, so no route may list them.
 	lacks []string
 	hides bool
@@ -48,17 +53,18 @@ var (
 )
 
 var capabilities = map[Provider]capability{
-	ProviderOpenAI: {kinds: servedAt{catalog.KindChat: anonAndPrivate, catalog.KindTranscription: anonAndPrivate}},
+	ProviderOpenAI: {kinds: servedAt{catalog.KindChat: anonAndPrivate, catalog.KindTranscription: anonAndPrivate}, makes: map[string]string{"api.openai.com": "OpenAI"}},
 	// Meta's muse routes share this provider, and their dry-account reply is undocumented, so a dry account is no
 	// account refusal.
-	ProviderOpenAIResponses: {kinds: servedAt{catalog.KindChat: anonOnly}, needsKey: true, hides: true, reasonsUnasked: true},
+	ProviderOpenAIResponses: {kinds: servedAt{catalog.KindChat: anonOnly}, makes: map[string]string{"api.openai.com": "OpenAI", "api.meta.ai": "Meta"}, needsKey: true, hides: true, reasonsUnasked: true},
 	// An empty Anthropic prepaid balance is a 400 by report only, and a spend limit we set is a 400 that stands as a bad
 	// request, so a dry account is no account refusal.
-	ProviderAnthropic: {kinds: servedAt{catalog.KindChat: anonOnly}, needsKey: true, lacks: []string{chat.NoEffort}, hides: true, slowsTogether: true, reasonsUnasked: true},
+	ProviderAnthropic: {kinds: servedAt{catalog.KindChat: anonOnly}, makes: map[string]string{"api.anthropic.com": "Anthropic"}, needsKey: true, lacks: []string{chat.NoEffort}, hides: true, slowsTogether: true, reasonsUnasked: true},
 	// Gemini's docs name no status for a dry billing account, and its 403 PERMISSION_DENIED maps to upstream_refused,
 	// so a dry account is no account refusal.
 	ProviderGemini: {
 		kinds:                servedAt{catalog.KindChat: anonOnly, catalog.KindImage: anonOnly},
+		makes:                map[string]string{"generativelanguage.googleapis.com": "Google"},
 		needsKey:             true,
 		lacks:                []string{chat.NoEffort, "max"},
 		hides:                true,
@@ -71,6 +77,10 @@ var capabilities = map[Provider]capability{
 		kinds:          servedAt{catalog.KindChat: anonAndPrivate, catalog.KindImage: privateOnly, catalog.KindVideo: privateOnly},
 		zdrAt:          privateOnly,
 		zdrWhy:         "so every reply must confirm zero data retention",
+		zdrLink:        "https://docs.x.ai/developers/faq/security#what-is-zero-data-retention-zdr",
+		zdrLinkChecked: "2026-11-17",
+		zdrHeld:        HeldReplyCheck,
+		makes:          map[string]string{"api.x.ai": "xAI"},
 		needsKey:       true,
 		hides:          true,
 		uncapped:       true,
@@ -84,6 +94,9 @@ var capabilities = map[Provider]capability{
 		kinds:             servedAt{catalog.KindChat: privateOnly, catalog.KindImage: anonOnly},
 		zdrAt:             privateOnly,
 		zdrWhy:            "because Venice keeps no prompt or reply only for the models it serves in its Private mode",
+		zdrLink:           "https://docs.venice.ai/overview/privacy",
+		zdrLinkChecked:    "2026-11-17",
+		zdrHeld:           HeldPublishedTerms,
 		needsKey:          true,
 		refusesDryAccount: true,
 	},
@@ -95,6 +108,9 @@ var capabilities = map[Provider]capability{
 		kinds:             servedAt{catalog.KindChat: privateOnly},
 		zdrAt:             privateOnly,
 		zdrWhy:            "because Isoquant keeps nothing only for a request that carries the Isoquant-ZDR header, and has no account setting for it",
+		zdrLink:           "https://isoquant.ai/privacy",
+		zdrLinkChecked:    "2026-11-17",
+		zdrHeld:           HeldRequestHeader,
 		needsKey:          true,
 		refusesDryAccount: true,
 		openAIHost:        true,
@@ -107,6 +123,9 @@ var capabilities = map[Provider]capability{
 		kinds:             servedAt{catalog.KindChat: privateOnly},
 		zdrAt:             privateOnly,
 		zdrWhy:            "because Wafer keeps nothing of a request that carries Wafer-ZDR: required, which this provider sends on every request whatever the account's default",
+		zdrLink:           "https://docs.wafer.ai/serverless/zero-data-retention",
+		zdrLinkChecked:    "2026-11-17",
+		zdrHeld:           HeldRequestHeader,
 		needsKey:          true,
 		ignoresLimit:      true,
 		refusesDryAccount: true,
@@ -117,9 +136,12 @@ var capabilities = map[Provider]capability{
 	// Novita documents 402 for an insufficient balance; its chat path takes apierr.SanitizedUpstreamError's default
 	// mapping of a 401 or 402 to upstream_unavailable.
 	ProviderNovita: {
-		kinds:                servedAt{catalog.KindChat: privateOnly},
+		kinds:                servedAt{catalog.KindChat: anonAndPrivate},
 		zdrAt:                privateOnly,
 		zdrWhy:               "because Novita's Terms of Service, section 10.2 (https://novita.ai/legal/terms-of-service), keep nothing beyond generating and delivering the output and train on nothing, with carve-outs for law, support and automated safety screening, which is zero data retention per Novita's terms for every Novita model; no per-request header",
+		zdrLink:              "https://novita.ai/legal/terms-of-service",
+		zdrLinkChecked:       "2026-11-17",
+		zdrHeld:              HeldPublishedTerms,
 		needsKey:             true,
 		answersFromReasoning: true,
 		refusesDryAccount:    true,
@@ -134,6 +156,9 @@ var capabilities = map[Provider]capability{
 		kinds:             servedAt{catalog.KindChat: privateOnly},
 		zdrAt:             privateOnly,
 		zdrWhy:            "because Morph documents no zero retention header or setting, so a Morph route stands on Morph's zero data retention terms for the account that owns the route's key",
+		zdrLink:           "https://www.morphllm.com/zdr",
+		zdrLinkChecked:    "2026-11-17",
+		zdrHeld:           HeldAccountAgreement,
 		needsKey:          true,
 		refusesDryAccount: true,
 		openAIHost:        true,
@@ -143,9 +168,12 @@ var capabilities = map[Provider]capability{
 	// apierr.SanitizedUpstreamError's default mapping of a 401 or 402 to upstream_unavailable. No dry account has
 	// answered a request yet.
 	ProviderDeepInfra: {
-		kinds:                servedAt{catalog.KindChat: privateOnly},
+		kinds:                servedAt{catalog.KindChat: privateOnly, catalog.KindSpeech: privateOnly},
 		zdrAt:                privateOnly,
 		zdrWhy:               "because DeepInfra's published data policy (https://docs.deepinfra.com/account/data-privacy) keeps inputs in memory only, logs no content and trains on nothing, which is zero data retention per DeepInfra's terms, since DeepInfra offers no per-request header",
+		zdrLink:              "https://docs.deepinfra.com/account/data-privacy",
+		zdrLinkChecked:       "2026-11-17",
+		zdrHeld:              HeldPublishedTerms,
 		needsKey:             true,
 		answersFromReasoning: true,
 		refusesDryAccount:    true,
@@ -155,13 +183,15 @@ var capabilities = map[Provider]capability{
 	ProviderFal:     {kinds: servedAt{catalog.KindImage: anonOnly, catalog.KindVideo: anonOnly}, needsKey: true},
 	// why: spicyapi.ai keeps prompts and outputs for a window and names no model host (spicyapi.ai/legal/privacy), and
 	// answers a dry balance or spend cap 402 (40201, 40202), which maps to upstream_unavailable (docs.spicyapi.ai/docs/errors).
-	ProviderSpicyAPI: {kinds: servedAt{catalog.KindImage: anonOnly}, needsKey: true, refusesDryAccount: true},
+	ProviderSpicyAPI: {kinds: servedAt{catalog.KindImage: anonOnly, catalog.KindVideo: anonOnly}, needsKey: true, refusesDryAccount: true},
 	// A private Parallel route stands on our zero data retention agreement with Parallel, which covers the account
 	// that owns the route's key: it sends the same request as an anon route, and no reply is checked for it, unlike xAI's.
 	ProviderParallel: {
 		kinds:    servedAt{catalog.KindSearch: anonAndPrivate, catalog.KindFetch: anonAndPrivate, catalog.KindResearch: anonAndPrivate},
 		zdrAt:    privateOnly,
 		zdrWhy:   "because its self-serve terms keep queries and pages and allow training on them",
+		zdrHeld:  HeldAccountAgreement,
+		makes:    map[string]string{"api.parallel.ai": "Parallel"},
 		needsKey: true,
 	},
 }

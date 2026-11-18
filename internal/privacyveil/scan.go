@@ -3,6 +3,7 @@ package privacyveil
 import (
 	"context"
 	"errors"
+	"sync"
 )
 
 // A Filter finds personal details in text. Redact's spans are at byte offsets into the text it was given.
@@ -48,34 +49,44 @@ type Scanned struct {
 // Scan finds the details of segments: cached[i] for a segment the cache held, the filter's for the segments in
 // pieces, and the validators' in every one. It stops at the first piece that fails, and the scan then fails whole:
 // no piece is skipped.
-func Scan(ctx context.Context, f Filter, segments []Segment, cached map[int][]Span, pieces []Piece) (Scanned, error) {
+func Scan(ctx context.Context, f Filter, lanes *Lanes, windows int, segments []Segment, cached map[int][]Span, pieces []Piece) (Scanned, error) {
 	s := Scanned{Spans: make([][]Span, len(segments)), Fresh: map[int][]Span{}}
 	for _, p := range pieces {
 		for _, part := range p.parts {
 			s.Fresh[part.segment] = s.Fresh[part.segment][:0:0]
 		}
 	}
-	for _, p := range pieces {
-		r, err := f.Redact(ctx, p.Text)
-		if err != nil {
-			return s, err
+	found := make([][]Span, len(pieces))
+	var mu sync.Mutex
+	var first error
+	gctx, stop := context.WithCancel(ctx)
+	defer stop()
+	fail := func(err error) {
+		mu.Lock()
+		if first == nil {
+			first = err
+			stop()
 		}
-		s.Usage.Calls += r.Requests
-		s.Usage.Tokens += r.InputTokens
-		found := make([]Span, 0, len(r.Spans))
-		for _, ls := range r.Spans {
-			t, known := TypeOfLabel(ls.Label)
-			if !known {
-				s.Usage.UnknownLabels++
+		mu.Unlock()
+	}
+	var wg sync.WaitGroup
+	slots := make(chan struct{}, max(1, windows))
+	for i, p := range pieces {
+		slots <- struct{}{}
+		wg.Go(func() {
+			defer func() { <-slots }()
+			if err := scanPiece(gctx, f, lanes, p, &s.Usage, &mu, &found[i]); err != nil {
+				fail(err)
 			}
-			span := Span{Start: ls.Start, End: ls.End, Type: t}
-			if !validSpan(p.Text, span) {
-				return s, ErrSpan
-			}
-			found = append(found, span)
-		}
-		for i, spans := range p.segments(found) {
-			s.Fresh[i] = append(s.Fresh[i], spans...)
+		})
+	}
+	wg.Wait()
+	if first != nil {
+		return s, first
+	}
+	for i, p := range pieces {
+		for seg, spans := range p.segments(found[i]) {
+			s.Fresh[seg] = append(s.Fresh[seg], spans...)
 		}
 	}
 	for i, seg := range segments {
@@ -86,4 +97,37 @@ func Scan(ctx context.Context, f Filter, segments []Segment, cached map[int][]Sp
 		s.Spans[i] = merge(filtered, Validated(seg.Text))
 	}
 	return s, nil
+}
+
+func scanPiece(ctx context.Context, f Filter, lanes *Lanes, p Piece, usage *Usage, mu *sync.Mutex, found *[]Span) error {
+	if err := lanes.take(ctx); err != nil {
+		return err
+	}
+	r, err := f.Redact(ctx, p.Text)
+	lanes.give()
+	if err != nil {
+		return err
+	}
+	mu.Lock()
+	usage.Calls += r.Requests
+	usage.Tokens += r.InputTokens
+	mu.Unlock()
+	spans := make([]Span, 0, len(r.Spans))
+	unknown := 0
+	for _, ls := range r.Spans {
+		t, known := TypeOfLabel(ls.Label)
+		if !known {
+			unknown++
+		}
+		span := Span{Start: ls.Start, End: ls.End, Type: t}
+		if !validSpan(p.Text, span) {
+			return ErrSpan
+		}
+		spans = append(spans, span)
+	}
+	mu.Lock()
+	usage.UnknownLabels += unknown
+	mu.Unlock()
+	*found = spans
+	return nil
 }

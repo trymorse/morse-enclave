@@ -291,6 +291,9 @@
     {"id": "qwen/qwen3.8-2.4t-a95b", "lab": "Alibaba", "label": "Qwen3.8 Max", "open_weights": true, "reasoning_efforts": ["low","medium","xhigh"], "prices": {"private": {"prompt_micros_per_mtok":2000000,"cached_prompt_micros_per_mtok":250000,"completion_micros_per_mtok":6000000}}, "uncensored": false, "endpoints": [
       {"id": "novita", "api_key_env": "NOVITA_API_KEY", "base_url": "https://api.novita.ai/openai", "context_tokens": 1000000, "default_max_tokens": 128000, "default_reasoning_effort": "medium", "max_output_tokens": 131072, "openrouter_id": "qwen/qwen3.8-2.4t-a95b", "provider": "novita", "provider_name": "novita", "quantization": "unknown", "retention": "zdr", "tier": "private", "upstream_model": "qwen/qwen3.8-2.4t-a95b"}
     ]},
+    {"id": "qwen/qwen4-max", "app_only": true, "input_modalities": ["text","image"], "lab": "Alibaba", "label": "Qwen4 Max", "reasoning_efforts": ["none","low","high","xhigh"], "prices": {"anon": {"prompt_micros_per_mtok":1500000,"cached_prompt_micros_per_mtok":75000,"cache_write_prompt_micros_per_mtok":1875000,"completion_micros_per_mtok":4500000}}, "uncensored": false, "endpoints": [
+      {"id": "novita", "api_key_env": "NOVITA_API_KEY", "base_url": "https://api.novita.ai/openai", "context_tokens": 1000000, "default_max_tokens": 128000, "default_reasoning_effort": "high", "max_output_tokens": 131000, "openrouter_id": "qwen/qwen4-max", "owned_by": "Alibaba", "provider": "novita", "provider_name": "novita", "quantization": "unknown", "tier": "anon", "upstream_model": "qwen/qwen4-max"}
+    ]},
     {"id": "moonshotai/kimi-k2.7-code", "input_modalities": ["text","image"], "lab": "Moonshot AI", "label": "Kimi K2.7 Code", "open_weights": true, "reasoning_efforts": [], "prices": {"private": {"prompt_micros_per_mtok":950000,"cached_prompt_micros_per_mtok":190000,"completion_micros_per_mtok":4000000}}, "uncensored": false, "endpoints": [
       {"id": "novita", "api_key_env": "NOVITA_API_KEY", "base_url": "https://api.novita.ai/openai", "context_tokens": 262144, "default_max_tokens": 128000, "max_output_tokens": 262144, "openrouter_id": "moonshotai/kimi-k2.7-code", "provider": "novita", "provider_name": "novita", "quantization": "int4", "retention": "zdr", "tier": "private", "upstream_model": "moonshotai/kimi-k2.7-code"}
     ]},
@@ -418,7 +421,7 @@
       {"id": "runware", "api_key_env": "RUNWARE_API_KEY", "base_url": "https://api.runware.ai", "included": {"from":"pro"}, "owned_by": "Ikena", "price": {"hold_micros_per_image":5000}, "provider": "runware", "provider_name": "runware", "tier": "anon", "upstream_model": "civitai:140272@1617798"}
     ]},
     {"id": "bytedance/seedream-5-pro-uncensored", "app_only": true, "kind": "image", "lab": "ByteDance", "label": "Seedream 5.0 Pro (Uncensored)", "markup": 1, "uncensored": true, "endpoints": [
-      {"id": "venice", "api_key_env": "VENICE_STUDIO_API_KEY", "base_url": "https://api.venice.ai/api", "owned_by": "ByteDance", "price": {"hold_micros_per_image":110000,"hold_micros_per_reference":3450}, "provider": "venice", "provider_name": "venice", "tier": "anon", "upstream_model": "seedream-v5-pro"}
+      {"id": "spicyapi", "api_key_env": "SPICYAPI_API_KEY", "base_url": "https://api.spicyapi.ai", "owned_by": "ByteDance", "price": {"hold_micros_per_image":72000,"hold_micros_per_reference":3000}, "provider": "spicyapi", "provider_name": "spicyapi", "tier": "anon", "upstream_model": "bytedance/seedream-5.0-pro/text-to-image"}
     ]},
     {"id": "bytedance/seedream-5-lite-uncensored", "app_only": true, "kind": "image", "lab": "ByteDance", "label": "Seedream 5.0 Lite (Uncensored)", "uncensored": true, "endpoints": [
       {"id": "runware", "api_key_env": "RUNWARE_API_KEY", "base_url": "https://api.runware.ai", "owned_by": "ByteDance", "price": {"hold_micros_per_image":35000}, "provider": "runware", "provider_name": "runware", "tier": "anon", "upstream_model": "bytedance:seedream@5.0-lite"}
@@ -427,16 +430,16 @@
       {"id": "runware", "api_key_env": "RUNWARE_API_KEY", "base_url": "https://api.runware.ai", "owned_by": "ByteDance", "price": {"hold_micros_per_image":40000}, "provider": "runware", "provider_name": "runware", "tier": "anon", "upstream_model": "bytedance:seedream@4.5"}
     ]},
     {"id": "alibaba/qwen-image-3-pro-uncensored", "app_only": true, "kind": "image", "lab": "Alibaba", "label": "Qwen-Image-3.0-Pro (Uncensored)", "markup": 1, "uncensored": true, "endpoints": [
-      {"id": "venice", "api_key_env": "VENICE_STUDIO_API_KEY", "base_url": "https://api.venice.ai/api", "owned_by": "Alibaba", "price": {"hold_micros_per_image":90000,"hold_micros_per_reference":3450}, "provider": "venice", "provider_name": "venice", "tier": "anon", "upstream_model": "qwen-image-3-pro"}
+      {"id": "spicyapi", "api_key_env": "SPICYAPI_API_KEY", "base_url": "https://api.spicyapi.ai", "owned_by": "Alibaba", "price": {"hold_micros_per_image":75000,"hold_micros_per_reference":3000}, "provider": "spicyapi", "provider_name": "spicyapi", "tier": "anon", "upstream_model": "alibaba/qwen-image-3.0-pro/text-to-image"}
     ]},
     {"id": "alibaba/qwen-image-3-uncensored", "app_only": true, "kind": "image", "lab": "Alibaba", "label": "Qwen-Image-3.0 (Uncensored)", "markup": 1, "open_weights": true, "uncensored": true, "endpoints": [
-      {"id": "venice", "api_key_env": "VENICE_STUDIO_API_KEY", "base_url": "https://api.venice.ai/api", "owned_by": "Alibaba", "price": {"hold_micros_per_image":40000,"hold_micros_per_reference":3450}, "provider": "venice", "provider_name": "venice", "tier": "anon", "upstream_model": "qwen-image-3"}
+      {"id": "spicyapi", "api_key_env": "SPICYAPI_API_KEY", "base_url": "https://api.spicyapi.ai", "owned_by": "Alibaba", "price": {"hold_micros_per_image":30000,"hold_micros_per_reference":3000}, "provider": "spicyapi", "provider_name": "spicyapi", "tier": "anon", "upstream_model": "alibaba/qwen-image-3.0/text-to-image"}
     ]},
     {"id": "alibaba/qwen-image-2.1-turbo-uncensored", "app_only": true, "kind": "image", "lab": "Alibaba", "label": "Qwen-Image-2.1-Turbo (Uncensored)", "markup": 1, "open_weights": true, "uncensored": true, "endpoints": [
-      {"id": "venice", "api_key_env": "VENICE_STUDIO_API_KEY", "base_url": "https://api.venice.ai/api", "owned_by": "Alibaba", "price": {"hold_micros_per_image":20000}, "provider": "venice", "provider_name": "venice", "tier": "anon", "upstream_model": "qwen-image-2-1-turbo"}
+      {"id": "spicyapi", "api_key_env": "SPICYAPI_API_KEY", "base_url": "https://api.spicyapi.ai", "owned_by": "Alibaba", "price": {"hold_micros_per_image":14400}, "provider": "spicyapi", "provider_name": "spicyapi", "tier": "anon", "upstream_model": "alibaba/qwen-image-2.1-turbo/text-to-image"}
     ]},
     {"id": "krea/krea-2-turbo-uncensored", "app_only": true, "kind": "image", "lab": "Krea", "label": "Krea 2 Turbo (Uncensored)", "markup": 1, "open_weights": true, "uncensored": true, "endpoints": [
-      {"id": "venice", "api_key_env": "VENICE_STUDIO_API_KEY", "base_url": "https://api.venice.ai/api", "owned_by": "Krea", "price": {"hold_micros_per_image":60000}, "provider": "venice", "provider_name": "venice", "tier": "anon", "upstream_model": "krea-2-turbo"}
+      {"id": "spicyapi", "api_key_env": "SPICYAPI_API_KEY", "base_url": "https://api.spicyapi.ai", "owned_by": "Krea", "price": {"hold_micros_per_image":36000}, "provider": "spicyapi", "provider_name": "spicyapi", "tier": "anon", "upstream_model": "krea/2-turbo-lora/text-to-image"}
     ]},
     {"id": "x-ai/grok-imagine-image-2.0", "app_only": true, "kind": "image", "lab": "xAI", "label": "Grok Imagine Image 2.0", "uncensored": false, "endpoints": [
       {"id": "xai", "api_key_env": "XAI_API_KEY", "base_url": "https://api.x.ai", "owned_by": "xAI", "price": {"hold_micros_per_image":80000,"hold_micros_per_reference":10000}, "provider": "xai", "provider_name": "xai", "retention": "zdr", "tier": "private", "upstream_model": "grok-imagine-image-2.0"}
@@ -449,6 +452,12 @@
     ]},
     {"id": "google/gemini-3.1-flash-lite-image", "app_only": true, "kind": "image", "lab": "Google", "label": "Nano Banana 2 Lite", "uncensored": false, "endpoints": [
       {"id": "gemini", "api_key_env": "GEMINI_API_KEY", "base_url": "https://generativelanguage.googleapis.com", "included": {"from":"pro"}, "owned_by": "Google", "price": {"hold_micros_per_image":40000,"hold_micros_per_reference":300}, "provider": "gemini", "provider_name": "gemini", "tier": "anon", "upstream_model": "gemini-3.1-flash-lite-image"}
+    ]},
+    {"id": "minimax/h3-uncensored", "app_only": true, "kind": "video", "lab": "MiniMax", "label": "MiniMax H3 (Uncensored)", "uncensored": true, "endpoints": [
+      {"id": "spicyapi", "api_key_env": "SPICYAPI_API_KEY", "base_url": "https://api.spicyapi.ai", "owned_by": "MiniMax", "price": {"hold_micros_per_second":37000}, "provider": "spicyapi", "provider_name": "spicyapi", "requires_plan": "pro", "tier": "anon", "upstream_model": "minimax/h3/text-to-video"}
+    ]},
+    {"id": "alibaba/wan-3.0-uncensored", "app_only": true, "kind": "video", "lab": "Alibaba", "label": "Wan 3.0 (Uncensored)", "uncensored": true, "endpoints": [
+      {"id": "spicyapi", "api_key_env": "SPICYAPI_API_KEY", "base_url": "https://api.spicyapi.ai", "owned_by": "Alibaba", "price": {"hold_micros_per_second":90000}, "provider": "spicyapi", "provider_name": "spicyapi", "requires_plan": "pro", "tier": "anon", "upstream_model": "alibaba/wan-3.0/text-to-video"}
     ]},
     {"id": "parallel/search", "app_only": true, "kind": "search", "lab": "Parallel", "label": "Parallel Search", "prices": {"anon": {"micros_per_call":1000}, "private": {"micros_per_call":1000}}, "uncensored": false, "endpoints": [
       {"id": "parallel", "api_key_env": "PARALLEL_API_KEY", "base_url": "https://api.parallel.ai", "included": {"from":"free","quota":"web_calls"}, "owned_by": "Parallel", "provider": "parallel", "provider_name": "parallel", "retention": "zdr", "tier": "anon", "upstream_model": "fast"},
@@ -463,6 +472,9 @@
     ]},
     {"id": "openai/whisper-large-v3", "app_only": true, "kind": "transcription", "lab": "OpenAI", "label": "Whisper Large v3", "open_weights": true, "prices": {"tee": {"micros_per_call":200}}, "uncensored": false, "endpoints": [
       {"id": "near-tee", "api_key_env": "NEAR_TRANSCRIPTION_API_KEY", "attester": "near", "base_url": "https://cloud-api.near.ai", "included": {"from":"free","quota":"transcriptions"}, "owned_by": "OpenAI", "provider_name": "near", "retention": "zdr", "tier": "tee", "upstream_model": "openai/whisper-large-v3"}
+    ]},
+    {"id": "hexgrad/kokoro-82m", "app_only": true, "kind": "speech", "lab": "hexgrad", "label": "Kokoro 82M", "open_weights": true, "prices": {"private": {"micros_per_call":500}}, "uncensored": false, "endpoints": [
+      {"id": "deepinfra", "api_key_env": "DEEPINFRA_API_KEY", "base_url": "https://api.deepinfra.com", "included": {"from":"free","quota":"speeches"}, "owned_by": "hexgrad", "provider": "deepinfra", "provider_name": "deepinfra", "retention": "zdr", "tier": "private", "upstream_model": "hexgrad/Kokoro-82M"}
     ]}
   ],
   "aliases": [
@@ -576,23 +588,26 @@
     {"name": "realvisxl-5", "model": "civitai/realvisxl-5", "endpoint": "runware"},
     {"name": "cyberillustrious", "model": "civitai/cyberillustrious", "endpoint": "runware"},
     {"name": "hassaku-xl", "model": "civitai/hassaku-xl", "endpoint": "runware"},
-    {"name": "seedream-5-pro-uncensored", "model": "bytedance/seedream-5-pro-uncensored", "endpoint": "venice"},
+    {"name": "seedream-5-pro-uncensored", "model": "bytedance/seedream-5-pro-uncensored", "endpoint": "spicyapi"},
     {"name": "seedream-5-lite-uncensored", "model": "bytedance/seedream-5-lite-uncensored", "endpoint": "runware"},
     {"name": "seedream-4.5-uncensored", "model": "bytedance/seedream-4.5-uncensored", "endpoint": "runware"},
-    {"name": "qwen-image-3-pro-uncensored", "model": "alibaba/qwen-image-3-pro-uncensored", "endpoint": "venice"},
-    {"name": "qwen-image-3-uncensored", "model": "alibaba/qwen-image-3-uncensored", "endpoint": "venice"},
-    {"name": "qwen-image-2.1-turbo-uncensored", "model": "alibaba/qwen-image-2.1-turbo-uncensored", "endpoint": "venice"},
-    {"name": "krea-2-turbo-uncensored", "model": "krea/krea-2-turbo-uncensored", "endpoint": "venice"},
+    {"name": "qwen-image-3-pro-uncensored", "model": "alibaba/qwen-image-3-pro-uncensored", "endpoint": "spicyapi"},
+    {"name": "qwen-image-3-uncensored", "model": "alibaba/qwen-image-3-uncensored", "endpoint": "spicyapi"},
+    {"name": "qwen-image-2.1-turbo-uncensored", "model": "alibaba/qwen-image-2.1-turbo-uncensored", "endpoint": "spicyapi"},
+    {"name": "krea-2-turbo-uncensored", "model": "krea/krea-2-turbo-uncensored", "endpoint": "spicyapi"},
     {"name": "grok-imagine-image-2.0", "model": "x-ai/grok-imagine-image-2.0", "endpoint": "xai"},
     {"name": "gemini-3-pro-image", "model": "google/gemini-3-pro-image", "endpoint": "gemini"},
     {"name": "gemini-3.1-flash-image", "model": "google/gemini-3.1-flash-image", "endpoint": "gemini"},
     {"name": "gemini-3.1-flash-lite-image", "model": "google/gemini-3.1-flash-lite-image", "endpoint": "gemini"},
+    {"name": "minimax-h3-uncensored", "model": "minimax/h3-uncensored", "endpoint": "spicyapi"},
+    {"name": "wan-3.0-uncensored", "model": "alibaba/wan-3.0-uncensored", "endpoint": "spicyapi"},
     {"name": "parallel-search", "model": "parallel/search", "endpoint": "parallel"},
     {"name": "parallel-search-zdr", "model": "parallel/search", "endpoint": "parallel-zdr"},
     {"name": "parallel-extract", "model": "parallel/extract", "endpoint": "parallel"},
     {"name": "parallel-extract-zdr", "model": "parallel/extract", "endpoint": "parallel-zdr"},
     {"name": "parallel-research", "model": "parallel/research", "endpoint": "parallel"},
     {"name": "whisper-large-v3-tee", "model": "openai/whisper-large-v3", "endpoint": "near-tee"},
+    {"name": "kokoro-82m", "model": "hexgrad/kokoro-82m", "endpoint": "deepinfra"},
     {"name": "kimi-k2.6", "model": "moonshotai/kimi-k2.6", "endpoint": "novita"},
     {"name": "deepseek-v4-flash-0731", "model": "deepseek/deepseek-v4-flash-0731", "endpoint": "novita"},
     {"name": "qwen3.8-27b", "model": "qwen/qwen3.8-27b", "endpoint": "deepinfra"},
@@ -601,6 +616,7 @@
     {"name": "qwen3.6-35b-a3b-tee", "model": "qwen/qwen3.6-35b-a3b", "endpoint": "phala-tee"},
     {"name": "Qwen/Qwen3.6-35B-A3B-FP8", "model": "qwen/qwen3.6-35b-a3b", "endpoint": "near"},
     {"name": "qwen3.8-max", "model": "qwen/qwen3.8-2.4t-a95b", "endpoint": "novita"},
+    {"name": "qwen4-max", "model": "qwen/qwen4-max", "endpoint": "novita"},
     {"name": "kimi-k2.7-code", "model": "moonshotai/kimi-k2.7-code", "endpoint": "novita"},
     {"name": "minimax-m2.5", "model": "minimax/minimax-m2.5", "endpoint": "novita"},
     {"name": "minimax-m2.7", "model": "minimax/minimax-m2.7", "endpoint": "novita"},

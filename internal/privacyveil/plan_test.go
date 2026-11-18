@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -68,13 +69,16 @@ func TestASpanThatCrossesAJointIsCutToEachSegment(t *testing.T) {
 }
 
 type fakeFilter struct {
+	mu    sync.Mutex
 	calls []string
 	find  map[string]string
 	err   error
 }
 
 func (f *fakeFilter) Redact(_ context.Context, text string) (Redaction, error) {
+	f.mu.Lock()
 	f.calls = append(f.calls, text)
+	f.mu.Unlock()
 	if f.err != nil {
 		return Redaction{}, f.err
 	}
@@ -97,7 +101,7 @@ func TestScanMapsTheFiltersSpansToTheirSegmentsAndAddsTheValidators(t *testing.T
 	segments := []Segment{{Text: "I am Jane Doe"}, {Text: "card 4111 1111 1111 1111"}, {Text: "cached Ann"}}
 	cached := map[int][]Span{2: {{Start: 7, End: 10, Type: Name}}}
 	pieces := Plan(segments, func(i int) bool { _, hit := cached[i]; return !hit })
-	s, err := Scan(context.Background(), f, segments, cached, pieces)
+	s, err := Scan(context.Background(), f, nil, Windows, segments, cached, pieces)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,13 +126,13 @@ func TestScanMapsTheFiltersSpansToTheirSegmentsAndAddsTheValidators(t *testing.T
 func TestScanFailsWholeWhenAnyPieceFailsOrASpanIsOutOfRange(t *testing.T) {
 	segments := []Segment{{Text: "Jane Doe"}}
 	pieces := Plan(segments, func(int) bool { return true })
-	if _, err := Scan(context.Background(), &fakeFilter{err: errors.New("down")}, segments, nil, pieces); err == nil {
+	if _, err := Scan(context.Background(), &fakeFilter{err: errors.New("down")}, nil, Windows, segments, nil, pieces); err == nil {
 		t.Error("a failed call did not fail the scan")
 	}
 	bad := filterFunc(func(text string) Redaction {
 		return Redaction{Spans: []LabeledSpan{{Start: 0, End: len(text) + 5, Label: "private_person"}}}
 	})
-	if _, err := Scan(context.Background(), bad, segments, nil, pieces); !errors.Is(err, ErrSpan) {
+	if _, err := Scan(context.Background(), bad, nil, Windows, segments, nil, pieces); !errors.Is(err, ErrSpan) {
 		t.Errorf("a span past the text: %v", err)
 	}
 }

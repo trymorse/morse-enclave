@@ -5,6 +5,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httptrace"
+	"strings"
 	"testing"
 	"time"
 
@@ -43,6 +45,32 @@ func TestACallClockTimesTheFirstCallsConnectionAndTheVendorsAnswerAndSeesTheNext
 	again := call()
 	if !again.Reused || again.Dial != 0 || again.TLS != 0 || again.Head < held {
 		t.Errorf("next call %+v, want the pooled connection reused with no dial or handshake, and the vendor's %v", again, held)
+	}
+}
+
+func TestAVendorAnswerSeenBeforeTheWriteIsReportedIsStillTimedAndTheSendEndsByIt(t *testing.T) {
+	for _, writeReported := range []bool{true, false} {
+		var answered time.Time
+		vendor := upstream.Endpoint{BaseURL: "http://vendor.invalid", HTTP: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			trace := httptrace.ContextClientTrace(r.Context())
+			trace.GotConn(httptrace.GotConnInfo{})
+			trace.GotFirstResponseByte()
+			answered = time.Now()
+			if writeReported {
+				trace.WroteRequest(httptrace.WroteRequestInfo{})
+			}
+			return &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("{}")), Request: r}, nil
+		})}}
+		var clock upstream.CallClock
+		began := time.Now()
+		resp, err := vendor.Open(upstream.WithCallClock(context.Background(), &clock), upstream.Request{Method: http.MethodPost, Body: []byte("{}")})
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if got := clock.Times(); got.Head <= 0 || got.Sent < got.Connect || got.Sent > answered.Sub(began) {
+			t.Errorf("write reported after the answer %v: %+v, want the answer timed and the send ended by the answer %v in", writeReported, got, answered.Sub(began))
+		}
 	}
 }
 

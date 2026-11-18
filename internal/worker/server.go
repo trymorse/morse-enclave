@@ -59,6 +59,7 @@ func NewServer(inner *InProcess, routesDigest string) *Server {
 	s.mux.HandleFunc("POST /late", s.late)
 	s.mux.HandleFunc("POST /cut", s.cut)
 	s.mux.HandleFunc("POST /poll", s.poll)
+	s.mux.HandleFunc("POST /discard", s.discard)
 	s.mux.HandleFunc("POST "+taskAdoptPath, s.taskAdopt)
 	s.mux.HandleFunc("POST "+taskOpenPath, s.taskOpen)
 	s.mux.HandleFunc("POST "+taskNextPath, s.taskNext)
@@ -306,12 +307,8 @@ func (s *Server) poll(w http.ResponseWriter, r *http.Request) {
 	if !decodeWire(w, r, &req) {
 		return
 	}
-	ctx := r.Context()
-	if !req.Deadline.IsZero() {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithDeadline(ctx, req.Deadline)
-		defer cancel()
-	}
+	ctx, cancel := req.context(r.Context())
+	defer cancel()
 	p, err := s.inner.Poll(ctx, req.Route, req.VendorID)
 	if err != nil {
 		refusal, _ := apierr.Refusal(err, apierr.ErrUpstream)
@@ -322,6 +319,26 @@ func (s *Server) poll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	apierr.WriteJSON(w, http.StatusOK, p)
+}
+
+func (s *Server) discard(w http.ResponseWriter, r *http.Request) {
+	var req pollRequest
+	if !decodeWire(w, r, &req) {
+		return
+	}
+	ctx, cancel := req.context(r.Context())
+	defer cancel()
+	switch err := s.inner.Discard(ctx, req.Route, req.VendorID); {
+	case errors.Is(err, media.ErrVideoRunning):
+		w.WriteHeader(http.StatusAccepted)
+	case errors.Is(err, media.ErrPurgeRefused):
+		w.Header().Set(headerVendorStatus, strconv.Itoa(http.StatusForbidden))
+		w.WriteHeader(http.StatusConflict)
+	case err != nil:
+		apierr.WriteError(w, apierr.ErrUpstream)
+	default:
+		w.WriteHeader(http.StatusNoContent)
+	}
 }
 
 func (s *Server) serveRoutes(w http.ResponseWriter, r *http.Request) {

@@ -494,6 +494,9 @@ func (o *openedChat) run(called context.Context, w *InProcess, h Handle, g Grant
 	if unsent && errors.Is(got.callErr, upstream.ErrEgressRefused) {
 		return o.egressRefused(w, rw, m)
 	}
+	if !unsent && e.Outcome == measure.Completed {
+		o.keepReply(w, a.veil)
+	}
 	m.Unserved = unsent && m.Cut == measure.NotCut && m.Health.Outcome.FailsOver() && m.Health.Outcome != health.Unattested && m.Health.Outcome != health.ContextOverflow
 	if unsent {
 		rw.Header().Del(HeaderPrivacyVeil)

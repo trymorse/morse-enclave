@@ -65,6 +65,11 @@ func (c *Cache) id(ns Namespace, partition []byte, text string) ([32]byte, bool)
 	return id, true
 }
 
+func (c *Cache) Keeps(ns Namespace, partition []byte) bool {
+	_, ok := c.id(ns, partition, "")
+	return ok
+}
+
 // Get is the spans cached for text in the partition, and false when none are, or they are older than the TTL.
 func (c *Cache) Get(ns Namespace, partition []byte, text string) ([]Span, bool) {
 	id, ok := c.id(ns, partition, text)

@@ -15,6 +15,7 @@ import (
 	"morse/backend/internal/media"
 	"morse/backend/internal/plugins"
 	"morse/backend/internal/research"
+	"morse/backend/internal/speech"
 	"morse/backend/internal/web"
 	"morse/backend/internal/worker/taskrun"
 )
@@ -27,6 +28,7 @@ type InProcess struct {
 	fetches        map[string]web.Fetcher
 	researchers    map[string]research.Researcher
 	transcribers   map[string]transcriber
+	speakers       map[string]speech.Speaker
 	endpoints      map[string]catalog.EndpointID
 	lookup         *lookup.Relay
 	plugins        *plugins.Relay
@@ -93,6 +95,7 @@ func NewInProcess(cfg Config) (*InProcess, error) {
 	w := &InProcess{
 		chats: indexChats(cfg.Models), images: map[string]media.ImageGenerator{}, videos: map[string]media.VideoGenerator{},
 		searches: map[string]web.Searcher{}, fetches: map[string]web.Fetcher{}, researchers: map[string]research.Researcher{}, transcribers: map[string]transcriber{},
+		speakers:  map[string]speech.Speaker{},
 		endpoints: map[string]catalog.EndpointID{},
 		lookup:    cfg.Lookup, plugins: cfg.Plugins, reports: cfg.Reports, unpinned: cfg.Unpinned, vendorPins: cfg.VendorPins, vendorPinsMode: cfg.VendorPinsMode, privacyVeil: cfg.PrivacyVeil,
 		now: cfg.Now, keepaliveEvery: cmp.Or(cfg.Keepalive, keepalive), videoSubmit: cmp.Or(cfg.VideoSubmit, videoSubmitTimeout), proofBudget: cmp.Or(cfg.ProofBudget, proofBudget), opened: map[Handle]*entry{},
@@ -137,6 +140,8 @@ func (w *InProcess) indexNonChat(name string, m Model) {
 			w.researchers[name] = s.Researcher
 		case Transcription:
 			w.transcribers[name] = transcriber{Transcription: s, attester: vendor.Attester}
+		case Speech:
+			w.speakers[name] = s.Speaker
 		}
 	}
 }
@@ -164,4 +169,11 @@ func (w *InProcess) Poll(ctx context.Context, route, vendorID string) (jobs.Poll
 		return vendor.Check(ctx, vendorID)
 	}
 	return jobs.Poll{}, errNoSuchRoute
+}
+
+func (w *InProcess) Discard(ctx context.Context, route, vendorID string) error {
+	if d, ok := w.videos[route].(media.VideoDiscarder); ok {
+		return d.DiscardVideo(ctx, vendorID)
+	}
+	return nil
 }

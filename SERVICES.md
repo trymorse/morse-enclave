@@ -23,6 +23,7 @@ Model and media vendors that only the Morse Chat app reaches. An API key cannot 
 - OpenAI, `api.openai.com`
 - Parallel, `api.parallel.ai`
 - Runware, `api.runware.ai`
+- SpicyAPI, `api.spicyapi.ai`
 - Venice, `api.venice.ai`
 - xAI, `api.x.ai`
 

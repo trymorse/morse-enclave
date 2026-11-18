@@ -81,14 +81,21 @@ func (c *CallClock) Times() CallTimes {
 		}
 		return to.Sub(from)
 	}
+	wrote, head := c.wrote, time.Duration(0)
+	if !c.head.IsZero() {
+		if wrote.IsZero() || c.head.Before(wrote) {
+			wrote = c.head
+		}
+		head = max(span(wrote, c.head), 1)
+	}
 	return CallTimes{
 		Reused:  c.reused,
 		DNS:     span(c.dns[0], c.dns[1]),
 		Dial:    span(c.dial[0], c.dial[1]),
 		TLS:     span(c.tls[0], c.tls[1]),
 		Connect: span(c.began, c.got),
-		Sent:    span(c.began, c.wrote),
-		Head:    span(c.wrote, c.head),
+		Sent:    span(c.began, wrote),
+		Head:    head,
 	}
 }
 

@@ -17,6 +17,7 @@ import (
 	"morse/backend/internal/door"
 	"morse/backend/internal/health"
 	"morse/backend/internal/vendorpins"
+	"morse/backend/internal/worker"
 )
 
 type message uint8
@@ -48,6 +49,7 @@ const (
 	privacyVeilUnavailable
 	privacyVeilRefused
 	privacyFilterLabelUnknown
+	privacyVeilReplyScans
 )
 
 var messages = [...]struct {
@@ -81,6 +83,7 @@ var messages = [...]struct {
 	privacyVeilUnavailable:    {"privacy veil unavailable", slog.LevelWarn},
 	privacyVeilRefused:        {"privacy veil refused", slog.LevelInfo},
 	privacyFilterLabelUnknown: {"privacy filter label unknown", slog.LevelWarn},
+	privacyVeilReplyScans:     {"privacy veil reply scans", slog.LevelInfo},
 }
 
 type fields struct {
@@ -92,6 +95,8 @@ type fields struct {
 	Code       *chat.ErrorCode
 	Duration   time.Duration
 	Count      int
+	Calls      int
+	Tokens     int
 	Generation uint64
 	Reason     string
 	Drift      string
@@ -141,6 +146,12 @@ func (l *logger) log(m message, f fields) {
 	}
 	if f.Count != 0 {
 		attrs = append(attrs, slog.Int("count", f.Count))
+	}
+	if f.Calls != 0 {
+		attrs = append(attrs, slog.Int("calls", f.Calls))
+	}
+	if f.Tokens != 0 {
+		attrs = append(attrs, slog.Int("tokens", f.Tokens))
 	}
 	if f.Generation != 0 {
 		attrs = append(attrs, slog.Uint64("generation", f.Generation))
@@ -290,6 +301,15 @@ func (l *logger) privacyFilterLabelsUnknown(n int) {
 func (l *logger) privacyVeilFailures(counts map[string]int) {
 	for _, reason := range slices.Sorted(maps.Keys(counts)) {
 		l.log(privacyVeilUnavailable, fields{Reason: reason, Count: counts[reason]})
+	}
+}
+
+func (l *logger) privacyVeilReplyScans(r worker.ReplyScans) {
+	for _, outcome := range slices.Sorted(maps.Keys(r.Outcomes)) {
+		l.log(privacyVeilReplyScans, fields{Reason: outcome, Count: r.Outcomes[outcome]})
+	}
+	if r.Calls > 0 || r.Tokens > 0 {
+		l.log(privacyVeilReplyScans, fields{Reason: "spent", Calls: r.Calls, Tokens: r.Tokens})
 	}
 }
 

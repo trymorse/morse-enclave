@@ -2,6 +2,7 @@ package worker
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -32,21 +33,41 @@ type PrivacyVeil struct {
 	Cache  *privacyveil.Cache
 	// MaxBytes is the most uncached text one chat may send the filter, Deadline how long its scan may take, and InFlight
 	// the most uncached text the worker scans at once: a scan that would pass it is refused at once, never queued.
-	MaxBytes int
-	Deadline time.Duration
-	InFlight int
+	MaxBytes    int
+	Deadline    time.Duration
+	InFlight    int
+	FilterCalls int
 
-	mu       sync.Mutex
-	scanning int
-	failures map[VeilFailure]int
-	unknown  int
+	lanesOnce sync.Once
+	lanes     *privacyveil.Lanes
+	replyLane chan struct{}
+	replies   sync.WaitGroup
+
+	mu         sync.Mutex
+	scanning   int
+	failures   map[VeilFailure]int
+	unknown    int
+	backlog    int
+	replyScans ReplyScans
 }
 
 const (
 	defaultVeilMaxBytes = 256 << 10
 	defaultVeilDeadline = 45 * time.Second
 	defaultVeilInFlight = 512 << 10
+	// why: Tinfoil's filter runs four inference processes; eight calls at once took each about four times as long as
+	// four did.
+	DefaultVeilFilterCalls = 4
+	veilReplyBacklog       = 1 << 20
 )
+
+func (p *PrivacyVeil) filterLanes() (*privacyveil.Lanes, chan struct{}) {
+	p.lanesOnce.Do(func() {
+		p.lanes = privacyveil.NewLanes(cmp.Or(p.FilterCalls, DefaultVeilFilterCalls))
+		p.replyLane = make(chan struct{}, 1)
+	})
+	return p.lanes, p.replyLane
+}
 
 func (p *PrivacyVeil) maxBytes() int {
 	if p.MaxBytes > 0 {
@@ -133,6 +154,78 @@ func (p *PrivacyVeil) UnknownLabels() int {
 	n := p.unknown
 	p.unknown = 0
 	return n
+}
+
+type ReplyScans struct {
+	Outcomes      map[string]int
+	Calls, Tokens int
+}
+
+func (p *PrivacyVeil) TakeReplyScans() ReplyScans {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	r := p.replyScans
+	p.replyScans = ReplyScans{}
+	return r
+}
+
+func (p *PrivacyVeil) replyScanned(outcome string, u privacyveil.Usage) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.replyScans.Outcomes == nil {
+		p.replyScans.Outcomes = map[string]int{}
+	}
+	p.replyScans.Outcomes[outcome]++
+	p.replyScans.Calls += u.Calls
+	p.replyScans.Tokens += u.Tokens
+}
+
+func (p *PrivacyVeil) keepReply(ns privacyveil.Namespace, partition []byte, texts []string) {
+	var segments []privacyveil.Segment
+	for _, t := range texts {
+		if _, hit := p.Cache.Get(ns, partition, t); !hit && t != "" {
+			segments = append(segments, privacyveil.Segment{Text: t})
+		}
+	}
+	if len(segments) == 0 {
+		return
+	}
+	pieces := privacyveil.Plan(segments, func(int) bool { return true })
+	n := privacyveil.Bytes(pieces)
+	if n > p.maxBytes() {
+		p.replyScanned(VeilTooLarge.String(), privacyveil.Usage{})
+		return
+	}
+	p.mu.Lock()
+	if p.backlog+n > veilReplyBacklog {
+		p.mu.Unlock()
+		p.replyScanned("backlogged", privacyveil.Usage{})
+		return
+	}
+	p.backlog += n
+	p.mu.Unlock()
+	lanes, lane := p.filterLanes()
+	p.replies.Go(func() {
+		defer func() {
+			p.mu.Lock()
+			p.backlog -= n
+			p.mu.Unlock()
+		}()
+		lane <- struct{}{}
+		defer func() { <-lane }()
+		ctx, cancel := context.WithTimeout(context.Background(), p.deadline())
+		defer cancel()
+		scanned, err := privacyveil.Scan(ctx, p.Filter, lanes, 1, segments, nil, pieces)
+		p.unknownLabels(scanned.Usage.UnknownLabels)
+		if err != nil {
+			p.replyScanned(scanFailure(err, context.Background(), ctx).String(), scanned.Usage)
+			return
+		}
+		for i, spans := range scanned.Fresh {
+			p.Cache.Put(ns, partition, segments[i].Text, spans)
+		}
+		p.replyScanned("kept", scanned.Usage)
+	})
 }
 
 // VeilOpening is what the relay tells the worker of a chat's Veil: whether the Veil is switched on, whether the
@@ -258,14 +351,16 @@ func veilNotHere(o Opening) error {
 
 // openedVeil is a veiled chat between /open and the end of its run: what to scan, then the veil it made.
 type openedVeil struct {
-	ask       privacyveil.Ask
-	segments  []privacyveil.Segment
-	cached    map[int][]privacyveil.Span
-	pieces    []privacyveil.Piece
-	namespace privacyveil.Namespace
-	partition []byte
-	unveiled  []string
-	veil      *privacyveil.Veil
+	ask        privacyveil.Ask
+	keepsReply bool
+	keepLimit  int
+	segments   []privacyveil.Segment
+	cached     map[int][]privacyveil.Span
+	pieces     []privacyveil.Piece
+	namespace  privacyveil.Namespace
+	partition  []byte
+	unveiled   []string
+	veil       *privacyveil.Veil
 }
 
 // planVeil takes the client's own text, before any framing, plans the pieces /run sends the filter, and refuses a
@@ -288,11 +383,15 @@ func (w *InProcess) planVeil(o Opening, ask privacyveil.Ask, original *chat.Requ
 			v.cached[i] = spans
 		}
 	}
-	v.pieces = privacyveil.Plan(v.segments, func(i int) bool { _, hit := v.cached[i]; return !hit })
-	if privacyveil.Bytes(v.pieces) > w.privacyVeil.maxBytes() {
+	needs := func(i int) bool { _, hit := v.cached[i]; return !hit }
+	whole := privacyveil.Plan(v.segments, needs)
+	if privacyveil.Bytes(whole) > w.privacyVeil.maxBytes() {
 		w.privacyVeil.failed(VeilTooLarge)
 		return nil, errVeilTooLarge
 	}
+	v.pieces = privacyveil.Spread(v.segments, needs, whole)
+	v.keepsReply = w.privacyVeil.Cache.Keeps(v.namespace, v.partition)
+	v.keepLimit = w.privacyVeil.maxBytes()
 	return v, nil
 }
 
@@ -334,21 +433,12 @@ func (o *openedChat) applyVeil(ctx context.Context, w *InProcess, rw http.Respon
 	defer release()
 	scanCtx, cancel := context.WithTimeout(ctx, pv.deadline())
 	defer cancel()
-	scanned, err := privacyveil.Scan(scanCtx, pv.Filter, v.segments, v.cached, v.pieces)
+	lanes, _ := pv.filterLanes()
+	scanned, err := privacyveil.Scan(scanCtx, pv.Filter, lanes, privacyveil.Windows, v.segments, v.cached, v.pieces)
 	m.Calls, m.Tokens = scanned.Usage.Calls, scanned.Usage.Tokens
 	pv.unknownLabels(scanned.Usage.UnknownLabels)
-	switch {
-	case err == nil:
-	case errors.Is(err, privacyveil.ErrUnattested), errors.Is(err, apierr.ErrUnattested):
-		return fail(VeilUnattested)
-	case errors.Is(err, privacyveil.ErrSpan), errors.Is(err, privacyveil.ErrMalformed):
-		return fail(VeilMalformed)
-	case ctx.Err() != nil:
-		return fail(VeilCut)
-	case errors.Is(scanCtx.Err(), context.DeadlineExceeded):
-		return fail(VeilTimeout)
-	default:
-		return fail(VeilUnreachable)
+	if err != nil {
+		return fail(scanFailure(err, ctx, scanCtx))
 	}
 	for i, spans := range scanned.Fresh {
 		pv.Cache.Put(v.namespace, v.partition, v.segments[i].Text, spans)
@@ -365,6 +455,29 @@ func (o *openedChat) applyVeil(ctx context.Context, w *InProcess, rw http.Respon
 	o.veilMeasure = m
 	rw.Header().Set(HeaderPrivacyVeil, v.header())
 	return Measured{}, false
+}
+
+func scanFailure(err error, ctx, scanCtx context.Context) VeilFailure {
+	switch {
+	case errors.Is(err, privacyveil.ErrUnattested), errors.Is(err, apierr.ErrUnattested):
+		return VeilUnattested
+	case errors.Is(err, privacyveil.ErrSpan), errors.Is(err, privacyveil.ErrMalformed):
+		return VeilMalformed
+	case ctx.Err() != nil:
+		return VeilCut
+	case errors.Is(scanCtx.Err(), context.DeadlineExceeded):
+		return VeilTimeout
+	}
+	return VeilUnreachable
+}
+
+func (o *openedChat) keepReply(w *InProcess, rv *replyVeil) {
+	if o.veil == nil || !o.veil.keepsReply || rv == nil {
+		return
+	}
+	if texts, ok := rv.said(); ok {
+		w.privacyVeil.keepReply(o.veil.namespace, o.veil.partition, texts)
+	}
 }
 
 // egressRefused ends a run whose sender's final body still held a detail, so nothing was sent. The Veil failed on

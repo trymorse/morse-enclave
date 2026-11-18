@@ -1,6 +1,7 @@
 package worker
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -186,7 +187,14 @@ type pollRequest struct {
 	Deadline time.Time `json:"deadline"`
 }
 
-const WireVersion = 5
+func (p pollRequest) context(ctx context.Context) (context.Context, context.CancelFunc) {
+	if p.Deadline.IsZero() {
+		return context.WithCancel(ctx)
+	}
+	return context.WithDeadline(ctx, p.Deadline)
+}
+
+const WireVersion = 6
 
 type Served struct {
 	Digest string `json:"digest"`

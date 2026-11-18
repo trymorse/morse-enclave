@@ -38,6 +38,7 @@ type Worker interface {
 	Submit(ctx context.Context, h Handle, g JobGrant, reply http.ResponseWriter, accepted func(media.Submitted)) Measured
 	Cut(h Handle, reason measure.Cut)
 	Poll(ctx context.Context, route, vendorID string) (jobs.Poll, error)
+	Discard(ctx context.Context, route, vendorID string) error
 	Attestation(ctx context.Context) (Attested, error)
 	// The vendor evidence a client may audit: an attestation report for its nonce, in the format it asked for
 	// where the route serves one, a receipt, and the attested sessions a gateway lists and serves. A vendor

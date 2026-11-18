@@ -90,8 +90,8 @@ var errResponseFormat = apierr.Invalid(http.StatusBadRequest, "unsupported_param
 
 func settingOffRefusal(name string) error {
 	return apierr.Invalid(http.StatusBadRequest, "setting_not_forwarded",
-		name+" is refused: this API key does not let request settings reach the model host, so Morse would drop it. "+
-			"Turn on \"Let my settings reach the model host\" ("+SettingsField+") on the key in the Morse developer console, at "+consoleKeys+", or send the request without "+name+".").Naming(name)
+		name+" is refused: this API key has \"Let my settings reach the model host\" ("+SettingsField+") turned off, so Morse would drop it. "+
+			"Turn it back on for the key in the Morse developer console, at "+consoleKeys+", or send the request without "+name+".").Naming(name)
 }
 
 func unhonouredRefusal(name string) error {

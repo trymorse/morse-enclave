@@ -53,6 +53,7 @@ type built struct {
 
 const (
 	privacyFilterKeyEnv   = "TINFOIL_PRIVACY_FILTER_API_KEY"
+	privacyFilterCallsEnv = "PROXY_PRIVACY_VEIL_FILTER_CALLS"
 	privacyVeilCacheBytes = 64 << 20
 	privacyVeilCacheTTL   = time.Hour
 	privacyVeilLogEvery   = time.Minute
@@ -142,8 +143,12 @@ func build(getenv func(string) string, log *logger) (built, error) {
 	var filter *tee.PrivacyFilter
 	var veil *worker.PrivacyVeil
 	if getenv(privacyFilterKeyEnv) != "" && (nitro.Name(attester) == "nsm" || environment == "dev") {
+		calls, err := filterCalls(getenv(privacyFilterCallsEnv))
+		if err != nil {
+			return built{}, err
+		}
 		filter = tee.NewPrivacyFilter(getenv(privacyFilterKeyEnv), tee.Deps{Base: transport, Unpinned: client, Policy: attestation.NVIDIAPolicy(), Observe: log.attestation})
-		veil = &worker.PrivacyVeil{Filter: filter, Cache: privacyveil.NewCache(privacyVeilCacheBytes, privacyVeilCacheTTL, time.Now)}
+		veil = &worker.PrivacyVeil{Filter: filter, Cache: privacyveil.NewCache(privacyVeilCacheBytes, privacyVeilCacheTTL, time.Now), FilterCalls: calls}
 	}
 	instance := rand.Text()
 	inner, err := worker.NewInProcess(worker.Config{
@@ -192,6 +197,17 @@ func taskKeys(attester nitro.Attester, own *taskseal.Key, now time.Time) *taskse
 	held := taskseal.Pending(own, now)
 	held.SettleAfter(taskKeyWait)
 	return held
+}
+
+func filterCalls(value string) (int, error) {
+	if value == "" {
+		return worker.DefaultVeilFilterCalls, nil
+	}
+	n, err := strconv.Atoi(value)
+	if err != nil || n < 1 {
+		return 0, errors.New(privacyFilterCallsEnv + " must be the most Privacy Veil filter calls the worker has in flight at once, at least 1")
+	}
+	return n, nil
 }
 
 func doorFloor(value, environment string) (uint64, error) {
@@ -301,6 +317,7 @@ func logVeilFailures(ctx context.Context, veil *worker.PrivacyVeil, log *logger)
 			if n := veil.UnknownLabels(); n > 0 {
 				log.privacyFilterLabelsUnknown(n)
 			}
+			log.privacyVeilReplyScans(veil.TakeReplyScans())
 		case <-ctx.Done():
 			return
 		}

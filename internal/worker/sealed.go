@@ -20,6 +20,7 @@ import (
 	"morse/backend/internal/plugins"
 	"morse/backend/internal/research"
 	"morse/backend/internal/seal"
+	"morse/backend/internal/speech"
 	"morse/backend/internal/taskseal"
 	"morse/backend/internal/web"
 	"morse/backend/internal/worker/taskrun"
@@ -28,7 +29,7 @@ import (
 var sealedMethods = []string{http.MethodGet, http.MethodPost, http.MethodDelete}
 
 var SealedBodyCaps = map[string]int{
-	SearchPattern: web.MaxRequestBody, FetchPattern: web.MaxRequestBody, ResearchPattern: research.MaxRequestBody, TranscriptionPattern: audio.MaxRequestBody,
+	SearchPattern: web.MaxRequestBody, FetchPattern: web.MaxRequestBody, ResearchPattern: research.MaxRequestBody, TranscriptionPattern: audio.MaxRequestBody, SpeechPattern: speech.MaxRequestBody,
 	PluginCallPattern: plugins.MaxCallBody, PluginTokenPattern: plugins.MaxTokenBody, PluginRevokePattern: plugins.MaxTokenBody,
 }
 
