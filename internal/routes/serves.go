@@ -67,11 +67,16 @@ func (r chatRoute) chat(defaultMarkup money.Markup) (Chat, error) {
 	if err != nil {
 		return Chat{}, err
 	}
+	formats, err := catalog.ParseResponseFormats(r.ResponseFormats)
+	if err != nil {
+		return Chat{}, err
+	}
 	return Chat{
 		ChatTerms: catalog.ChatTerms{
 			MaxOutputTokens: r.MaxOutputTokens, DefaultMaxTokens: r.DefaultMaxTokens, DefaultReasoningEffort: r.DefaultReasoningEffort, ReasoningEfforts: r.ReasoningEfforts,
 			Inputs: inputs, ContextTokens: r.ContextTokens, CompactAtTokens: compactAt, HidesReasoning: r.HidesReasoning,
 			Quantization: quantization, Fixes: r.withTools(), NoCharacters: r.Characters != nil && !*r.Characters,
+			ResponseFormats: formats,
 		},
 		Price: price, Markup: markup, DecodeMaxTPS: r.DecodeMaxTPS,
 		Tokenizer: r.Tokenizer, HiddenReasoningTPS: r.HiddenReasoningTPS,

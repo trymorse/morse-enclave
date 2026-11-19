@@ -93,13 +93,14 @@ const (
 // records are fixed when the custody starts. floor is the highest pins
 // sequence admitted this boot, and took is set by the boot's first take.
 type custody struct {
-	key     held
-	origin  Origin
-	record  []byte // the record certificate, DER, self-signed by the key
-	records []Logged
-	state   State
-	floor   uint64
-	took    bool
+	key         held
+	cacheSecret [cacheSecretSize]byte
+	origin      Origin
+	record      []byte // the record certificate, DER, self-signed by the key
+	records     []Logged
+	state       State
+	floor       uint64
+	took        bool
 }
 
 type held struct {
@@ -179,7 +180,7 @@ func newDoor(environment string, roots *x509.CertPool, enclave Enclave, trust Tr
 	if err != nil {
 		return nil, fmt.Errorf("door: the boot's record: %w", err)
 	}
-	d.custody.Store(&custody{key: h, origin: origin, record: record, state: Unrecorded{}, floor: floor})
+	d.custody.Store(&custody{key: h, cacheSecret: newCacheSecret(), origin: origin, record: record, state: Unrecorded{}, floor: floor})
 	return d, nil
 }
 

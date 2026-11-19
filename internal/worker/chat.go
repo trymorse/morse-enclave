@@ -269,7 +269,7 @@ func plaintextNarrowings(name chatName, req *chat.Request, want providerAsk, o O
 			if *settings, err = openaicompat.SettingsOf(req, o.KeySettings); err != nil {
 				return nil, err
 			}
-			return forwardingSettings(*settings)(routes)
+			return narrowed(routes, []narrowing{forwardingSettings(*settings), honouringResponseFormat(req)})
 		}, takingTools(req), readingImages(req))
 	}
 	return steps
@@ -283,6 +283,11 @@ func forwardingSettings(settings []string) narrowing {
 		_, forwards := plain.Provider.(openaicompat.SettingsForwarder)
 		return ok && forwards
 	}, func([]chatRoute) error { return openaicompat.SettingsRefusal(settings[0]) })
+}
+
+func honouringResponseFormat(req *chat.Request) narrowing {
+	format, asked := openaicompat.ResponseFormatOf(req)
+	return keeping(asked, func(r chatRoute) bool { return r.ResponseFormats.Honours(format) }, func([]chatRoute) error { return openaicompat.ResponseFormatRefusal(format) })
 }
 
 // takingTools keeps the routes that send a key's chat its tools when the chat lets the model call one, and refuses the
@@ -793,7 +798,7 @@ func stream(ctx context.Context, w *replyWriter, rc *http.ResponseController, pr
 	if clock != nil {
 		stop = sw.keepAlive(ctx, keepalive)
 	}
-	reported, attempts, err := prov.Stream(ctx, c, cut.wrap(sw.emit))
+	reported, attempts, err := prov.Stream(ctx, c, cut.wrap(dropAfterFinish(sw.emit)))
 	stop()
 	err = stopped(err)
 	if err == nil && sw.empty() {

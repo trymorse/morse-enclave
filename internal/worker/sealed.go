@@ -43,7 +43,8 @@ var (
 
 type Sealing struct {
 	Keys
-	Attest func(ctx context.Context, nonce []byte) ([]byte, error)
+	Attest      func(ctx context.Context, nonce []byte) ([]byte, error)
+	CacheSecret func() [32]byte
 }
 
 type Keys struct {
@@ -71,14 +72,11 @@ func (k Keys) Tasks() *taskseal.Key {
 	return key
 }
 
-const cacheKeyInfo = "morse-prompt-cache-key-v1"
-
-func (k Keys) cacheKey() affinity.WorkerKey {
-	tasks := k.Tasks()
-	if tasks == nil {
+func (s Sealing) cacheKey() affinity.WorkerKey {
+	if s.CacheSecret == nil {
 		return affinity.WorkerKey{}
 	}
-	return affinity.NewWorkerKey(tasks.Derive(cacheKeyInfo))
+	return affinity.NewWorkerKey(s.CacheSecret())
 }
 
 func (k Keys) taskKey() (*taskseal.Key, error) {

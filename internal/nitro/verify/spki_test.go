@@ -6,6 +6,7 @@ import (
 	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
 	"errors"
@@ -125,4 +126,22 @@ func TestTheRealNitroDocumentBindsNoTLSKeySoOnlyAttestedSPKIRefusesIt(t *testing
 	}
 	_, _, err = verify.AttestedSPKI(document, expect)
 	refused(t, err, "SubjectPublicKeyInfo")
+}
+
+func TestADocumentShapedAsVeilAttestsIsRefusedOnItsUserDataBeforeItsPublicKeyIsRead(t *testing.T) {
+	f := newForge(t)
+	tlsKeyHash := sha256.Sum256(someSPKI(elliptic.P256()))
+	veilHashes := []byte("sha256:" + base64.StdEncoding.EncodeToString(tlsKeyHash[:]) + ";sha256:")
+	nonceHash := sha256.Sum256([]byte("a client's nonce"))
+	for name, o := range map[string]documentOptions{
+		"no user_data":           {timestamp: f.now, tls: veilHashes, noUserData: true},
+		"a SHA-256 in user_data": {timestamp: f.now, tls: veilHashes, userData: nonceHash[:]},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := verify.Document(f.document(o), f.expect(f.now))
+			refused(t, err, "user_data does not name a dev key")
+			_, _, err = verify.AttestedSPKI(f.document(o), f.expect(f.now))
+			refused(t, err, "user_data does not name a dev key")
+		})
+	}
 }

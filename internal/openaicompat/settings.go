@@ -7,12 +7,10 @@ import (
 	"slices"
 
 	"morse/backend/internal/apierr"
+	"morse/backend/internal/catalog"
 	"morse/backend/internal/chat"
 )
 
-// Settings are the fields of an API key's chat that change the reply and reach the host only when the key lets its
-// settings reach the model host. response_format is one, but no endpoint records that it honours it, so it is refused
-// on every key, whatever the key setting.
 var Settings = []string{"n", "response_format", "seed", "stop", "temperature", "top_p"}
 
 // SettingsField is the key setting that lets Settings reach the host.
@@ -68,9 +66,6 @@ func SettingsOf(req *chat.Request, forward bool) ([]string, error) {
 		if err := checkSetting(name, raw); err != nil {
 			return nil, err
 		}
-		if name == "response_format" {
-			return nil, errResponseFormat
-		}
 		if !forward {
 			return nil, settingOffRefusal(name)
 		}
@@ -85,8 +80,19 @@ func SettingsRefusal(name string) error {
 		name+" is refused: no host that serves this model takes it through Morse. Send the request without "+name+".").Naming(name)
 }
 
-var errResponseFormat = apierr.Invalid(http.StatusBadRequest, "unsupported_parameter",
-	"response_format is refused: no Morse endpoint records that it honours response_format, so it is never sent to a host. Send the request without response_format, or with {\"type\":\"text\"}.").Naming("response_format")
+func ResponseFormatOf(req *chat.Request) (catalog.ResponseFormat, bool) {
+	var format struct{ Type string }
+	if req.Decode("response_format", &format) != nil {
+		return 0, false
+	}
+	return catalog.ParseResponseFormat(format.Type)
+}
+
+func ResponseFormatRefusal(f catalog.ResponseFormat) error {
+	return apierr.Invalid(http.StatusBadRequest, "unsupported_parameter",
+		"response_format "+f.String()+" is refused: no host that serves this model through Morse honours it, so the reply would not follow it. "+
+			"Send the request without response_format, with {\"type\":\"text\"}, or to a model whose hosts honour it.").Naming("response_format")
+}
 
 func settingOffRefusal(name string) error {
 	return apierr.Invalid(http.StatusBadRequest, "setting_not_forwarded",
@@ -119,7 +125,9 @@ func checkSetting(name string, raw json.RawMessage) error {
 		ok = validStop(raw)
 	case "response_format":
 		var format struct{ Type string }
-		ok = json.Unmarshal(raw, &format) == nil && format.Type != ""
+		if ok = json.Unmarshal(raw, &format) == nil; ok {
+			_, ok = catalog.ParseResponseFormat(format.Type)
+		}
 	}
 	if !ok {
 		return apierr.InvalidParameter(name + " " + settingShapes[name]).Naming(name)
@@ -132,7 +140,7 @@ var settingShapes = map[string]string{
 	"top_p":           "must be a number from 0 to 1.",
 	"seed":            "must be an integer.",
 	"stop":            "must be a string or an array of at most 4 strings.",
-	"response_format": "must be an object with a type.",
+	"response_format": "must be an object whose type is text, json_object, or json_schema.",
 }
 
 func numberWithin(raw json.RawMessage, lo, hi float64) bool {

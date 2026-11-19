@@ -93,6 +93,7 @@ type documentOptions struct {
 	tls         []byte
 	environment string
 	userData    []byte
+	noUserData  bool
 	nonce       []byte
 	pcrs        *struct{ pcr0, pcr1, pcr2 string }
 	digest      string
@@ -144,7 +145,7 @@ func (f *forge) document(o documentOptions) []byte {
 	if o.alg == 0 {
 		o.alg = -35
 	}
-	if o.userData == nil {
+	if o.userData == nil && !o.noUserData {
 		o.userData = append([]byte(verify.UserDataPrefix+o.environment+"|"), o.publicKey...)
 	}
 	if o.leaf == nil {

@@ -101,7 +101,6 @@ var builders = withChat(map[routes.Provider]map[catalog.Kind]build{
 	routes.ProviderXAI:       {catalog.KindImage: erase(imagesBy(xai.NewImages)), catalog.KindVideo: erase(videosBy(xai.NewVideos))},
 	routes.ProviderRunware:   {catalog.KindImage: erase(imagesBy(runware.NewImages)), catalog.KindVideo: erase(videosBy(runware.NewVideos))},
 	routes.ProviderFal:       {catalog.KindImage: erase(imagesBy(fal.NewImages)), catalog.KindVideo: erase(videosBy(fal.NewVideos))},
-	routes.ProviderVenice:    {catalog.KindImage: erase(imagesBy(venice.NewImages))},
 	routes.ProviderSpicyAPI:  {catalog.KindImage: erase(imagesBy(spicyapi.NewImages)), catalog.KindVideo: erase(videosBy(spicyapi.NewVideos))},
 	routes.ProviderParallel: {
 		catalog.KindSearch:   erase(parallelSearch),

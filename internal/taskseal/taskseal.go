@@ -18,7 +18,6 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/ecdh"
-	"crypto/hkdf"
 	"crypto/hpke"
 	"crypto/rand"
 	"crypto/sha256"
@@ -116,14 +115,6 @@ func KeyFromSecret(secret [secretSize]byte) *Key {
 }
 
 func (k *Key) Epoch() Epoch { return k.epoch }
-
-func (k *Key) Derive(info string) [secretSize]byte {
-	derived, err := hkdf.Key(sha256.New, k.secret[:], nil, info, secretSize)
-	if err != nil {
-		panic(err)
-	}
-	return [secretSize]byte(derived)
-}
 
 // SealBundle seals a task's bundle JSON under the task key, for that task alone at that revision.
 func SealBundle(key *Key, task [16]byte, revision uint64, plaintext []byte) ([]byte, error) {

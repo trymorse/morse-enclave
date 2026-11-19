@@ -1,4 +1,4 @@
-// Package venice serves chat and images on Venice, whose Private chat models keep no prompt or reply.
+// Package venice serves chat on Venice, whose Private chat models keep no prompt or reply.
 package venice
 
 import (

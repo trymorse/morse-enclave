@@ -44,6 +44,7 @@ type capability struct {
 	refusesDryAccount    bool
 	openAIHost           bool
 	switchesThinking     bool
+	sendsSettings        bool
 }
 
 var (
@@ -85,13 +86,14 @@ var capabilities = map[Provider]capability{
 		hides:          true,
 		uncapped:       true,
 		reasonsUnasked: true,
+		sendsSettings:  true,
 	},
-	// Venice keeps nothing only for the models it serves in its Private mode, under contract with their hosts. Its
-	// image models carry no such contract, so they serve Anonymous. Venice documents 402 INSUFFICIENT_BALANCE and the
-	// two spend-limit codes for a dry account, and its chat path takes apierr.SanitizedUpstreamError's default mapping
-	// of a 402 to upstream_unavailable. No dry account has answered a request yet.
+	// Venice keeps nothing only for the models it serves in its Private mode, under contract with their hosts. Venice
+	// documents 402 INSUFFICIENT_BALANCE and the two spend-limit codes for a dry account, and its chat path takes
+	// apierr.SanitizedUpstreamError's default mapping of a 402 to upstream_unavailable. No dry account has answered a
+	// request yet.
 	ProviderVenice: {
-		kinds:             servedAt{catalog.KindChat: privateOnly, catalog.KindImage: anonOnly},
+		kinds:             servedAt{catalog.KindChat: privateOnly},
 		zdrAt:             privateOnly,
 		zdrWhy:            "because Venice keeps no prompt or reply only for the models it serves in its Private mode",
 		zdrLink:           "https://docs.venice.ai/overview/privacy",
@@ -99,6 +101,7 @@ var capabilities = map[Provider]capability{
 		zdrHeld:           HeldPublishedTerms,
 		needsKey:          true,
 		refusesDryAccount: true,
+		sendsSettings:     true,
 	},
 	// Isoquant answers 402 when the balance cannot cover a request's max_tokens (the scout's report of 2026-11-05, not a
 	// captured reply), and its chat path takes apierr.SanitizedUpstreamError's default mapping of a 402 to
@@ -208,7 +211,7 @@ func attestedCapability(v *attester.Vendor) capability {
 	// A zero-balance Phala account answered a plaintext chat 402 insufficient_quota on 2026-11-04, which
 	// apierr.SanitizedUpstreamError maps to upstream_unavailable, and phala's refuseSealed maps the documented "Balance
 	// is too low" 403 the same way. internal/phala/phalatest/testdata/dry-account-402.http replays the capture.
-	return capability{kinds: kinds, refusesDryAccount: v == attester.Phala}
+	return capability{kinds: kinds, refusesDryAccount: v == attester.Phala, sendsSettings: v == attester.Phala}
 }
 
 // RefusesDryAccount is whether rt's provider maps a dry account at the vendor to an account refusal.
@@ -303,7 +306,22 @@ func (c capability) check(up Upstream, rt Route) error {
 	if err := c.checkRouteFixes(up, rt, chat); err != nil {
 		return err
 	}
+	if err := c.checkResponseFormats(up, rt, chat); err != nil {
+		return err
+	}
 	return c.reasoningShown(up, chat)
+}
+
+func (c capability) checkResponseFormats(up Upstream, rt Route, chat Chat) error {
+	switch {
+	case chat.ResponseFormats == 0:
+		return nil
+	case rt.Tier.Sealed():
+		return fmt.Errorf("sets response_formats at tier %s, whose body is forwarded verbatim, so the proxy neither reads nor sends its response_format", rt.Tier)
+	case !c.openAIHost && !c.sendsSettings:
+		return fmt.Errorf("sets response_formats, but %s does not send a key's response_format to its host", up)
+	}
+	return nil
 }
 
 func (c capability) checkRouteFixes(up Upstream, rt Route, chat Chat) error {

@@ -173,6 +173,7 @@ type ChatTerms struct {
 	HidesReasoning         bool
 	Quantization           Quantization
 	NoCharacters           bool
+	ResponseFormats        ResponseFormats
 	Fixes
 }
 

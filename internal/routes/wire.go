@@ -64,6 +64,7 @@ type chatRoute struct {
 	HidesReasoning         bool        `json:"hides_reasoning"`
 	Tools                  *bool       `json:"tools"`
 	Characters             *bool       `json:"characters"`
+	ResponseFormats        []string    `json:"response_formats"`
 	HiddenReasoningTPS     int         `json:"hidden_reasoning_tps"`
 	DecodeMaxTPS           int         `json:"decode_max_tps"`
 	Quantization           string      `json:"quantization"`

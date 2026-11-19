@@ -44,12 +44,13 @@ type Handed struct {
 }
 
 type payload struct {
-	Type    string    `json:"type"`
-	Key     []byte    `json:"key"`
-	Chain   string    `json:"chain"`
-	Born    time.Time `json:"born"`
-	Floor   uint64    `json:"floor"`
-	Records []Logged  `json:"records"`
+	Type        string    `json:"type"`
+	Key         []byte    `json:"key"`
+	Chain       string    `json:"chain"`
+	Born        time.Time `json:"born"`
+	Floor       uint64    `json:"floor"`
+	Records     []Logged  `json:"records"`
+	CacheSecret []byte    `json:"cache_secret,omitempty"`
 }
 
 type admitted struct {
@@ -194,7 +195,7 @@ func (d *Door) handoff(ctx context.Context, req Handoff) (Handed, *Refusal) {
 			pem.Encode(&chain, &pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw})
 		}
 		records := append(append([]Logged{}, c.records...), serving.receipt.logged())
-		body, err := json.Marshal(payload{Type: payloadType, Key: der, Chain: chain.String(), Born: c.origin.Born, Floor: c.floor, Records: records})
+		body, err := json.Marshal(payload{Type: payloadType, Key: der, Chain: chain.String(), Born: c.origin.Born, Floor: c.floor, Records: records, CacheSecret: c.cacheSecret[:]})
 		if err != nil {
 			return nil, refuse(http.StatusInternalServerError, "unsealed", "%v", err)
 		}
@@ -248,7 +249,7 @@ func (d *Door) take(ctx context.Context, req Handed) *Refusal {
 		if c.took {
 			return nil, refusedHolding()
 		}
-		return &custody{key: key, origin: origin, record: record, records: p.Records, state: Unrecorded{handed: chain}, floor: c.floor, took: true}, nil
+		return &custody{key: key, cacheSecret: adoptedCacheSecret(p.CacheSecret, c.cacheSecret), origin: origin, record: record, records: p.Records, state: Unrecorded{handed: chain}, floor: c.floor, took: true}, nil
 	})
 	return refused
 }
@@ -259,6 +260,9 @@ func readPayload(body []byte) (payload, *ecdsa.PrivateKey, *Refusal) {
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&p); err != nil || p.Type != payloadType {
 		return payload{}, nil, refuse(http.StatusUnprocessableEntity, "payload_unreadable", "the blob holds no %s payload", payloadType)
+	}
+	if !readableCacheSecret(p.CacheSecret) {
+		return payload{}, nil, refuse(http.StatusUnprocessableEntity, "payload_unreadable", "the cache secret is %d bytes, not %d", len(p.CacheSecret), cacheSecretSize)
 	}
 	parsed, _ := x509.ParsePKCS8PrivateKey(p.Key)
 	private, ok := parsed.(*ecdsa.PrivateKey)

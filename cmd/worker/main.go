@@ -156,7 +156,7 @@ func build(getenv func(string) string, log *logger) (built, error) {
 		Lookup:   lookup.New(services, client, time.Now),
 		Plugins:  pluginRelay,
 		Reports:  log,
-		Sealing:  worker.Sealing{Keys: sealingKeys, Attest: gate.Attest},
+		Sealing:  worker.Sealing{Keys: sealingKeys, Attest: gate.Attest, CacheSecret: gate.CacheSecret},
 		Unpinned: gates.Unpinned,
 		VendorPins: func() *worker.VendorPinsLag {
 			lag, ok := pins.Lag()

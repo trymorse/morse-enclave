@@ -121,10 +121,10 @@ func whole(ctx context.Context, prov chat.BusyRetry, c chat.Call, cut *limitCut)
 	streamed.Stream, streamed.IncludeUsage = true, true
 	c.Request = &streamed
 	var chunks []chat.Chunk
-	usage, attempts, err := prov.Stream(ctx, c, cut.wrap(func(ch chat.Chunk) error {
+	usage, attempts, err := prov.Stream(ctx, c, cut.wrap(dropAfterFinish(func(ch chat.Chunk) error {
 		chunks = append(chunks, ch)
 		return nil
-	}))
+	})))
 	if err = stopped(err); err != nil {
 		return chat.Chunk{}, usage, attempts, err
 	}
