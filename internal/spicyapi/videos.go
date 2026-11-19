@@ -2,12 +2,14 @@ package spicyapi
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"net/http"
 	"time"
 	"unicode/utf8"
 
+	"morse/backend/internal/dataurl"
 	"morse/backend/internal/jobs"
 	"morse/backend/internal/media"
 	"morse/backend/internal/strictjson"
@@ -20,17 +22,21 @@ const expired = "expired"
 type videoModel struct {
 	media.VideoSpec
 	sendsThinking bool
+	fromFrames    string
 }
 
 // why: GET https://api.spicyapi.ai/api/v1/models/{model} (2026-11-17) lists the only fields each takes, and H3 bills
-// double past 15 s; a route holds at its first resolution's price, so the cheaper 480p follows it.
+// double past 15 s; a route holds at its first resolution's price, so the cheaper 480p follows it. Each image-to-video
+// endpoint costs what its text-to-video one does (catalog, 2026-11-18), and H3's takes no aspect_ratio.
 var videoModels = map[string]videoModel{
 	"minimax/h3/text-to-video": {
-		VideoSpec: media.VideoSpec{MinSeconds: 5, MaxSeconds: 15, Resolutions: []string{"768p", "480p"}},
+		VideoSpec:  media.VideoSpec{MinSeconds: 5, MaxSeconds: 15, Resolutions: []string{"768p", "480p"}, LastFrame: true},
+		fromFrames: "minimax/h3/image-to-video",
 	},
 	"alibaba/wan-3.0/text-to-video": {
-		VideoSpec:     media.VideoSpec{MinSeconds: 5, MaxSeconds: 15, Resolutions: []string{"720p", "480p"}, Audio: true},
+		VideoSpec:     media.VideoSpec{MinSeconds: 5, MaxSeconds: 15, Resolutions: []string{"720p", "480p"}, Audio: true, LastFrame: true},
 		sendsThinking: true,
+		fromFrames:    "alibaba/wan-3.0/image-to-video",
 	},
 }
 
@@ -48,23 +54,48 @@ func NewVideos(baseURL, apiKey, model string, httpClient *http.Client) (*Videos,
 	return &Videos{client: newClient(baseURL, apiKey, httpClient), videoModel: info, model: model}, nil
 }
 
-// why: these models run uncensored, and Morse cannot yet tell a picture Studio made for the account from an upload of
-// a real person, so a clip is made from its prompt alone until that is decided.
+// why: these models run uncensored, and spicyapi.ai's policy leaves a real person's consent to their likeness to Morse
+// (https://docs.spicyapi.ai/docs/policy), so a frame goes to them only with the owner's consent to its exact bytes.
+func (p *Videos) FramesNeedConsent() bool { return true }
+
 func (p *Videos) ResolveVideo(req media.VideoRequest) (media.VideoRequest, error) {
-	switch {
-	case req.FirstFrame() != "":
-		return media.VideoRequest{}, strictjson.Invalid("This model takes no image or last_image: it makes a video from the prompt alone.")
-	case utf8.RuneCountInString(req.Prompt()) > maxPrompt:
+	if utf8.RuneCountInString(req.Prompt()) > maxPrompt {
 		return media.VideoRequest{}, strictjson.Invalid(fmt.Sprintf("prompt must be at most %d characters for this model.", maxPrompt))
 	}
+	frames, err := framesOf(req)
+	if err != nil {
+		return media.VideoRequest{}, err
+	}
+	for _, frame := range frames {
+		if base64.StdEncoding.DecodedLen(len(frame.Base64)) > maxReference {
+			return media.VideoRequest{}, strictjson.Invalid(fmt.Sprintf("image and last_image must be at most %d MiB each for this model.", maxReference>>20))
+		}
+	}
 	return p.VideoSpec.ResolveVideo(req)
+}
+
+func framesOf(req media.VideoRequest) ([]dataurl.URL, error) {
+	var frames []dataurl.URL
+	for _, raw := range []string{req.FirstFrame(), req.LastFrame()} {
+		if raw == "" {
+			continue
+		}
+		frame, err := dataurl.Parse(raw)
+		if err != nil {
+			return nil, strictjson.Invalid("image and last_image must be base64 data URLs of PNG, JPEG, or WebP images.")
+		}
+		frames = append(frames, frame)
+	}
+	return frames, nil
 }
 
 type videoInput struct {
 	Prompt                string `json:"prompt"`
 	Resolution            string `json:"resolution"`
-	AspectRatio           string `json:"aspect_ratio"`
+	AspectRatio           string `json:"aspect_ratio,omitempty"`
 	DurationSeconds       int    `json:"duration_seconds"`
+	ImageURL              string `json:"image_url,omitempty"`
+	LastImageURL          string `json:"last_image_url,omitempty"`
 	GenerateAudio         *bool  `json:"generate_audio,omitempty"`
 	EnablePromptExpansion *bool  `json:"enable_prompt_expansion"`
 	EnableThinking        *bool  `json:"enable_thinking,omitempty"`
@@ -80,7 +111,22 @@ func (p *Videos) SubmitVideo(ctx context.Context, req *media.VideoRequest, _ med
 	if p.sendsThinking {
 		in.EnableThinking = off
 	}
-	rec, err := p.create(ctx, task{Model: p.model, Input: in}, uuid.Format(uuid.New()), 0, media.VendorKeep)
+	model := p.model
+	frames, err := framesOf(*req)
+	if err != nil {
+		return media.Submitted{}, err
+	}
+	if len(frames) > 0 {
+		uris, err := p.uploadAll(ctx, frames)
+		if err != nil {
+			return media.Submitted{}, err
+		}
+		model, in.AspectRatio, in.ImageURL = p.fromFrames, "", uris[0]
+		if len(uris) > 1 {
+			in.LastImageURL = uris[1]
+		}
+	}
+	rec, err := p.create(ctx, task{Model: model, Input: in}, uuid.Format(uuid.New()), 0, media.VendorKeep)
 	if err != nil {
 		return media.Submitted{}, err
 	}

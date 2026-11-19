@@ -55,6 +55,9 @@ func (r chatRoute) chat(defaultMarkup money.Markup) (Chat, error) {
 	if r.DefaultReasoningEffort != "" && (r.DefaultReasoningEffort == chat.NoEffort || !slices.Contains(r.ReasoningEfforts, r.DefaultReasoningEffort)) {
 		return Chat{}, fmt.Errorf("default_reasoning_effort must be one of its reasoning_efforts other than %s", chat.NoEffort)
 	}
+	if r.AlwaysReasons && len(r.ReasoningEfforts) > 0 {
+		return Chat{}, errors.New("sets always_reasons, which marks a model that reasons on every request and takes no effort, so its reasoning_efforts must be []")
+	}
 	inputs, err := catalog.ParseInputs(r.InputModalities)
 	if err != nil {
 		return Chat{}, err
@@ -74,7 +77,8 @@ func (r chatRoute) chat(defaultMarkup money.Markup) (Chat, error) {
 	return Chat{
 		ChatTerms: catalog.ChatTerms{
 			MaxOutputTokens: r.MaxOutputTokens, DefaultMaxTokens: r.DefaultMaxTokens, DefaultReasoningEffort: r.DefaultReasoningEffort, ReasoningEfforts: r.ReasoningEfforts,
-			Inputs: inputs, ContextTokens: r.ContextTokens, CompactAtTokens: compactAt, HidesReasoning: r.HidesReasoning,
+			AlwaysReasons: r.AlwaysReasons,
+			Inputs:        inputs, ContextTokens: r.ContextTokens, CompactAtTokens: compactAt, HidesReasoning: r.HidesReasoning,
 			Quantization: quantization, Fixes: r.withTools(), NoCharacters: r.Characters != nil && !*r.Characters,
 			ResponseFormats: formats,
 		},

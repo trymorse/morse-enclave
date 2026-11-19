@@ -38,6 +38,7 @@ var Routes = []Route{
 	{Pattern: "GET /v1/attestation"},
 	{Pattern: "GET /v1/receipts/{id}"},
 	{Pattern: "GET /v1/videos/{id}"},
+	{Pattern: "GET /v1/version"},
 }
 
 func SealedPatterns() []string {

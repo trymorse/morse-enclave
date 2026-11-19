@@ -167,6 +167,7 @@ type ChatTerms struct {
 	DefaultMaxTokens       int
 	DefaultReasoningEffort string
 	ReasoningEfforts       []string
+	AlwaysReasons          bool
 	Inputs                 Inputs
 	ContextTokens          int
 	CompactAtTokens        int

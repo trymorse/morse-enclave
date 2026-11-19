@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"morse/backend/internal/enum"
+	"morse/backend/internal/frameconsent"
 	"morse/backend/internal/jobs"
 	"morse/backend/internal/strictjson"
 )
@@ -39,12 +40,15 @@ type VideoRequest struct {
 	prompt string
 	first  string
 	last   string
+	frames []frameconsent.Digest
 }
 
 func (r VideoRequest) ModelName() string  { return r.Model }
 func (r VideoRequest) Prompt() string     { return r.prompt }
 func (r VideoRequest) FirstFrame() string { return r.first }
 func (r VideoRequest) LastFrame() string  { return r.last }
+
+func (r VideoRequest) FrameDigests() []frameconsent.Digest { return slices.Clone(r.frames) }
 func (r VideoRequest) String() string {
 	return fmt.Sprintf("media.VideoRequest(%s, %ds, %s %s)", r.Model, r.Seconds, r.AspectRatio, r.Resolution)
 }
@@ -84,6 +88,7 @@ func ParseVideoRequest(body io.Reader) (*VideoRequest, error) {
 			return nil, err
 		}
 		*frame = canonical.String()
+		req.frames = append(req.frames, frameconsent.Of(data))
 		if i == 0 && req.AspectRatio == "" {
 			req.AspectRatio = closestOf(VideoAspectRatios, data)
 		}
@@ -137,6 +142,10 @@ type VideoGenerator interface {
 	SubmitVideo(ctx context.Context, req *VideoRequest, s Submission) (Submitted, error)
 	PollVideo(ctx context.Context, vendorID string) (jobs.Poll, error)
 	OpenVideo(ctx context.Context, out Output) (io.ReadCloser, int64, error)
+}
+
+type FrameConsentGated interface {
+	FramesNeedConsent() bool
 }
 
 // why: a vendor that keeps its own copy of a clip can destroy it only once it stops working on it, which can be after

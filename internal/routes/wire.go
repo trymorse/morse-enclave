@@ -56,6 +56,7 @@ type chatRoute struct {
 	DefaultMaxTokens       int         `json:"default_max_tokens"`
 	DefaultReasoningEffort string      `json:"default_reasoning_effort"`
 	ReasoningEfforts       []string    `json:"reasoning_efforts"`
+	AlwaysReasons          bool        `json:"always_reasons"`
 	InputModalities        []string    `json:"input_modalities"`
 	ContextTokens          int         `json:"context_tokens"`
 	CompactAtTokens        int         `json:"compact_at_tokens"`

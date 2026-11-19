@@ -14,6 +14,7 @@ import (
 	"morse/backend/internal/catalog"
 	"morse/backend/internal/chat"
 	"morse/backend/internal/enum"
+	"morse/backend/internal/frameconsent"
 	"morse/backend/internal/health"
 	"morse/backend/internal/jobs"
 	"morse/backend/internal/media"
@@ -165,6 +166,7 @@ type MediaAdmission struct {
 	Route      string
 	Units      int
 	References int
+	Frames     []frameconsent.Digest `json:",omitempty"`
 }
 
 func (MediaAdmission) kind() admissionKind { return admitsMedia }
@@ -215,10 +217,11 @@ type CallGrant struct{}
 func (CallGrant) kind() grantKind { return grantsCall }
 
 type JobGrant struct {
-	ID        string
-	CreatedAt time.Time
-	Deadline  time.Time
-	UploadURL string
+	ID              string
+	CreatedAt       time.Time
+	Deadline        time.Time
+	UploadURL       string
+	ConsentedFrames []frameconsent.Digest `json:",omitempty"`
 }
 
 type VideoReadGrant struct {

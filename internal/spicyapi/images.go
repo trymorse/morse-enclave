@@ -9,6 +9,7 @@ import (
 	"sync"
 	"unicode/utf8"
 
+	"morse/backend/internal/dataurl"
 	"morse/backend/internal/media"
 	"morse/backend/internal/strictjson"
 	"morse/backend/internal/uuid"
@@ -117,8 +118,7 @@ func (p *Images) GenerateImages(ctx context.Context, req *media.ImageRequest) (m
 	return out.Partial(req.N, cmp.Or(errs...))
 }
 
-func (p *Images) uploadAll(ctx context.Context, req *media.ImageRequest) ([]string, error) {
-	images := req.ReferenceImages()
+func (c client) uploadAll(ctx context.Context, images []dataurl.URL) ([]string, error) {
 	uris := make([]string, len(images))
 	errs := make([]error, len(images))
 	var wg sync.WaitGroup
@@ -129,7 +129,7 @@ func (p *Images) uploadAll(ctx context.Context, req *media.ImageRequest) ([]stri
 				errs[i] = strictjson.Invalid("Reference images must be base64 data URLs of PNG, JPEG, or WebP images.")
 				return
 			}
-			uris[i], errs[i] = p.upload(ctx, image.MediaType, data)
+			uris[i], errs[i] = c.upload(ctx, image.MediaType, data)
 		})
 	}
 	wg.Wait()
@@ -140,7 +140,7 @@ func (p *Images) uploadAll(ctx context.Context, req *media.ImageRequest) ([]stri
 }
 
 func (p *Images) run(ctx context.Context, req *media.ImageRequest) (media.Images, error) {
-	refs, err := p.uploadAll(ctx, req)
+	refs, err := p.uploadAll(ctx, req.ReferenceImages())
 	if err != nil {
 		return media.Images{}, err
 	}

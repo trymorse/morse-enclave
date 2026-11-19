@@ -12,6 +12,7 @@ import (
 	"morse/backend/internal/apierr"
 	"morse/backend/internal/billing/measure"
 	"morse/backend/internal/catalog"
+	"morse/backend/internal/frameconsent"
 	"morse/backend/internal/jobs"
 	"morse/backend/internal/media"
 	"morse/backend/internal/research"
@@ -41,7 +42,7 @@ func (w *InProcess) openVideo(o Opening) (Admission, error) {
 		return nil, apierr.InvalidParameter(err.Error())
 	}
 	ov := &openedVideo{cuts: newCuts(), endpoint: w.endpoints[req.Model], generator: generator, req: &resolved}
-	return MediaAdmission{admitted: admitted{w.keep(o, ov)}, Route: req.Model, Units: resolved.Seconds}, nil
+	return MediaAdmission{admitted: admitted{w.keep(o, ov)}, Route: req.Model, Units: resolved.Seconds, Frames: resolved.FrameDigests()}, nil
 }
 
 func (o *openedVideo) cut(reason measure.Cut) { o.cuts.cut(reason, false) }
@@ -49,10 +50,24 @@ func (o *openedVideo) cut(reason measure.Cut) { o.cuts.cut(reason, false) }
 func (o *openedVideo) submit(w *InProcess, g JobGrant, reply http.ResponseWriter, accepted func(media.Submitted)) Measured {
 	queued := VideoView{ID: g.ID, Object: "video", Model: o.req.Model, Status: media.Statuses.String(jobs.Queued), CreatedAt: g.CreatedAt.Unix()}
 	return submit(o.cuts, o.endpoint, reply, queued, accepted, func(ctx context.Context) (media.Submitted, error) {
+		if err := o.unconsented(g); err != nil {
+			return media.Submitted{}, err
+		}
 		ctx, cancel := context.WithTimeout(ctx, w.videoSubmit)
 		defer cancel()
 		return o.generator.SubmitVideo(ctx, o.req, media.Submission{Deadline: g.Deadline, UploadURL: g.UploadURL})
 	})
+}
+
+func (o *openedVideo) unconsented(g JobGrant) error {
+	gated, ok := o.generator.(media.FrameConsentGated)
+	if !ok || !gated.FramesNeedConsent() {
+		return nil
+	}
+	if frame, missing := frameconsent.Missing(o.req.FrameDigests(), g.ConsentedFrames); missing {
+		return frameconsent.Required(frame)
+	}
+	return nil
 }
 
 type openedResearch struct {

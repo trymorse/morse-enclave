@@ -1,12 +1,16 @@
 package media_test
 
 import (
+	"crypto/sha256"
+	"encoding/base64"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
 	"morse/backend/internal/apierr"
+	"morse/backend/internal/frameconsent"
 	"morse/backend/internal/jobs"
 	"morse/backend/internal/media"
 	"morse/backend/internal/strictjson"
@@ -112,5 +116,24 @@ func TestStatusAndFailureNamesRoundTripAndRejectStrangers(t *testing.T) {
 		if _, ok := jobs.ParseFailure(name); ok {
 			t.Errorf("failure %q accepted", name)
 		}
+	}
+}
+
+func TestEachFrameIsKnownByTheSHA256OfTheFileItsDataURLCarries(t *testing.T) {
+	first, last := pngOf(t, 64, 64), pngOf(t, 32, 64)
+	req := parseVideo(t, `{"model":"m","prompt":"p","seconds":5,"image":"`+first+`","last_image":"`+last+`"}`)
+	var want []frameconsent.Digest
+	for _, frame := range []string{first, last} {
+		data, err := base64.StdEncoding.DecodeString(frame[strings.Index(frame, ",")+1:])
+		if err != nil {
+			t.Fatal(err)
+		}
+		want = append(want, sha256.Sum256(data))
+	}
+	if got := req.FrameDigests(); !slices.Equal(got, want) {
+		t.Errorf("digests %v, want the SHA-256 of each frame's bytes, first then last: %v", got, want)
+	}
+	if got := parseVideo(t, `{"model":"m","prompt":"p","seconds":5}`).FrameDigests(); len(got) != 0 {
+		t.Errorf("a clip from its prompt alone has digests %v", got)
 	}
 }

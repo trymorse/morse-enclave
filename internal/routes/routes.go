@@ -163,7 +163,7 @@ type Chat struct {
 	OpenRouterID       string
 }
 
-func (c Chat) reasons() bool { return len(c.ReasoningEfforts) > 0 }
+func (c Chat) reasons() bool { return len(c.ReasoningEfforts) > 0 || c.AlwaysReasons }
 
 func ChatOf(s Serves) (Chat, bool) {
 	c, ok := s.(Chat)
