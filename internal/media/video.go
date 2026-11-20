@@ -90,7 +90,7 @@ func ParseVideoRequest(body io.Reader) (*VideoRequest, error) {
 		*frame = canonical.String()
 		req.frames = append(req.frames, frameconsent.Of(data))
 		if i == 0 && req.AspectRatio == "" {
-			req.AspectRatio = closestOf(VideoAspectRatios, data)
+			req.AspectRatio = closestOf(VideoAspectRatios, dimsOf(data))
 		}
 	}
 	req.AspectRatio = cmp.Or(req.AspectRatio, VideoAspectRatios[0])

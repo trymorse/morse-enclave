@@ -13,6 +13,7 @@ import (
 	"morse/backend/internal/catalog"
 	"morse/backend/internal/chat"
 	"morse/backend/internal/compaction"
+	"morse/backend/internal/media"
 )
 
 func (r chatRoute) serves(defaultMarkup money.Markup) (Serves, error) {
@@ -188,7 +189,19 @@ func (r imageRoute) serves(defaultMarkup money.Markup) (Serves, error) {
 		perImage, perReference = r.Price.HoldMicrosPerImage, r.Price.HoldMicrosPerReference
 	}
 	price, err := r.common.mediaPrice(r.marked, defaultMarkup, perImage, "hold_micros_per_image", perReference)
-	return Image{Price: price}, err
+	if err != nil || r.Price.HoldMicrosPerImageByResolution == nil {
+		return Image{Price: price}, err
+	}
+	for resolution := range r.Price.HoldMicrosPerImageByResolution {
+		if !slices.Contains(media.Resolutions, resolution) {
+			return nil, fmt.Errorf("names resolution %q in price.hold_micros_per_image_by_resolution, which is not one of %s", resolution, strings.Join(media.Resolutions, ", "))
+		}
+	}
+	price.PerUnitAt = r.Price.HoldMicrosPerImageByResolution
+	if err := price.Validate(); err != nil {
+		return nil, fmt.Errorf("has an invalid price: %w", err)
+	}
+	return Image{Price: price}, nil
 }
 
 func (r videoRoute) serves(defaultMarkup money.Markup) (Serves, error) {

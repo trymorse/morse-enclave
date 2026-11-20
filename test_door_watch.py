@@ -90,6 +90,7 @@ class Watched:
     ct_alert: str
     ct_title: str
     ct_body: str
+    outputs: dict
 
 
 class Watcher:
@@ -122,7 +123,7 @@ class Watcher:
                 streaks[source]["alerted"] = True
             (self.root / "door-state" / "ct-streak").write_text(json.dumps(streaks))
         return Watched(code, out.getvalue(), outputs.get("alert", ""), outputs.get("label", ""), outputs.get("title", ""), outputs.get("hours", ""),
-                       self.read("alert.md"), self.read("summary"), slept, outputs.get("ct_alert", ""), outputs.get("ct_title", ""), self.read("ct-alert.md"))
+                       self.read("alert.md"), self.read("summary"), slept, outputs.get("ct_alert", ""), outputs.get("ct_title", ""), self.read("ct-alert.md"), outputs)
 
     def read(self, name):
         path = self.root / name
@@ -283,6 +284,16 @@ class WatchTest(unittest.TestCase):
         first = self.crtsh_down(door_watch.CT_ALERT_AFTER + 2)
         later = self.runs(passed()) + self.crtsh_down(door_watch.CT_ALERT_AFTER + 2)
         self.assertEqual(([i for i, w in enumerate(first, 1) if w.ct_alert], [i for i, w in enumerate(later) if w.ct_alert]), ([door_watch.CT_ALERT_AFTER], [door_watch.CT_ALERT_AFTER]))
+
+    def test_a_passing_run_with_its_state_resolves_the_check_alerts_and_one_that_read_every_ct_source_the_ct_alert(self):
+        resolved = lambda w: (w.outputs.get("resolved"), w.outputs.get("ct_resolved"))
+        self.assertEqual(resolved(self.watcher.run(passed())), ("true", "true"))
+        self.assertEqual(resolved(self.watcher.run(passed(CRTSH_DOWN))), ("true", None))
+        self.assertEqual(resolved(self.watcher.run(passed(), restored=False)), (None, "true"))
+        self.assertEqual(resolved(self.watcher.run(failed())), (None, "true"))
+        self.assertEqual(resolved(self.watcher.run(unenforced(6))), (None, "true"))
+        self.assertEqual(resolved(self.watcher.run(*[unread()] * 3)), (None, None))
+        self.assertEqual(resolved(self.watcher.run(passed(), alerts=False)), (None, None))
 
     def test_each_run_writes_its_output_to_the_summary(self):
         w = self.watcher.run(unenforced(6))

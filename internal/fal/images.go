@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
+	"math"
 	"net/http"
 	"sync"
 	"time"
@@ -30,17 +31,23 @@ type imageModel struct {
 var fluxSizes = media.SizeTable(map[string][2]int{
 	"1:1 1k": {1024, 1024}, "16:9 1k": {1360, 768}, "9:16 1k": {768, 1360}, "4:3 1k": {1152, 864},
 	"3:4 1k": {864, 1152}, "3:2 1k": {1248, 832}, "2:3 1k": {832, 1248},
+	"21:9 1k": {1536, 656}, "4:5 1k": {896, 1120}, "5:4 1k": {1120, 896},
 	"1:1 2k": {2048, 2048}, "16:9 2k": {2048, 1152}, "9:16 2k": {1152, 2048}, "4:3 2k": {2048, 1536},
 	"3:4 2k": {1536, 2048}, "3:2 2k": {1920, 1280}, "2:3 2k": {1280, 1920},
+	"21:9 2k": {2048, 880}, "4:5 2k": {1632, 2048}, "5:4 2k": {2048, 1632},
 })
 
+// why: Seedream draws 1,048,576 to 4,194,304 pixels.
 var seedreamSizes = media.SizeTable(map[string][2]int{
 	"1:1 1k": {1024, 1024}, "16:9 1k": {1376, 768}, "9:16 1k": {768, 1376}, "4:3 1k": {1216, 912},
 	"3:4 1k": {912, 1216}, "3:2 1k": {1296, 864}, "2:3 1k": {864, 1296},
+	"21:9 1k": {1568, 672}, "4:5 1k": {928, 1160}, "5:4 1k": {1160, 928},
 	"1:1 2k": {2048, 2048}, "16:9 2k": {2048, 1152}, "9:16 2k": {1152, 2048}, "4:3 2k": {2048, 1536},
 	"3:4 2k": {1536, 2048}, "3:2 2k": {1920, 1280}, "2:3 2k": {1280, 1920},
+	"21:9 2k": {2016, 864}, "4:5 2k": {1632, 2048}, "5:4 2k": {2048, 1632},
 })
 
+// why: each unit is fal's price for one of its billable units, from each model page's endpointBilling on 2026-10-15.
 var imageModels = map[string]imageModel{
 	"fal-ai/flux-2-max": {
 		edit: "fal-ai/flux-2-max/edit", ImageSpec: media.Flux2Max, dims: media.ImageDims{Base: fluxSizes}, unit: 70_000, format: "jpeg",
@@ -60,6 +67,9 @@ var imageModels = map[string]imageModel{
 	"fal-ai/z-image/turbo": {
 		ImageSpec: media.ZImageTurbo, dims: media.ImageDims{Base: fluxSizes}, unit: 5_000, numImages: true, format: "jpeg",
 	},
+	"fal-ai/seedvr/upscale/image":   {ImageSpec: media.Upscale, unit: 1_000, format: "jpg"},
+	"fal-ai/bria/background/remove": {ImageSpec: media.RemoveBackground, unit: 18_000},
+	"fal-ai/flux-pro/v1/fill":       {ImageSpec: media.Inpaint, unit: 50_000, format: "jpeg"},
 }
 
 type Images struct {
@@ -83,31 +93,49 @@ type imageSize struct {
 }
 
 type imageInput struct {
-	Prompt             string    `json:"prompt"`
-	ImageSize          imageSize `json:"image_size"`
-	NumImages          int       `json:"num_images,omitempty"`
-	OutputFormat       string    `json:"output_format,omitempty"`
-	Quality            string    `json:"quality,omitempty"`
-	SyncMode           bool      `json:"sync_mode"`
-	ImageURLs          []string  `json:"image_urls,omitempty"`
-	ImageURL           string    `json:"image_url,omitempty"`
-	ReferenceImageURLs []string  `json:"reference_image_urls,omitempty"`
+	Prompt             string     `json:"prompt,omitempty"`
+	ImageSize          *imageSize `json:"image_size,omitempty"`
+	NumImages          int        `json:"num_images,omitempty"`
+	OutputFormat       string     `json:"output_format,omitempty"`
+	Quality            string     `json:"quality,omitempty"`
+	SyncMode           bool       `json:"sync_mode"`
+	ImageURLs          []string   `json:"image_urls,omitempty"`
+	ImageURL           string     `json:"image_url,omitempty"`
+	ReferenceImageURLs []string   `json:"reference_image_urls,omitempty"`
+	Seed               *int64     `json:"seed,omitempty"`
+	NegativePrompt     string     `json:"negative_prompt,omitempty"`
+	MaskURL            string     `json:"mask_url,omitempty"`
+	UpscaleMode        string     `json:"upscale_mode,omitempty"`
+	UpscaleFactor      float64    `json:"upscale_factor,omitempty"`
 }
 
+type imageFile struct {
+	URL string `json:"url"`
+}
+
+// why: fal's upscaler and background remover answer with one image, under image.
 type imageOutput struct {
-	Images []struct {
-		URL string `json:"url"`
-	} `json:"images"`
-	HasNSFWConcepts []bool `json:"has_nsfw_concepts"`
+	Images          []imageFile `json:"images"`
+	Image           *imageFile  `json:"image"`
+	HasNSFWConcepts []bool      `json:"has_nsfw_concepts"`
 }
 
 func (p *Images) input(req *media.ImageRequest) (string, imageInput) {
 	refs := req.References()
-	dims := p.dims.For(req)
 	in := imageInput{
-		Prompt: req.Prompt(), ImageSize: imageSize{Width: dims.Width, Height: dims.Height},
-		OutputFormat: p.format, Quality: req.Quality, SyncMode: true,
+		Prompt: req.Prompt(), OutputFormat: p.format, Quality: req.Quality, SyncMode: true, Seed: req.Seed, NegativePrompt: req.NegativePrompt(),
 	}
+	switch {
+	case p.Tool == media.ToolUpscale:
+		src, _ := req.Source()
+		in.ImageURL, in.UpscaleMode, in.UpscaleFactor = refs[0], "factor", upscaleFactor(src, req.Size.Resolution)
+		return p.model, in
+	case p.Tool != "":
+		in.ImageURL, in.MaskURL = refs[0], req.Mask()
+		return p.model, in
+	}
+	dims := p.dims.For(req)
+	in.ImageSize = &imageSize{Width: dims.Width, Height: dims.Height}
 	if p.numImages {
 		in.NumImages = req.N
 	}
@@ -120,6 +148,13 @@ func (p *Images) input(req *media.ImageRequest) (string, imageInput) {
 		in.ImageURLs = refs
 	}
 	return p.edit, in
+}
+
+// why: SeedVR multiplies both sides by upscale_factor, 1 to 10, so the factor rounds up to a thousandth for the long
+// edge to reach the target.
+func upscaleFactor(src media.Dims, resolution string) float64 {
+	factor := float64(media.LongEdge(resolution)) / float64(max(src.Width, src.Height, 1))
+	return min(max(math.Ceil(factor*1000)/1000, 1), media.MaxUpscaleFactor)
 }
 
 type run struct {
@@ -155,6 +190,10 @@ func (p *Images) GenerateImagesUntil(ctx context.Context, left <-chan struct{}, 
 	}
 	var wg sync.WaitGroup
 	for i := range runs {
+		in := in
+		if in.Seed != nil {
+			in.Seed = new((*in.Seed + int64(i)) % (media.MaxSeed + 1))
+		}
 		wg.Go(func() { runs[i] = p.generate(ctx, untilCallerLeaves, endpoint, in, startBy(deadline)) })
 	}
 	wg.Wait()
@@ -217,7 +256,13 @@ func (p *Images) collect(ctx context.Context, app, id string, out *media.Images)
 
 func decodeImages(body []byte) ([]media.Image, error) {
 	var reply imageOutput
-	if json.Unmarshal(body, &reply) != nil || len(reply.Images) == 0 {
+	if json.Unmarshal(body, &reply) != nil {
+		return nil, upstream.ErrMalformed
+	}
+	if len(reply.Images) == 0 && reply.Image != nil {
+		reply.Images = []imageFile{*reply.Image}
+	}
+	if len(reply.Images) == 0 {
 		return nil, upstream.ErrMalformed
 	}
 	var imgs []media.Image

@@ -2,6 +2,7 @@ package xai
 
 import (
 	"net/http"
+	"regexp"
 	"strconv"
 
 	"morse/backend/internal/apierr"
@@ -12,8 +13,23 @@ import (
 
 const usdPerTick = "e-10"
 
+var contentModerated = regexp.MustCompile(`(?i)content[- ]moderat`)
+
 func endpoint(baseURL, apiKey string, client *http.Client, confirm func(header func(string) string) error) upstream.Endpoint {
 	return upstream.Endpoint{BaseURL: baseURL, Auth: upstream.Bearer(apiKey), HTTP: client, Confirm: confirm}
+}
+
+func mediaEndpoint(baseURL, apiKey string, client *http.Client) upstream.Endpoint {
+	e := endpoint(baseURL, apiKey, client, confirmZeroRetention)
+	e.Refuse = refuseMedia
+	return e
+}
+
+func refuseMedia(r upstream.Reply) error {
+	if r.Status/100 == 4 && contentModerated.Match(r.Body) {
+		return apierr.ErrContentFilter
+	}
+	return apierr.SanitizedUpstreamError(r.Status, r.Body)
 }
 
 // Confirmation is the check every chat reply on a route kept under retention must pass, or nil for none.

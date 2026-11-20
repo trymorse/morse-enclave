@@ -98,8 +98,9 @@ type tokenPrice struct {
 }
 
 type imagePrice struct {
-	HoldMicrosPerImage     *money.Micros `json:"hold_micros_per_image"`
-	HoldMicrosPerReference *money.Micros `json:"hold_micros_per_reference"`
+	HoldMicrosPerImage             *money.Micros           `json:"hold_micros_per_image"`
+	HoldMicrosPerImageByResolution map[string]money.Micros `json:"hold_micros_per_image_by_resolution"`
+	HoldMicrosPerReference         *money.Micros           `json:"hold_micros_per_reference"`
 }
 
 type videoPrice struct {

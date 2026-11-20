@@ -24,13 +24,17 @@ func aspect(ar string) float64 {
 }
 
 func TestCatalogSizesCoverEveryRatioAndResolutionWithinEachModelsBounds(t *testing.T) {
-	for name, table := range map[string]map[media.Size]media.Dims{"standard": media.StandardSizes, "ideogram": media.IdeogramSizes} {
-		if len(table) != len(media.AspectRatios)*len(media.Resolutions) {
-			t.Errorf("%s: %d sizes", name, len(table))
+	for name, c := range map[string]struct {
+		table  map[media.Size]media.Dims
+		ratios []string
+	}{"standard": {media.StandardSizes, media.AspectRatios}, "ideogram": {media.IdeogramSizes, media.Ideogram45.AspectRatios}} {
+		resolutions := []string{"1k", "2k"}
+		if len(c.table) != len(c.ratios)*len(resolutions) {
+			t.Errorf("%s: %d sizes", name, len(c.table))
 		}
-		for _, ar := range media.AspectRatios {
-			for _, res := range media.Resolutions {
-				d, ok := table[media.Size{AspectRatio: ar, Resolution: res}]
+		for _, ar := range c.ratios {
+			for _, res := range resolutions {
+				d, ok := c.table[media.Size{AspectRatio: ar, Resolution: res}]
 				if got := float64(d.Width) / float64(d.Height) / aspect(ar); !ok || got < 0.97 || got > 1.03 {
 					t.Errorf("%s %s %s: %v missing or off-ratio", name, ar, res, d)
 				}
@@ -46,7 +50,7 @@ func TestCatalogSizesCoverEveryRatioAndResolutionWithinEachModelsBounds(t *testi
 			t.Errorf("%v %v: outside Seedream or Qwen area and ratio bounds", size, d)
 		}
 	}
-	ideogram := [][2]int{{720, 1280}, {720, 1440}, {800, 1280}, {832, 1248}, {864, 1152}, {896, 1120}, {1024, 1024}, {1120, 896}, {1152, 864}, {1248, 832}, {1280, 720}, {1280, 800}, {1440, 720}, {1440, 2560}, {1600, 2560}, {1664, 2496}, {1728, 2304}, {2048, 2048}, {2304, 1728}, {2496, 1664}, {2560, 1440}, {2560, 1600}}
+	ideogram := [][2]int{{720, 1280}, {720, 1440}, {800, 1280}, {832, 1248}, {864, 1152}, {896, 1120}, {1024, 1024}, {1120, 896}, {1152, 864}, {1248, 832}, {1280, 720}, {1280, 800}, {1440, 720}, {1440, 2560}, {1600, 2560}, {1664, 2496}, {1728, 2304}, {1792, 2240}, {2048, 2048}, {2240, 1792}, {2304, 1728}, {2496, 1664}, {2560, 1440}, {2560, 1600}}
 	for size, d := range media.IdeogramSizes {
 		if !slices.Contains(ideogram, [2]int{d.Width, d.Height}) {
 			t.Errorf("%v %v is not an Ideogram 4.5 preset", size, d)
@@ -68,10 +72,50 @@ func TestCatalogSizesCoverEveryRatioAndResolutionWithinEachModelsBounds(t *testi
 }
 
 func TestEveryImageSpecHasAReferenceLimit(t *testing.T) {
-	for name, spec := range map[string]media.ImageSpec{"flux max": media.Flux2Max, "flux pro": media.Flux2Pro, "seedream": media.Seedream5Pro, "ideogram": media.Ideogram45, "qwen": media.QwenImage3} {
+	for name, spec := range map[string]media.ImageSpec{
+		"flux max": media.Flux2Max, "flux pro": media.Flux2Pro, "seedream": media.Seedream5Pro, "ideogram": media.Ideogram45, "qwen": media.QwenImage3,
+		"seedream lite": media.Seedream5Lite, "seedream 4.5": media.Seedream45, "upscale": media.Upscale, "remove background": media.RemoveBackground, "inpaint": media.Inpaint,
+	} {
 		if spec.MaxReferences == 0 {
 			t.Errorf("%s: spec %+v lacks a reference limit", name, spec)
 		}
+	}
+}
+
+func TestEveryGeneratorTakesKnownSizesAndEveryToolOneImage(t *testing.T) {
+	generators := map[string]media.ImageSpec{
+		"flux max": media.Flux2Max, "flux pro": media.Flux2Pro, "seedream": media.Seedream5Pro, "ideogram": media.Ideogram45, "qwen": media.QwenImage3,
+		"sdxl": media.SDXLCheckpoint, "z-image": media.ZImageTurbo, "seedream lite": media.Seedream5Lite, "seedream 4.5": media.Seedream45,
+		"nano banana pro": media.NanoBananaPro, "nano banana 2": media.NanoBanana2, "nano banana 2 lite": media.NanoBanana2Lite, "grok": media.GrokImagine2,
+	}
+	for name, spec := range generators {
+		if len(spec.AspectRatios) == 0 || len(spec.Resolutions) == 0 || spec.Tool != "" || spec.Mask || spec.PromptUse() != media.PromptRequired || spec.NegativePrompt > media.MaxNegativePrompt {
+			t.Errorf("%s: %+v is not a generator's spec", name, spec)
+		}
+		for _, v := range append(slices.Clone(spec.AspectRatios), spec.Resolutions...) {
+			if !slices.Contains(media.AspectRatios, v) && !slices.Contains(media.Resolutions, v) {
+				t.Errorf("%s: %s is no size a request can ask", name, v)
+			}
+		}
+		if !slices.Contains(spec.AspectRatios, "1:1") || !slices.Contains(spec.Resolutions, "1k") {
+			t.Errorf("%s: no 1:1 at 1k, the size a request without one gets", name)
+		}
+	}
+	for name, c := range map[string]struct {
+		spec   media.ImageSpec
+		tool   media.Tool
+		prompt media.PromptUse
+	}{
+		"upscale":           {media.Upscale, media.ToolUpscale, media.PromptNone},
+		"remove background": {media.RemoveBackground, media.ToolRemoveBackground, media.PromptNone},
+		"inpaint":           {media.Inpaint, media.ToolInpaint, media.PromptRequired},
+	} {
+		if c.spec.Tool != c.tool || c.spec.PromptUse() != c.prompt || c.spec.MaxReferences != 1 || len(c.spec.AspectRatios) != 0 || c.spec.Mask != (c.tool == media.ToolInpaint) {
+			t.Errorf("%s: %+v", name, c.spec)
+		}
+	}
+	if !slices.Equal(media.Upscale.Resolutions, []string{"2k", "4k"}) || media.RemoveBackground.Resolutions != nil || media.Inpaint.Resolutions != nil {
+		t.Error("only the upscaler takes a resolution, its long edge of 2k or 4k")
 	}
 }
 

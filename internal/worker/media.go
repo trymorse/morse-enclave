@@ -37,7 +37,7 @@ func (w *InProcess) openImages(o Opening) (Admission, error) {
 		return nil, apierr.InvalidParameter(err.Error())
 	}
 	oi := &openedImages{cuts: newCuts(), endpoint: w.endpoints[req.Model], generator: generator, req: req}
-	return MediaAdmission{admitted: admitted{w.keep(o, oi)}, Route: req.Model, Units: req.N, References: len(req.References())}, nil
+	return MediaAdmission{admitted: admitted{w.keep(o, oi)}, Route: req.Model, Units: req.N, References: len(req.References()), Resolution: req.Size.Resolution}, nil
 }
 
 func (o *openedImages) cut(reason measure.Cut) { o.cuts.cut(reason, false) }

@@ -3,9 +3,11 @@ package money
 import (
 	"encoding/json"
 	"errors"
+	"maps"
 	"math/big"
 	"morse/backend/internal/billing/measure"
 	"morse/backend/internal/enum"
+	"slices"
 )
 
 const (
@@ -16,20 +18,32 @@ const (
 
 type MediaPrice struct {
 	PerUnit      Micros
+	PerUnitAt    map[string]Micros `json:",omitempty"`
 	PerReference Micros
 	Markup       Markup
 }
 
 func (p MediaPrice) Validate() error {
-	for _, rate := range []Micros{p.PerUnit, p.PerReference} {
+	for _, rate := range append([]Micros{p.PerUnit, p.PerReference}, slices.Collect(maps.Values(p.PerUnitAt))...) {
 		if rate < 0 || rate > MaxMicrosPerUnit {
 			return errors.New("media hold prices must be between 0 and 10000000 micros")
 		}
 	}
-	if p.PerUnit == 0 {
+	if p.PerUnit == 0 || slices.Contains(slices.Collect(maps.Values(p.PerUnitAt)), 0) {
 		return errors.New("media routes need a positive hold price per unit")
 	}
 	return nil
+}
+
+func (p MediaPrice) At(resolution string) MediaPrice {
+	switch rate, ok := p.PerUnitAt[resolution]; {
+	case ok:
+		p.PerUnit = rate
+	case resolution == "":
+		p.PerUnit = max(p.PerUnit, slices.Max(append(slices.Collect(maps.Values(p.PerUnitAt)), 0)))
+	}
+	p.PerUnitAt = nil
+	return p
 }
 
 func (p MediaPrice) Hold(units, references, outputs int) Micros {

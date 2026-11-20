@@ -41,7 +41,10 @@ func TestMediaPriceValidateNeedsAPositiveUnitPriceUnderTheCeiling(t *testing.T) 
 			t.Errorf("%+v rejected: %v", p, err)
 		}
 	}
-	for _, p := range []money.MediaPrice{{}, {PerUnit: -1}, {PerUnit: 1, PerReference: -1}, {PerUnit: money.MaxMicrosPerUnit + 1}} {
+	for _, p := range []money.MediaPrice{
+		{}, {PerUnit: -1}, {PerUnit: 1, PerReference: -1}, {PerUnit: money.MaxMicrosPerUnit + 1},
+		{PerUnit: 1, PerUnitAt: map[string]money.Micros{"2k": 0}}, {PerUnit: 1, PerUnitAt: map[string]money.Micros{"4k": money.MaxMicrosPerUnit + 1}},
+	} {
 		if p.Validate() == nil {
 			t.Errorf("%+v accepted", p)
 		}
@@ -78,6 +81,24 @@ func TestReportedUnitsMultipliesVendorUnitsByTheUnitPriceAndRoundsUp(t *testing.
 	}
 	if got := money.ReportedUnits("1", -1); got != (money.Reported{}) {
 		t.Errorf("negative unit price reported %+v", got)
+	}
+}
+
+func TestAPriceAtAResolutionHoldsThatResolutionsRateAndAnUnknownOneTheDearest(t *testing.T) {
+	split := money.MediaPrice{PerUnit: 70_000, PerUnitAt: map[string]money.Micros{"2k": 160_000, "4k": 120_000}, PerReference: 5_000, Markup: testMarkup}
+	flat := money.MediaPrice{PerUnit: 80_000, PerReference: 10_000, Markup: testMarkup}
+	for _, c := range []struct {
+		price      money.MediaPrice
+		resolution string
+		want       money.Micros
+	}{
+		{split, "1k", 70_000}, {split, "2k", 160_000}, {split, "4k", 120_000}, {split, "", 160_000},
+		{flat, "1k", 80_000}, {flat, "2k", 80_000}, {flat, "", 80_000},
+	} {
+		got := c.price.At(c.resolution)
+		if got.PerUnit != c.want || got.PerUnitAt != nil || got.PerReference != c.price.PerReference || got.Markup != c.price.Markup {
+			t.Errorf("%+v.At(%q) = %+v, want PerUnit %d and nothing else changed", c.price, c.resolution, got, c.want)
+		}
 	}
 }
 

@@ -45,6 +45,15 @@ func (t Tier) String() string { return tierNames.String(t) }
 
 func (t Tier) MarshalText() ([]byte, error) { return tierNames.MarshalText(t) }
 
+func (t *Tier) UnmarshalText(text []byte) error {
+	tier, err := ParseTier(string(text))
+	if err != nil {
+		return err
+	}
+	*t = tier
+	return nil
+}
+
 type tierTerms struct {
 	attested bool
 	sealed   bool

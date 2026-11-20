@@ -13,7 +13,8 @@ was. With --alerts it writes the alert's label, title and comment hours to GITHU
 source's count at CT_ALERT_AFTER or more and its entry not marked "alerted" it also writes ct_alert and ct_title to
 GITHUB_OUTPUT and that alert's body to --ct-alert-body. The workflow's step that sends that alert marks the entry
 "alerted" once the alert is sent, so a send that fails is tried again on the next run, and each time the source goes
-down alerts once.
+down alerts once. A run that passed with its state restored writes resolved=true, and a run that read every CT source
+writes ct_resolved=true, so the workflow closes the alerts they recover from.
 """
 
 import argparse
@@ -192,6 +193,10 @@ def main(argv=None):
         sent = compose_ct(down, run, args.run_url)
         Path(args.ct_alert_body).write_text(sent.body)
         append(os.environ.get("GITHUB_OUTPUT"), f"ct_alert={','.join(down)}\nct_title={sent.title}\n")
+    if run.kind == "passed" and args.restored:
+        append(os.environ.get("GITHUB_OUTPUT"), "resolved=true\n")
+    if run.ct and all(why is None for _, why in run.ct):
+        append(os.environ.get("GITHUB_OUTPUT"), "ct_resolved=true\n")
     alert = alert_for(run.kind, count, args.restored)
     if alert:
         sent = compose(alert, run, args.restored, args.run_url)

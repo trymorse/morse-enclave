@@ -31,18 +31,22 @@ type imageModel struct {
 // does not list, and turns on prompt expansion (Qwen 3) and thinking (Qwen 2.1 Turbo, Seedream), which rewrite the prompt.
 var imageModels = map[string]imageModel{
 	"alibaba/qwen-image-2.1-turbo/text-to-image": {
-		ImageSpec: media.ImageSpec{MaxReferences: 10}, edit: "alibaba/qwen-image-2.1-turbo/edit", sendsExpansion: true, sendsThinking: true,
+		ImageSpec: unchecked(10), edit: "alibaba/qwen-image-2.1-turbo/edit", sendsExpansion: true, sendsThinking: true,
 	},
 	"alibaba/qwen-image-3.0-pro/text-to-image": {
-		ImageSpec: media.ImageSpec{MaxReferences: 3}, edit: "alibaba/qwen-image-3.0-pro/edit", sendsExpansion: true,
+		ImageSpec: unchecked(3), edit: "alibaba/qwen-image-3.0-pro/edit", sendsExpansion: true,
 	},
 	"alibaba/qwen-image-3.0/text-to-image": {
-		ImageSpec: media.ImageSpec{MaxReferences: 3}, edit: "alibaba/qwen-image-3.0/edit", sendsExpansion: true,
+		ImageSpec: unchecked(3), edit: "alibaba/qwen-image-3.0/edit", sendsExpansion: true,
 	},
 	"bytedance/seedream-5.0-pro/text-to-image": {
-		ImageSpec: media.ImageSpec{MaxReferences: 10}, edit: "bytedance/seedream-5.0-pro/edit", sendsThinking: true,
+		ImageSpec: unchecked(10), edit: "bytedance/seedream-5.0-pro/edit", sendsThinking: true,
 	},
-	"krea/2-turbo-lora/text-to-image": {},
+	"krea/2-turbo-lora/text-to-image": {ImageSpec: unchecked(0)},
+}
+
+func unchecked(references int) media.ImageSpec {
+	return media.ImageSpec{AspectRatios: media.SevenRatios, Resolutions: media.UpTo2K, MaxReferences: references}
 }
 
 type Images struct {

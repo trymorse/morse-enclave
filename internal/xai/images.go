@@ -11,7 +11,7 @@ import (
 )
 
 var imageModels = map[string]media.ImageSpec{
-	"grok-imagine-image-2.0": {MaxReferences: 5, Qualities: []string{"low", "medium"}},
+	"grok-imagine-image-2.0": media.GrokImagine2,
 }
 
 type Images struct {
@@ -25,7 +25,7 @@ func NewImages(baseURL, apiKey, model string, httpClient *http.Client) (*Images,
 	if err != nil {
 		return nil, err
 	}
-	return &Images{vendor: endpoint(baseURL, apiKey, httpClient, confirmZeroRetention), ImageSpec: spec, model: model}, nil
+	return &Images{vendor: mediaEndpoint(baseURL, apiKey, httpClient), ImageSpec: spec, model: model}, nil
 }
 
 type imageRef struct {

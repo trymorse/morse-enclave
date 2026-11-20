@@ -9,7 +9,7 @@ set -euo pipefail
 step=$1 src=$2 version=$3 environment=$4
 out=$(mkdir -p "$5" && cd "$5" && pwd)
 src=$(cd "$(dirname "$src")" && pwd)/$(basename "$src")
-golang=public.ecr.aws/docker/library/golang:1.27.3-bookworm@sha256:972b4110ba0f47539a975c31e52c64765e1ff19f2d74469ae4a595c6676e80a5
+golang=public.ecr.aws/docker/library/golang:1.27.4-bookworm@sha256:4fa7c968ba93f1635670522dbb01a2c78150443e1385746924566079f36570ea
 amazonlinux=public.ecr.aws/amazonlinux/amazonlinux:2023@sha256:b14d3c9680e4f240c8aa2117f4d4c815a996a7d5b8d266b1113393d2acf92e7b
 amazonlinux_amd64=public.ecr.aws/amazonlinux/amazonlinux:2023@sha256:c0b8ebe9081ee3bd6aa827748a61303b5a31595e0f4ff4b2db3b48f1f549d453
 nitro_cli=1.5.0

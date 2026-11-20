@@ -40,7 +40,13 @@ func (c checkpoint) prompt(prompt string) string {
 var sdxlSizes = media.SizeTable(map[string][2]int{
 	"1:1 1k": {1024, 1024}, "16:9 1k": {1344, 768}, "9:16 1k": {768, 1344}, "4:3 1k": {1216, 896},
 	"3:4 1k": {896, 1216}, "3:2 1k": {1216, 832}, "2:3 1k": {832, 1216},
+	"21:9 1k": {1536, 640}, "4:5 1k": {896, 1152}, "5:4 1k": {1152, 896},
 })
+
+func unchecked(s media.ImageSpec) media.ImageSpec {
+	s.Seed, s.NegativePrompt = false, 0
+	return s
+}
 
 var sdxl = media.ImageDims{Base: sdxlSizes}
 
@@ -67,11 +73,11 @@ func twoKOnly(byRatio map[string][2]int) map[media.Size]media.Dims {
 var imageModels = map[string]imageModel{
 	"bfl:7@1":                     {ImageSpec: media.Flux2Max, dims: media.ImageDims{Base: media.StandardSizes}},
 	"bfl:5@1":                     {ImageSpec: media.Flux2Pro, dims: media.ImageDims{Base: media.StandardSizes}},
-	"bytedance:seedream@5.0-pro":  {ImageSpec: media.Seedream5Pro, dims: media.ImageDims{Base: media.StandardSizes}},
+	"bytedance:seedream@5.0-pro":  {ImageSpec: unchecked(media.Seedream5Pro), dims: media.ImageDims{Base: media.StandardSizes}},
 	"bytedance:seedream@5.0-lite": {ImageSpec: media.Seedream5Lite, dims: media.ImageDims{Base: seedream5LiteSizes}, maxPrompt: 3_000},
 	"bytedance:seedream@4.5":      {ImageSpec: media.Seedream45, dims: media.ImageDims{Base: seedream45Sizes}, maxPrompt: 3_000},
-	"alibaba:qwen-image@3.0-pro":  {ImageSpec: media.QwenImage3, dims: media.ImageDims{Base: media.StandardSizes}},
-	"ideogram:4.5@0":              {ImageSpec: media.Ideogram45, dims: media.ImageDims{Base: media.StandardSizes, Text: media.IdeogramSizes}},
+	"alibaba:qwen-image@3.0-pro":  {ImageSpec: unchecked(media.QwenImage3), dims: media.ImageDims{Base: media.StandardSizes}},
+	"ideogram:4.5@0":              {ImageSpec: unchecked(media.Ideogram45), dims: media.ImageDims{Base: media.StandardSizes, Text: media.IdeogramSizes}},
 	"civitai:312530@1457203":      {ImageSpec: media.SDXLCheckpoint, dims: sdxl, checkpoint: checkpoint{steps: 30, cfg: 4, scheduler: "DPM++ 2M SDE Karras"}},
 	"civitai:139562@789646":       {ImageSpec: media.SDXLCheckpoint, dims: sdxl, checkpoint: checkpoint{steps: 30, scheduler: "DPM++ SDE Karras"}},
 	"civitai:1125067@1471829": {ImageSpec: media.SDXLCheckpoint, dims: sdxl, checkpoint: checkpoint{
@@ -120,6 +126,8 @@ type imageTask struct {
 	TaskUUID       string         `json:"taskUUID"`
 	Model          string         `json:"model"`
 	PositivePrompt string         `json:"positivePrompt"`
+	NegativePrompt string         `json:"negativePrompt,omitempty"`
+	Seed           *int64         `json:"seed,omitempty"`
 	Width          int            `json:"width"`
 	Height         int            `json:"height"`
 	Steps          int            `json:"steps,omitempty"`
@@ -138,7 +146,7 @@ func (p *Images) GenerateImages(ctx context.Context, req *media.ImageRequest) (m
 	dims := p.dims.For(req)
 	task := imageTask{
 		TaskType: "imageInference", TaskUUID: uuid.Format(uuid.New()), Model: p.model, PositivePrompt: p.prompt(req.Prompt()),
-		Width: dims.Width, Height: dims.Height, Steps: p.steps, CFGScale: p.cfg, Scheduler: p.scheduler, NumberResults: req.N,
+		NegativePrompt: req.NegativePrompt(), Seed: req.Seed, Width: dims.Width, Height: dims.Height, Steps: p.steps, CFGScale: p.cfg, Scheduler: p.scheduler, NumberResults: req.N,
 		// Runware prices by compute, not by request: the same request cost $0.0013 and then $0.0019
 		// (2026-10-03).
 		OutputType: "base64Data", OutputFormat: "JPG", IncludeCost: true, DeliveryMethod: "async",

@@ -261,6 +261,25 @@ func TimestampUnverified(document []byte) (time.Time, error) {
 	return time.UnixMilli(body.Timestamp).UTC(), nil
 }
 
+func KeyUnverified(document []byte) ([]byte, error) {
+	var userData []byte
+	var cose sign1
+	var body payload
+	var standIn standInDocument
+	switch {
+	case cbor.Unmarshal(document, &cose) == nil && cose.Payload != nil && cbor.Unmarshal(cose.Payload, &body) == nil:
+		userData = body.UserData
+	case json.Unmarshal(document, &standIn) == nil && standIn.Object == standInObject:
+		userData = standIn.UserData
+	}
+	rest, prefixed := bytes.CutPrefix(userData, []byte(UserDataPrefix))
+	environment, _, found := bytes.Cut(rest, []byte("|"))
+	if !prefixed || !found {
+		return nil, errors.New("the document's user_data does not name a key")
+	}
+	return KeyInUserData(userData, string(environment))
+}
+
 func checkChain(leaf *x509.Certificate, bundle [][]byte, root *x509.Certificate, at time.Time) error {
 	chain := []*x509.Certificate{root}
 	for _, der := range bundle[1:] {

@@ -166,6 +166,7 @@ type MediaAdmission struct {
 	Route      string
 	Units      int
 	References int
+	Resolution string                `json:",omitempty"`
 	Frames     []frameconsent.Digest `json:",omitempty"`
 }
 

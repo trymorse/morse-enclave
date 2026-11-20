@@ -28,7 +28,7 @@ func NewVideos(baseURL, apiKey, model string, httpClient *http.Client) (*Videos,
 	if err != nil {
 		return nil, err
 	}
-	return &Videos{vendor: endpoint(baseURL, apiKey, httpClient, confirmZeroRetention), VideoSpec: spec, model: model}, nil
+	return &Videos{vendor: mediaEndpoint(baseURL, apiKey, httpClient), VideoSpec: spec, model: model}, nil
 }
 
 type uploadTarget struct {

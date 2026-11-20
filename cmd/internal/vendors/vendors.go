@@ -152,6 +152,18 @@ func Build(rt routes.Route, key string, d Deps) (worker.Serving, error) {
 	return builders[rt.Upstream.(routes.Vendor).Provider][rt.Serves.Kind()](rt, key, d)
 }
 
+func ImageSpec(rt routes.Route) (media.ImageSpec, error) {
+	serving, err := Build(rt, "", Deps{})
+	if err != nil {
+		return media.ImageSpec{}, err
+	}
+	images, ok := serving.(worker.Images)
+	if !ok {
+		return media.ImageSpec{}, fmt.Errorf("route %q serves %T, not images", rt.Model, serving)
+	}
+	return images.Spec(), nil
+}
+
 func Attester(rt routes.Route) string {
 	if up, attested := rt.Upstream.(routes.Attested); attested {
 		return up.Attester.Name

@@ -397,22 +397,31 @@
       {"id": "openai-responses", "api_key_env": "META_API_KEY", "base_url": "https://api.meta.ai", "context_tokens": 1048576, "decode_max_tps": 1000, "default_max_tokens": 128000, "hidden_reasoning_tps": 650, "max_output_tokens": 524288, "openrouter_id": "meta/muse-ember", "owned_by": "Meta", "provider": "openai-responses", "provider_name": "meta", "quantization": "unknown", "tier": "anon", "upstream_model": "muse-ember-1.0"}
     ]},
     {"id": "black-forest-labs/flux-2-max", "app_only": true, "kind": "image", "lab": "Black Forest Labs", "label": "FLUX.2 [max]", "uncensored": false, "endpoints": [
-      {"id": "fal", "api_key_env": "FAL_API_KEY", "base_url": "https://queue.fal.run", "owned_by": "Black Forest Labs", "price": {"hold_micros_per_image":160000,"hold_micros_per_reference":120000}, "provider": "fal", "provider_name": "fal", "tier": "anon", "upstream_model": "fal-ai/flux-2-max"}
+      {"id": "fal", "api_key_env": "FAL_API_KEY", "base_url": "https://queue.fal.run", "owned_by": "Black Forest Labs", "price": {"hold_micros_per_image":70000,"hold_micros_per_image_by_resolution":{"2k":160000},"hold_micros_per_reference":120000}, "provider": "fal", "provider_name": "fal", "tier": "anon", "upstream_model": "fal-ai/flux-2-max"}
     ]},
     {"id": "black-forest-labs/flux-2-pro", "app_only": true, "kind": "image", "lab": "Black Forest Labs", "label": "FLUX.2 [pro]", "uncensored": false, "endpoints": [
-      {"id": "fal", "api_key_env": "FAL_API_KEY", "base_url": "https://queue.fal.run", "owned_by": "Black Forest Labs", "price": {"hold_micros_per_image":75000,"hold_micros_per_reference":60000}, "provider": "fal", "provider_name": "fal", "tier": "anon", "upstream_model": "fal-ai/flux-2-pro"}
+      {"id": "fal", "api_key_env": "FAL_API_KEY", "base_url": "https://queue.fal.run", "owned_by": "Black Forest Labs", "price": {"hold_micros_per_image":30000,"hold_micros_per_image_by_resolution":{"2k":75000},"hold_micros_per_reference":60000}, "provider": "fal", "provider_name": "fal", "tier": "anon", "upstream_model": "fal-ai/flux-2-pro"}
     ]},
     {"id": "bytedance/seedream-5-pro", "app_only": true, "kind": "image", "lab": "ByteDance", "label": "Seedream 5.0 Pro", "uncensored": false, "endpoints": [
-      {"id": "fal", "api_key_env": "FAL_API_KEY", "base_url": "https://queue.fal.run", "owned_by": "ByteDance", "price": {"hold_micros_per_image":135000,"hold_micros_per_reference":4500}, "provider": "fal", "provider_name": "fal", "tier": "anon", "upstream_model": "bytedance/seedream/v5/pro/text-to-image"}
+      {"id": "fal", "api_key_env": "FAL_API_KEY", "base_url": "https://queue.fal.run", "owned_by": "ByteDance", "price": {"hold_micros_per_image":67500,"hold_micros_per_image_by_resolution":{"2k":135000},"hold_micros_per_reference":4500}, "provider": "fal", "provider_name": "fal", "tier": "anon", "upstream_model": "bytedance/seedream/v5/pro/text-to-image"}
     ]},
     {"id": "ideogram/ideogram-4.5", "app_only": true, "kind": "image", "lab": "Ideogram", "label": "Ideogram 4.5", "uncensored": false, "endpoints": [
       {"id": "fal", "api_key_env": "FAL_API_KEY", "base_url": "https://queue.fal.run", "owned_by": "Ideogram", "price": {"hold_micros_per_image":220000,"hold_micros_per_reference":0}, "provider": "fal", "provider_name": "fal", "tier": "anon", "upstream_model": "ideogram/v4.5"}
     ]},
     {"id": "alibaba/qwen-image-3-pro", "app_only": true, "kind": "image", "lab": "Alibaba", "label": "Qwen-Image-3.0-Pro", "uncensored": false, "endpoints": [
-      {"id": "fal", "api_key_env": "FAL_API_KEY", "base_url": "https://queue.fal.run", "included": {"from":"pro"}, "owned_by": "Alibaba", "price": {"hold_micros_per_image":75000,"hold_micros_per_reference":3000}, "provider": "fal", "provider_name": "fal", "tier": "anon", "upstream_model": "alibaba/qwen-image-3/text-to-image"}
+      {"id": "fal", "api_key_env": "FAL_API_KEY", "base_url": "https://queue.fal.run", "included": {"from":"pro"}, "owned_by": "Alibaba", "price": {"hold_micros_per_image":40000,"hold_micros_per_image_by_resolution":{"2k":75000},"hold_micros_per_reference":3000}, "provider": "fal", "provider_name": "fal", "tier": "anon", "upstream_model": "alibaba/qwen-image-3/text-to-image"}
     ]},
     {"id": "alibaba/z-image-turbo", "app_only": true, "kind": "image", "lab": "Alibaba", "label": "Z-Image Turbo", "open_weights": true, "uncensored": false, "endpoints": [
-      {"id": "fal", "api_key_env": "FAL_API_KEY", "base_url": "https://queue.fal.run", "included": {"from":"free","quota":"images"}, "owned_by": "Alibaba", "price": {"hold_micros_per_image":20000}, "provider": "fal", "provider_name": "fal", "tier": "anon", "upstream_model": "fal-ai/z-image/turbo"}
+      {"id": "fal", "api_key_env": "FAL_API_KEY", "base_url": "https://queue.fal.run", "included": {"from":"free","quota":"images"}, "owned_by": "Alibaba", "price": {"hold_micros_per_image":5000,"hold_micros_per_image_by_resolution":{"2k":20000}}, "provider": "fal", "provider_name": "fal", "tier": "anon", "upstream_model": "fal-ai/z-image/turbo"}
+    ]},
+    {"id": "bytedance/seedvr2-upscale", "app_only": true, "kind": "image", "lab": "ByteDance", "label": "SeedVR2 Upscale", "uncensored": false, "endpoints": [
+      {"id": "fal", "api_key_env": "FAL_API_KEY", "base_url": "https://queue.fal.run", "owned_by": "ByteDance", "price": {"hold_micros_per_image":5000,"hold_micros_per_image_by_resolution":{"4k":17000}}, "provider": "fal", "provider_name": "fal", "tier": "anon", "upstream_model": "fal-ai/seedvr/upscale/image"}
+    ]},
+    {"id": "bria/rmbg-2.0", "app_only": true, "kind": "image", "lab": "Bria", "label": "Bria RMBG 2.0", "uncensored": false, "endpoints": [
+      {"id": "fal", "api_key_env": "FAL_API_KEY", "base_url": "https://queue.fal.run", "owned_by": "Bria", "price": {"hold_micros_per_image":18000}, "provider": "fal", "provider_name": "fal", "tier": "anon", "upstream_model": "fal-ai/bria/background/remove"}
+    ]},
+    {"id": "black-forest-labs/flux-1-fill-pro", "app_only": true, "kind": "image", "lab": "Black Forest Labs", "label": "FLUX.1 Fill [pro]", "uncensored": false, "endpoints": [
+      {"id": "fal", "api_key_env": "FAL_API_KEY", "base_url": "https://queue.fal.run", "owned_by": "Black Forest Labs", "price": {"hold_micros_per_image":50000,"hold_micros_per_image_by_resolution":{"2k":200000,"4k":800000}}, "provider": "fal", "provider_name": "fal", "tier": "anon", "upstream_model": "fal-ai/flux-pro/v1/fill"}
     ]},
     {"id": "civitai/cyberrealistic-xl", "app_only": true, "kind": "image", "lab": "Stable Diffusion XL fine-tunes", "label": "CyberRealistic XL (Uncensored)", "open_weights": true, "uncensored": true, "endpoints": [
       {"id": "runware", "api_key_env": "RUNWARE_API_KEY", "base_url": "https://api.runware.ai", "included": {"from":"pro"}, "owned_by": "Cyberdelia", "price": {"hold_micros_per_image":5000}, "provider": "runware", "provider_name": "runware", "tier": "anon", "upstream_model": "civitai:312530@1457203"}
@@ -451,10 +460,10 @@
       {"id": "xai", "api_key_env": "XAI_API_KEY", "base_url": "https://api.x.ai", "owned_by": "xAI", "price": {"hold_micros_per_image":80000,"hold_micros_per_reference":10000}, "provider": "xai", "provider_name": "xai", "retention": "zdr", "tier": "private", "upstream_model": "grok-imagine-image-2.0"}
     ]},
     {"id": "google/gemini-3-pro-image", "app_only": true, "kind": "image", "lab": "Google", "label": "Nano Banana Pro", "uncensored": false, "endpoints": [
-      {"id": "gemini", "api_key_env": "GEMINI_API_KEY", "base_url": "https://generativelanguage.googleapis.com", "owned_by": "Google", "price": {"hold_micros_per_image":170000,"hold_micros_per_reference":2300}, "provider": "gemini", "provider_name": "gemini", "tier": "anon", "upstream_model": "gemini-3-pro-image"}
+      {"id": "gemini", "api_key_env": "GEMINI_API_KEY", "base_url": "https://generativelanguage.googleapis.com", "owned_by": "Google", "price": {"hold_micros_per_image":170000,"hold_micros_per_image_by_resolution":{"4k":280000},"hold_micros_per_reference":2300}, "provider": "gemini", "provider_name": "gemini", "tier": "anon", "upstream_model": "gemini-3-pro-image"}
     ]},
     {"id": "google/gemini-3.1-flash-image", "app_only": true, "kind": "image", "lab": "Google", "label": "Nano Banana 2", "uncensored": false, "endpoints": [
-      {"id": "gemini", "api_key_env": "GEMINI_API_KEY", "base_url": "https://generativelanguage.googleapis.com", "owned_by": "Google", "price": {"hold_micros_per_image":110000,"hold_micros_per_reference":600}, "provider": "gemini", "provider_name": "gemini", "tier": "anon", "upstream_model": "gemini-3.1-flash-image"}
+      {"id": "gemini", "api_key_env": "GEMINI_API_KEY", "base_url": "https://generativelanguage.googleapis.com", "owned_by": "Google", "price": {"hold_micros_per_image":77000,"hold_micros_per_image_by_resolution":{"2k":110000,"4k":161000},"hold_micros_per_reference":600}, "provider": "gemini", "provider_name": "gemini", "tier": "anon", "upstream_model": "gemini-3.1-flash-image"}
     ]},
     {"id": "google/gemini-3.1-flash-lite-image", "app_only": true, "kind": "image", "lab": "Google", "label": "Nano Banana 2 Lite", "uncensored": false, "endpoints": [
       {"id": "gemini", "api_key_env": "GEMINI_API_KEY", "base_url": "https://generativelanguage.googleapis.com", "included": {"from":"pro"}, "owned_by": "Google", "price": {"hold_micros_per_image":40000,"hold_micros_per_reference":300}, "provider": "gemini", "provider_name": "gemini", "tier": "anon", "upstream_model": "gemini-3.1-flash-lite-image"}
@@ -592,6 +601,9 @@
     {"name": "ideogram-4.5", "model": "ideogram/ideogram-4.5", "endpoint": "fal"},
     {"name": "qwen-image-3-pro", "model": "alibaba/qwen-image-3-pro", "endpoint": "fal"},
     {"name": "z-image-turbo", "model": "alibaba/z-image-turbo", "endpoint": "fal"},
+    {"name": "upscale", "model": "bytedance/seedvr2-upscale", "endpoint": "fal"},
+    {"name": "remove-background", "model": "bria/rmbg-2.0", "endpoint": "fal"},
+    {"name": "inpaint", "model": "black-forest-labs/flux-1-fill-pro", "endpoint": "fal"},
     {"name": "cyberrealistic-xl", "model": "civitai/cyberrealistic-xl", "endpoint": "runware"},
     {"name": "realvisxl-5", "model": "civitai/realvisxl-5", "endpoint": "runware"},
     {"name": "cyberillustrious", "model": "civitai/cyberillustrious", "endpoint": "runware"},

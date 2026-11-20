@@ -28,8 +28,9 @@ type imageModel struct {
 	rates rates
 }
 
-// https://ai.google.dev/gemini-api/docs/pricing, checked 2026-10-09. The dearest image a route draws is 1,120
-// tokens on Pro at 1K or 2K ($0.134), 1,680 on Nano Banana 2 at 2K ($0.101) and 1,120 on Lite at 1K ($0.0336).
+// why: https://ai.google.dev/gemini-api/docs/pricing (2026-11-19): an image is 1,120 tokens at 1K and 2K and 2,000 at 4K
+// on Pro, 1,120, 1,680, and 2,520 on Nano Banana 2, and 1,120 at 1K on Lite. generationConfig.seed exists, but Google's
+// image guide never says it steers an image.
 var imageModels = map[string]imageModel{
 	"gemini-3-pro-image":          {ImageSpec: media.NanoBananaPro, rates: rates{prompt: 2_000_000, text: 12_000_000, image: 120_000_000}},
 	"gemini-3.1-flash-image":      {ImageSpec: media.NanoBanana2, rates: rates{prompt: 500_000, text: 3_000_000, image: 60_000_000}},
