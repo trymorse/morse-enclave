@@ -22,6 +22,7 @@ import (
 
 type InProcess struct {
 	chats          map[string]chatName
+	retired        map[string]string
 	images         map[string]media.ImageGenerator
 	videos         map[string]media.VideoGenerator
 	searches       map[string]web.Searcher
@@ -71,6 +72,7 @@ func (NopReporter) VendorUsageMissing(string)                 {}
 
 type Config struct {
 	Models         map[string]Model
+	Retired        map[string]string
 	Lookup         *lookup.Relay
 	Plugins        *plugins.Relay
 	Reports        Reporter
@@ -93,7 +95,7 @@ func NewInProcess(cfg Config) (*InProcess, error) {
 		}
 	}
 	w := &InProcess{
-		chats: indexChats(cfg.Models), images: map[string]media.ImageGenerator{}, videos: map[string]media.VideoGenerator{},
+		chats: indexChats(cfg.Models), retired: cfg.Retired, images: map[string]media.ImageGenerator{}, videos: map[string]media.VideoGenerator{},
 		searches: map[string]web.Searcher{}, fetches: map[string]web.Fetcher{}, researchers: map[string]research.Researcher{}, transcribers: map[string]transcriber{},
 		speakers:  map[string]speech.Speaker{},
 		endpoints: map[string]catalog.EndpointID{},
@@ -114,8 +116,18 @@ func NewInProcess(cfg Config) (*InProcess, error) {
 		w.indexNonChat(name, m)
 		named = append(named, catalog.Named{Name: name, Model: m.ID, Tier: m.Tier, Order: m.Order})
 	}
-	for id, name := range catalog.IDNames(named) {
+	idNames := catalog.IDNames(named)
+	for id, name := range idNames {
 		w.indexNonChat(id, cfg.Models[name])
+	}
+	for name, to := range cfg.Retired {
+		live := cmp.Or(idNames[to], to)
+		if c, ok := w.chats[live]; ok {
+			w.chats[name] = c
+		}
+		if tier, ok := w.tiers[live]; ok {
+			w.tiers[name] = tier
+		}
 	}
 	w.counters.init(cfg.CountingSlots)
 	return w, nil

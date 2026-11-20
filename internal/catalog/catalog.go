@@ -171,6 +171,24 @@ var modalityNames = enum.Names[Modality]{ModalityText: "text", ModalityImage: "i
 
 func (m Modality) String() string { return modalityNames.String(m) }
 
+type ReasoningView uint8
+
+const (
+	ReasoningShown ReasoningView = iota
+	ReasoningHidden
+	ReasoningSummarized
+)
+
+var reasoningViewNames = enum.Names[ReasoningView]{ReasoningShown: "shown", ReasoningHidden: "hidden", ReasoningSummarized: "summarized"}
+
+func (v ReasoningView) Hides() bool { return v == ReasoningHidden || v == ReasoningSummarized }
+
+func (v ReasoningView) Summarizes() bool { return v == ReasoningSummarized }
+
+func (v ReasoningView) String() string { return reasoningViewNames.String(v) }
+
+func (v ReasoningView) MarshalText() ([]byte, error) { return reasoningViewNames.MarshalText(v) }
+
 type ChatTerms struct {
 	MaxOutputTokens        int
 	DefaultMaxTokens       int
@@ -180,8 +198,7 @@ type ChatTerms struct {
 	Inputs                 Inputs
 	ContextTokens          int
 	CompactAtTokens        int
-	HidesReasoning         bool
-	SummarizesReasoning    bool
+	ReasoningView          ReasoningView
 	Quantization           Quantization
 	NoCharacters           bool
 	ResponseFormats        ResponseFormats

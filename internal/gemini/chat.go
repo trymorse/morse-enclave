@@ -123,8 +123,8 @@ func (s *translation) part(p replyPart) error {
 
 func (t translator) request(conv completions.Conversation) request {
 	out := request{GenerationConfig: generationConfig{MaxOutputTokens: conv.OutputLimit}}
-	if conv.ForwardedEffort != "" || conv.SummarizesReasoning {
-		out.GenerationConfig.ThinkingConfig = &thinkingConfig{ThinkingLevel: conv.ForwardedEffort, IncludeThoughts: conv.SummarizesReasoning}
+	if conv.ForwardedEffort != "" || conv.ReasoningView.Summarizes() {
+		out.GenerationConfig.ThinkingConfig = &thinkingConfig{ThinkingLevel: conv.ForwardedEffort, IncludeThoughts: conv.ReasoningView.Summarizes()}
 	}
 	if len(conv.Tools) > 0 {
 		out.Tools = []toolSet{{FunctionDeclarations: declarations(conv.Tools)}}

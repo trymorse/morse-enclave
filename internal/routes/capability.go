@@ -353,13 +353,11 @@ func (c capability) checkRouteFixes(up Upstream, rt Route, chat Chat) error {
 
 func (c capability) reasoningShown(up Upstream, chat Chat) error {
 	switch {
-	case c.hides && chat.reasons() && !chat.HidesReasoning:
+	case c.hides && chat.reasons() && !chat.ReasoningView.Hides():
 		return fmt.Errorf("uses %s, which keeps a model's reasoning from the client, and must set hides_reasoning", up)
-	case (!c.hides || !chat.reasons()) && chat.HidesReasoning:
+	case (!c.hides || !chat.reasons()) && chat.ReasoningView.Hides():
 		return fmt.Errorf("sets hides_reasoning, but %s streams whatever reasoning the model does", up)
-	case chat.SummarizesReasoning && !chat.HidesReasoning:
-		return fmt.Errorf("sets summarizes_reasoning without hides_reasoning")
-	case chat.SummarizesReasoning && !c.summarizes:
+	case chat.ReasoningView.Summarizes() && !c.summarizes:
 		return fmt.Errorf("sets summarizes_reasoning, but the proxy asks %s for no summary of the reasoning it hides", up)
 	case chat.AnswersInReasoning && !c.answersFromReasoning:
 		return fmt.Errorf("sets answers_in_reasoning, but %s would show a reply that is all reasoning as an empty answer", up)
@@ -369,11 +367,11 @@ func (c capability) reasoningShown(up Upstream, chat Chat) error {
 
 func (c Chat) thinkingTerms() error {
 	switch {
-	case !c.HidesReasoning && c.HiddenReasoningTPS != 0:
+	case !c.ReasoningView.Hides() && c.HiddenReasoningTPS != 0:
 		return fmt.Errorf("sets hidden_reasoning_tps without hides_reasoning")
-	case !c.HidesReasoning && c.DecodeMaxTPS != 0:
+	case !c.ReasoningView.Hides() && c.DecodeMaxTPS != 0:
 		return fmt.Errorf("sets decode_max_tps, which only a route that sets hides_reasoning takes")
-	case !c.HidesReasoning:
+	case !c.ReasoningView.Hides():
 		return nil
 	case c.HiddenReasoningTPS <= 0 || c.DecodeMaxTPS <= 0:
 		return fmt.Errorf("sets hides_reasoning and needs a positive hidden_reasoning_tps and decode_max_tps, both measured")

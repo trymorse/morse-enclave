@@ -88,7 +88,7 @@ func newRequest(conv completions.Conversation, model string) request {
 	if conv.ForwardedEffort != "" {
 		out.Reasoning = &reasoning{Effort: conv.ForwardedEffort}
 	}
-	if conv.SummarizesReasoning && conv.ForwardedEffort != chat.NoEffort {
+	if conv.ReasoningView.Summarizes() && conv.ForwardedEffort != chat.NoEffort {
 		out.Reasoning = &reasoning{Effort: conv.ForwardedEffort, Summary: summaryAuto}
 	}
 	return out

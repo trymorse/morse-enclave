@@ -36,16 +36,44 @@ func Load(path string, defaultMarkup money.Markup) ([]Route, error) {
 }
 
 func Read(path string, defaultMarkup money.Markup) (rts []Route, digest string, err error) {
+	f, digest, err := ReadFile(path, defaultMarkup)
+	return f.Routes, digest, err
+}
+
+func ReadFile(path string, defaultMarkup money.Markup) (f File, digest string, err error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
-		return nil, "", err
+		return File{}, "", err
 	}
 	sum := sha256.Sum256(raw)
-	rts, err = Parse(raw, defaultMarkup)
-	return rts, hex.EncodeToString(sum[:]), err
+	f, err = ParseFile(raw, defaultMarkup)
+	return f, hex.EncodeToString(sum[:]), err
 }
 
 func Parse(data []byte, defaultMarkup money.Markup) ([]Route, error) {
+	f, err := ParseFile(data, defaultMarkup)
+	return f.Routes, err
+}
+
+func ParseFile(data []byte, defaultMarkup money.Markup) (File, error) {
+	rts, err := parseRoutes(data, defaultMarkup)
+	if err != nil {
+		return File{}, err
+	}
+	var file struct {
+		Retired []Retirement `json:"retired"`
+	}
+	if err := json.Unmarshal(data, &file); err != nil {
+		return File{}, fmt.Errorf("routes file: %w", err)
+	}
+	retired, err := retiredNames(file.Retired, rts)
+	if err != nil {
+		return File{}, err
+	}
+	return File{Routes: rts, Retired: retired}, nil
+}
+
+func parseRoutes(data []byte, defaultMarkup money.Markup) ([]Route, error) {
 	flat, err := flatten(data)
 	if err != nil {
 		return nil, err

@@ -61,15 +61,11 @@ func ParseVendorStatement(raw []byte) (VendorStatement, error) {
 	}
 	st.digests = map[string][sha256.Size]byte{}
 	for _, path := range VendorFiles {
-		var h string
-		if err := json.Unmarshal(listed[path], &h); err != nil {
+		sum, err := lowercaseSHA256(listed[path])
+		if err != nil {
 			return VendorStatement{}, fmt.Errorf("%w: %s: %v", ErrStatement, path, err)
 		}
-		sum, err := hex.DecodeString(h)
-		if err != nil || len(sum) != sha256.Size || h != hex.EncodeToString(sum) {
-			return VendorStatement{}, fmt.Errorf("%w: %s is not 64 lowercase hex digits", ErrStatement, path)
-		}
-		st.digests[path] = [sha256.Size]byte(sum)
+		st.digests[path] = sum
 	}
 	return st, nil
 }

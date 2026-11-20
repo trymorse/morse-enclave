@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"morse/backend/internal/apierr"
+	"morse/backend/internal/catalog"
 	"morse/backend/internal/chat"
 	"morse/backend/internal/dataurl"
 	"morse/backend/internal/jsonx"
@@ -90,10 +91,10 @@ type Conversation struct {
 	OutputLimit int
 	// Effort is the effort the call asks for, and ForwardedEffort the one the vendor accepts nearest to it, or
 	// "" when it accepts none at or around it.
-	Effort              string
-	ForwardedEffort     string
-	RequestBytes        int
-	SummarizesReasoning bool
+	Effort          string
+	ForwardedEffort string
+	RequestBytes    int
+	ReasoningView   catalog.ReasoningView
 }
 
 // Exchange is one side's consecutive turns, which a vendor whose roles must alternate takes as one message.

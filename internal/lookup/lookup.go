@@ -10,13 +10,13 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
 	"morse/backend/internal/apierr"
 	"morse/backend/internal/flight"
 	"morse/backend/internal/plans/limits"
+	"morse/backend/internal/retryafter"
 	"morse/backend/internal/upstream"
 )
 
@@ -164,8 +164,8 @@ func isJSON(contentType string) bool {
 }
 
 func retryAfter(h http.Header) time.Duration {
-	if seconds, err := strconv.Atoi(h.Get("Retry-After")); err == nil && seconds > 0 {
-		return time.Duration(seconds) * time.Second
+	if wait, ok := retryafter.Parse(h.Get("Retry-After"), time.Now()); ok && wait > 0 {
+		return wait
 	}
 	return busyRetryAfter
 }

@@ -235,3 +235,39 @@ func TestNoFormattingLeaksAKeyADigestOrAConversation(t *testing.T) {
 		}
 	}
 }
+
+func TestTheTrialDrawGrowsWithItsShareAndFallsIndependentlyOfEveryOtherDraw(t *testing.T) {
+	convs := conversations(t, 10_000)
+	for _, c := range convs {
+		was := false
+		for _, share := range []affinity.Share{0, 500, 5_000, 10_000} {
+			now := c.Trial(share)
+			if share == 0 && now || share == affinity.WholeShare && !now || was && !now {
+				t.Fatalf("%s: in the trial at %d is %t after %t", c.Short(), share, now, was)
+			}
+			was = now
+		}
+	}
+	half := affinity.WholeShare / 2
+	in := 0
+	both := map[string]int{}
+	for _, c := range convs {
+		if !c.Trial(half) {
+			continue
+		}
+		in++
+		for name, draw := range draws {
+			if draw(c, half) {
+				both[name]++
+			}
+		}
+	}
+	if in < 4_800 || in > 5_200 {
+		t.Errorf("%d of 10000 conversations in a half share, want about 5000", in)
+	}
+	for name := range draws {
+		if both[name] < 2_300 || both[name] > 2_700 {
+			t.Errorf("%d of 10000 conversations fall in both the trial and %s at half shares, want about 2500", both[name], name)
+		}
+	}
+}

@@ -68,7 +68,8 @@ func build(getenv func(string) string, log *logger) (built, error) {
 	if path == "" {
 		return built{}, errors.New("PROXY_ROUTES_FILE is required")
 	}
-	rts, digest, err := routes.Read(path, money.ListPrice)
+	file, digest, err := routes.ReadFile(path, money.ListPrice)
+	rts := file.Routes
 	if err != nil {
 		return built{}, fmt.Errorf("PROXY_ROUTES_FILE: %w", err)
 	}
@@ -153,6 +154,7 @@ func build(getenv func(string) string, log *logger) (built, error) {
 	instance := rand.Text()
 	inner, err := worker.NewInProcess(worker.Config{
 		Models:   models,
+		Retired:  file.Retired,
 		Lookup:   lookup.New(services, client, time.Now),
 		Plugins:  pluginRelay,
 		Reports:  log,

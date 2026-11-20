@@ -32,3 +32,17 @@ func (w Window) Add(k Key, o Outcome, requests uint64, ttft Counts, rates Rates)
 	}
 	t.DecodeRate.Add(rates)
 }
+
+func (t *Tally) Merge(o Tally) {
+	t.Replies, t.Malformed, t.Failed = t.Replies+o.Replies, t.Malformed+o.Malformed, t.Failed+o.Failed
+	if t.TTFT == nil {
+		t.TTFT = Counts{}
+	}
+	if t.DecodeRate == nil {
+		t.DecodeRate = Rates{}
+	}
+	for bound, n := range o.TTFT {
+		t.TTFT[bound] += n
+	}
+	t.DecodeRate.Add(o.DecodeRate)
+}

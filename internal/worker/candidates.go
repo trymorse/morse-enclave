@@ -175,8 +175,10 @@ func inTheClearAt(floor catalog.Tier) func(chatRoute) bool {
 	return func(r chatRoute) bool { return !r.tier.Attested() && r.tier >= floor }
 }
 
-func (n chatName) sealUnder() error {
-	return apierr.Error{Status: http.StatusBadRequest, Type: "e2ee_header_missing", Code: "e2ee_header_missing", Message: fmt.Sprintf("A chat on this model is sealed to its e2ee endpoint, which serves it as %q, the name its receipt binds: seal the request and send model %q.", n.sealsAs, n.sealsAs)}
+func (n chatName) sealUnder() error { return SealUnder(n.sealsAs) }
+
+func SealUnder(name string) error {
+	return apierr.Error{Status: http.StatusBadRequest, Type: "e2ee_header_missing", Code: "e2ee_header_missing", Message: fmt.Sprintf("A chat on this model is sealed to its e2ee endpoint, which serves it as %q, the name its receipt binds: seal the request and send model %q.", name, name)}
 }
 
 func (n chatName) sealedElsewhere() error {

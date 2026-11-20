@@ -75,11 +75,15 @@ func (r chatRoute) chat(defaultMarkup money.Markup) (Chat, error) {
 	if err != nil {
 		return Chat{}, err
 	}
+	view, err := r.reasoningView()
+	if err != nil {
+		return Chat{}, err
+	}
 	return Chat{
 		ChatTerms: catalog.ChatTerms{
 			MaxOutputTokens: r.MaxOutputTokens, DefaultMaxTokens: r.DefaultMaxTokens, DefaultReasoningEffort: r.DefaultReasoningEffort, ReasoningEfforts: r.ReasoningEfforts,
 			AlwaysReasons: r.AlwaysReasons,
-			Inputs:        inputs, ContextTokens: r.ContextTokens, CompactAtTokens: compactAt, HidesReasoning: r.HidesReasoning, SummarizesReasoning: r.SummarizesReasoning,
+			Inputs:        inputs, ContextTokens: r.ContextTokens, CompactAtTokens: compactAt, ReasoningView: view,
 			Quantization: quantization, Fixes: r.withTools(), NoCharacters: r.Characters != nil && !*r.Characters,
 			ResponseFormats: formats,
 		},
@@ -87,6 +91,18 @@ func (r chatRoute) chat(defaultMarkup money.Markup) (Chat, error) {
 		Tokenizer: r.Tokenizer, HiddenReasoningTPS: r.HiddenReasoningTPS,
 		OpenRouterID: cmp.Or(r.OpenRouterID, r.UpstreamModel),
 	}, nil
+}
+
+func (r chatRoute) reasoningView() (catalog.ReasoningView, error) {
+	switch {
+	case r.SummarizesReasoning && !r.HidesReasoning:
+		return 0, errors.New("sets summarizes_reasoning without hides_reasoning")
+	case r.SummarizesReasoning:
+		return catalog.ReasoningSummarized, nil
+	case r.HidesReasoning:
+		return catalog.ReasoningHidden, nil
+	}
+	return catalog.ReasoningShown, nil
 }
 
 func (r chatRoute) quantization() (catalog.Quantization, error) {

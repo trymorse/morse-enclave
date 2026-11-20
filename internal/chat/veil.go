@@ -143,6 +143,15 @@ func (r *Request) Without(name string) *Request {
 	return &out
 }
 
+func (r *Request) With(name string, raw json.RawMessage) *Request {
+	out := *r
+	out.fields = maps.Clone(r.fields)
+	out.fields[name] = raw
+	out.raw = encodeObject(out.fields)
+	out.messages = sync.OnceValues(out.parseMessages)
+	return &out
+}
+
 // Veiled is the request with each text VeilTexts lists rewritten by veil: its messages' texts, and each description,
 // title, enum, const, default and example string of its tools. Each assistant tool call is rebuilt as its id, type,
 // name and arguments, so it carries nothing else, and its arguments stay JSON: a number veil changes becomes a

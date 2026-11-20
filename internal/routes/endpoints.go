@@ -22,6 +22,8 @@ var (
 
 var ModelFields = []string{"label", "lab", "open_weights", "uncensored", "kind", "reasoning_efforts", "always_reasons", "input_modalities", "hides_reasoning", "answers_in_reasoning", "tools", "characters", "markup", "app_only", "picks", "prices", "rebate_share_bps"}
 
+var EndpointModelFields = []string{"app_only", "input_modalities", "reasoning_efforts"}
+
 // FallbackFields are the fields in which a later e2ee endpoint of a model may differ from the first, whose fallback it
 // is.
 var FallbackFields = []string{"attester", "base_url", "api_key_env", "provider_name", "quantization"}
@@ -104,6 +106,7 @@ func (e endpoint) sealed() bool {
 type modelsFile struct {
 	Models      []json.RawMessage `json:"models"`
 	Aliases     []Alias           `json:"aliases"`
+	Retired     []Retirement      `json:"retired"`
 	PrivacyVeil json.RawMessage   `json:"privacy_veil"`
 }
 
@@ -234,16 +237,54 @@ func parseModel(raw json.RawMessage) (model, error) {
 		delete(ef, "sealed_model")
 		delete(ef, "unnamed")
 		for _, k := range slices.Sorted(maps.Keys(ef)) {
-			if slices.Contains(ModelFields, k) || k == "model" || k == "fallbacks" {
+			_, modelSets := top[k]
+			switch {
+			case slices.Contains(EndpointModelFields, k) && modelSets:
+				return model{}, fmt.Errorf("model %q and its endpoint %q both set %q; set it on the model, or on each endpoint and not the model", m.id, e.id, k)
+			case slices.Contains(EndpointModelFields, k):
+			case slices.Contains(ModelFields, k) || k == "model" || k == "fallbacks":
 				return model{}, fmt.Errorf("model %q endpoint %q sets %q, which is not an endpoint field", m.id, e.id, k)
 			}
 		}
 		m.endpoints = append(m.endpoints, e)
 	}
+	if err := m.checkEndpointModelFields(); err != nil {
+		return model{}, err
+	}
 	if err := m.checkPicks(); err != nil {
 		return model{}, err
 	}
 	return m, m.checkPrices()
+}
+
+func (m model) checkEndpointModelFields() error {
+	first := map[string]endpoint{}
+	for _, e := range m.endpoints {
+		f, seen := first[e.tier()]
+		if !seen {
+			first[e.tier()] = e
+			continue
+		}
+		for _, k := range EndpointModelFields {
+			if !sameField(k, f.fields[k], e.fields[k]) {
+				return fmt.Errorf("model %q endpoints %q and %q serve tier %s and differ in %s; a chat fails over between them, so give them the same", m.id, f.id, e.id, e.tier(), k)
+			}
+		}
+	}
+	return nil
+}
+
+func sameField(k string, a, b json.RawMessage) bool {
+	if k == "app_only" {
+		var x, y bool
+		json.Unmarshal(a, &x)
+		json.Unmarshal(b, &y)
+		return x == y
+	}
+	var x, y bytes.Buffer
+	json.Compact(&x, a)
+	json.Compact(&y, b)
+	return bytes.Equal(x.Bytes(), y.Bytes())
 }
 
 // checkPrices holds a model to one price per tier it serves: the keys of prices are exactly the tiers of its

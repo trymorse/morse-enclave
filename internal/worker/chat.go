@@ -156,6 +156,9 @@ func (w *InProcess) openChat(o Opening, d dialect.Dialect, compaction bool) (Adm
 	var wantErr error
 	if p.scheme == nil {
 		req = req.Without(privacyVeilField)
+		if _, retired := w.retired[req.Model]; retired {
+			req = asRetiredNameWasServed(name, req)
+		}
 		want, wantErr = floorOf(req)
 	}
 	ask := askOf(p, o.KeyCaller, req)
@@ -283,6 +286,21 @@ func forwardingSettings(settings []string) narrowing {
 		_, forwards := plain.Provider.(openaicompat.SettingsForwarder)
 		return ok && forwards
 	}, func([]chatRoute) error { return openaicompat.SettingsRefusal(settings[0]) })
+}
+
+var anyJSONObject = json.RawMessage(`{"type":"json_schema","json_schema":{"name":"json_object","schema":{"type":"object"}}}`)
+
+func asRetiredNameWasServed(name chatName, req *chat.Request) *chat.Request {
+	if format, asked := openaicompat.ResponseFormatOf(req); !asked || format != catalog.ResponseFormatJSONObject {
+		return req
+	}
+	honoured := func(f catalog.ResponseFormat) bool {
+		return slices.ContainsFunc(slices.Concat(name.named, name.plaintext), func(r chatRoute) bool { return r.ResponseFormats.Honours(f) })
+	}
+	if honoured(catalog.ResponseFormatJSONObject) || !honoured(catalog.ResponseFormatJSONSchema) {
+		return req
+	}
+	return req.With("response_format", anyJSONObject)
 }
 
 func honouringResponseFormat(req *chat.Request) narrowing {
@@ -672,8 +690,8 @@ func (u Plain) serve(ctx context.Context, w *InProcess, o *openedChat, a attempt
 		transcript = chat.NewTranscript(transcriptLimit(a.call))
 	}
 	var clock *thinkingClock
-	if a.route.HidesReasoning {
-		clock = &thinkingClock{now: w.now, summarized: a.route.SummarizesReasoning}
+	if a.route.ReasoningView.Hides() {
+		clock = &thinkingClock{now: w.now, summarized: a.route.ReasoningView.Summarizes()}
 	}
 	var got served
 	retry := chat.BusyRetry{Provider: u.Provider, Waits: a.waits, HedgeAfter: a.hedgeAfter, StallAfter: a.stallAfter}
@@ -734,7 +752,7 @@ func (s served) evidence(end ending, a attempt, g ChatGrant) measure.Evidence {
 		Unanswered:         s.unanswered,
 		Answer:             s.answer,
 		ReasoningRequested: c.Reasoned(r.Reasoning),
-		HidesReasoning:     r.HidesReasoning,
+		HidesReasoning:     r.ReasoningView.Hides(),
 		OutputLimit:        c.OutputLimit,
 		ReplyBytesPerToken: g.Figures.ReplyBytesPerToken,
 		ReasoningCap:       g.ReasoningCap,

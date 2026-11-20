@@ -8,6 +8,7 @@ import (
 	"net/http"
 
 	"morse/backend/internal/apierr"
+	"morse/backend/internal/catalog"
 	"morse/backend/internal/chat"
 	"morse/backend/internal/jsonx"
 	"morse/backend/internal/sse"
@@ -58,8 +59,8 @@ type Provider struct {
 	Translator Translator
 	// ReadsToEnd marks a vendor whose stream has no closing event: once the reply has finished, the end of the
 	// stream is its clean end.
-	ReadsToEnd          bool
-	SummarizesReasoning bool
+	ReadsToEnd    bool
+	ReasoningView catalog.ReasoningView
 }
 
 var _ chat.Provider = (*Provider)(nil)
@@ -93,7 +94,7 @@ func (p *Provider) Complete(ctx context.Context, c chat.Call) (chat.Chunk, chat.
 }
 
 func (p *Provider) run(ctx context.Context, conv Conversation, w *Writer) (chat.Usage, bool, error) {
-	conv.SummarizesReasoning = p.SummarizesReasoning
+	conv.ReasoningView, w.view = p.ReasoningView, p.ReasoningView
 	path, accept, body := p.Translator.Request(conv)
 	resp, err := p.Open(ctx, upstream.Request{Method: http.MethodPost, Path: path, Header: http.Header{"Accept": {accept}}, Body: jsonx.Encode(body)})
 	if err != nil {
@@ -118,6 +119,7 @@ type Writer struct {
 	finished bool
 	reasoned bool
 	apart    bool
+	view     catalog.ReasoningView
 	calls    map[int]*toolCall
 	usage    chat.Usage
 	detailed bool
@@ -157,6 +159,9 @@ func (w *Writer) Text(fragment string) error {
 func (w *Writer) ReasoningBlock() { w.apart = w.reasoned }
 
 func (w *Writer) Reasoning(fragment string) error {
+	if w.view == catalog.ReasoningHidden {
+		return nil
+	}
 	if err := w.Start(); err != nil || fragment == "" {
 		return err
 	}

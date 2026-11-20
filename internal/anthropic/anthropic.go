@@ -266,7 +266,7 @@ func (t translator) request(conv completions.Conversation) request {
 	if conv.ForwardedEffort != "" && conv.Effort != chat.NoEffort {
 		out.OutputConfig = &outputConfig{Effort: conv.ForwardedEffort}
 	}
-	if conv.SummarizesReasoning {
+	if conv.ReasoningView.Summarizes() {
 		out.Thinking = &thinking{Type: "adaptive", Display: "summarized"}
 	}
 	system, exchanges := conv.Alternating()

@@ -89,6 +89,11 @@ func (c Conversation) Spread(share Share) bool { return under(c[8:16], share) }
 // Canary reads bytes 16..24, a slice neither Ramped nor Spread reads.
 func (c Conversation) Canary(share Share) bool { return under(c[16:24], share) }
 
+func (c Conversation) Trial(share Share) bool {
+	sum := sha256.Sum256(append(c[:], "/trial"...))
+	return under(sum[0:8], share)
+}
+
 func under(slice []byte, share Share) bool {
 	return basisPointsOf(binary.BigEndian.Uint64(slice)) < uint64(share)
 }
