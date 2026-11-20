@@ -119,6 +119,11 @@ func (s *translation) events() completions.Events {
 			return false, s.w.ToolStart(e.OutputIndex, e.Item.CallID, e.Item.Name)
 		}),
 		"response.output_text.delta": completions.On(func(e deltaEvent) (bool, error) { return false, s.w.Text(e.Delta) }),
+		"response.reasoning_summary_part.added": func([]byte) (bool, error) {
+			s.w.ReasoningBlock()
+			return false, nil
+		},
+		"response.reasoning_summary_text.delta": completions.On(func(e deltaEvent) (bool, error) { return false, s.w.Reasoning(e.Delta) }),
 		"response.refusal.delta": completions.On(func(e deltaEvent) (bool, error) {
 			s.refused = true
 			return false, s.w.Refusal(e.Delta)

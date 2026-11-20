@@ -104,7 +104,7 @@ func openAll(t *testing.T, cek [cekSize]byte, chunks [][]byte) (ReplyHead, [][]b
 	return reply.Head, frames, finals
 }
 
-func TestTheHeadAndTheFirstBodyBytesGoOutAtOnceAndLaterOnesBatchForFiftyMilliseconds(t *testing.T) {
+func TestTheHeadGoesOutAtOnceTheFirstEventGoesWholeAfterTwoMillisecondsAndLaterOnesBatchForFifty(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		cek, _ := testKeys(t)
 		w := &timedWriter{}
@@ -119,15 +119,22 @@ func TestTheHeadAndTheFirstBodyBytesGoOutAtOnceAndLaterOnesBatchForFiftyMillisec
 		if chunks, _ := w.writes(); len(chunks) != 1 {
 			t.Fatalf("%d writes once Begin returned, want the salt with the head", len(chunks))
 		}
-		s.Write([]byte("data: a\n\n"))
+		s.Write([]byte("data: "))
+		s.Write([]byte("a"))
+		s.Write([]byte("\n\n"))
+		if chunks, _ := w.writes(); len(chunks) != 1 {
+			t.Fatalf("%d writes once the first event's writes returned, want them gathered", len(chunks))
+		}
+		time.Sleep(Gather)
+		synctest.Wait()
 		if chunks, _ := w.writes(); len(chunks) != 2 {
-			t.Fatalf("%d writes once the first body write returned, want it sent at once rather than a batch after the head", len(chunks))
+			t.Fatalf("%d writes once the gather passed, want the first event sent", len(chunks))
 		}
 		s.Write([]byte("data: b\n\n"))
 		s.Write([]byte("data: c\n\n"))
 		synctest.Wait()
 		if chunks, _ := w.writes(); len(chunks) != 2 {
-			t.Fatalf("%d writes before the batch passed, want the second and third body writes held", len(chunks))
+			t.Fatalf("%d writes before the batch passed, want the second and third events held", len(chunks))
 		}
 		time.Sleep(Batch)
 		synctest.Wait()
@@ -141,16 +148,16 @@ func TestTheHeadAndTheFirstBodyBytesGoOutAtOnceAndLaterOnesBatchForFiftyMillisec
 		}
 		chunks, at := w.writes()
 		if len(chunks) != 5 {
-			t.Fatalf("%d writes, want the salt with the head, the first body frame, one batched frame, one frame sent at once, and the final frame", len(chunks))
+			t.Fatalf("%d writes, want the salt with the head, the first event, one batched frame, one frame sent at once, and the final frame", len(chunks))
 		}
 		if len(chunks[0]) != saltSize+4+Pad+tagSize {
 			t.Errorf("the first write is %d bytes, want the salt and the head's frame", len(chunks[0]))
 		}
-		if gap := at[1].Sub(at[0]); gap != 0 {
-			t.Errorf("the first body frame went out %v after the head, want at once", gap)
+		if gap := at[1].Sub(at[0]); gap != Gather {
+			t.Errorf("the first event went out %v after the head, want %v", gap, Gather)
 		}
 		if gap := at[2].Sub(at[1]); gap != Batch {
-			t.Errorf("the batched frame went out %v after the first body frame, want %v", gap, Batch)
+			t.Errorf("the batched frame went out %v after the first event, want %v", gap, Batch)
 		}
 		if gap := at[3].Sub(at[2]); gap != Batch {
 			t.Errorf("the frame sent at once went out %v after the batched one, want %v", gap, Batch)
@@ -167,6 +174,30 @@ func TestTheHeadAndTheFirstBodyBytesGoOutAtOnceAndLaterOnesBatchForFiftyMillisec
 		}
 		if w.flushes != 5 {
 			t.Errorf("%d flushes, want one per write", w.flushes)
+		}
+	})
+}
+
+func TestAReplyThatEndsInsideTheGatherSendsItsBodyInTheFinalFrameAtOnce(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		cek, _ := testKeys(t)
+		w := &timedWriter{}
+		s, _ := NewStream(w, w.flush, cek)
+		s.Begin(ReplyHead{Status: 200})
+		s.Write([]byte(`{"ok":true}`))
+		s.Close()
+		chunks, at := w.writes()
+		if len(chunks) != 2 || at[1] != at[0] {
+			t.Fatalf("%d writes, the last %v after the head, want the head and the final frame at once", len(chunks), at[len(at)-1].Sub(at[0]))
+		}
+		_, frames, finals := openAll(t, cek, chunks)
+		if string(frames[1]) != `{"ok":true}` || !finals[1] {
+			t.Errorf("frames %q finals %v", frames, finals)
+		}
+		time.Sleep(Batch)
+		synctest.Wait()
+		if chunks, _ := w.writes(); len(chunks) != 2 {
+			t.Errorf("%d writes after the gather, want none past the final frame", len(chunks))
 		}
 	})
 }

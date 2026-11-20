@@ -155,21 +155,24 @@ type sseWriter struct {
 func (s *sseWriter) emit(c chat.Chunk) error {
 	d := c.Delta()
 	s.clock.observe(d)
-	finish, shown, sent := cmp.Or(d.Finish, s.finish), s.shown || d.Shown(), s.sent || d.Delivered()
+	billed, counts := s.clock.billed(d)
+	finish, shown, sent := cmp.Or(d.Finish, s.finish), s.shown || billed.Shown(), s.sent || billed.Delivered()
 	if unanswered(finish, sent) {
 		c = c.MarkUnanswered()
 	}
 	c = s.veil.chunk(c)
 	err := s.events(s.encoder.Chunk(c))
 	if err == nil {
-		s.delivered++
-		s.visible += d.VisibleBytes()
+		if counts {
+			s.delivered++
+		}
+		s.visible += billed.VisibleBytes()
 		s.finish, s.shown, s.sent = finish, shown, sent
 		if !s.answered && d.Answers() {
 			s.firstAnswer = time.Now()
 		}
 		s.answered, s.unreadable = s.answered || d.Answers(), s.unreadable || d.Unreadable
-		s.transcript.Add(d)
+		s.transcript.Add(billed)
 		if d.ToolCalled {
 			s.calls.Add(c)
 		}

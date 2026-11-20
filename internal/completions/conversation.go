@@ -90,9 +90,10 @@ type Conversation struct {
 	OutputLimit int
 	// Effort is the effort the call asks for, and ForwardedEffort the one the vendor accepts nearest to it, or
 	// "" when it accepts none at or around it.
-	Effort          string
-	ForwardedEffort string
-	RequestBytes    int
+	Effort              string
+	ForwardedEffort     string
+	RequestBytes        int
+	SummarizesReasoning bool
 }
 
 // Exchange is one side's consecutive turns, which a vendor whose roles must alternate takes as one message.

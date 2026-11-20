@@ -17,6 +17,7 @@ import (
 
 const (
 	Batch        = 50 * time.Millisecond
+	Gather       = 2 * time.Millisecond
 	MaxFrameData = 64 << 10
 
 	saltSize       = 32
@@ -121,7 +122,7 @@ func (s *Stream) Begin(head ReplyHead) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.head, _ = json.Marshal(head)
-	s.schedule()
+	s.emitHead()
 }
 
 func (s *Stream) Write(p []byte) (int, error) {
@@ -168,7 +169,11 @@ func (s *Stream) schedule() {
 	if s.timer != nil || s.err != nil {
 		return
 	}
-	if wait := Batch - time.Since(s.last); wait > 0 {
+	wait := Batch - time.Since(s.last)
+	if s.last.IsZero() {
+		wait = Gather
+	}
+	if wait > 0 {
 		s.timer = time.AfterFunc(wait, s.tick)
 		return
 	}

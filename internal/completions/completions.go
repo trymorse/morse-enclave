@@ -52,10 +52,11 @@ type toolCallDelta struct {
 }
 
 type delta struct {
-	Role      string          `json:"role,omitempty"`
-	Content   *string         `json:"content,omitempty"`
-	Refusal   *string         `json:"refusal,omitempty"`
-	ToolCalls []toolCallDelta `json:"tool_calls,omitempty"`
+	Role             string          `json:"role,omitempty"`
+	Content          *string         `json:"content,omitempty"`
+	ReasoningContent *string         `json:"reasoning_content,omitempty"`
+	Refusal          *string         `json:"refusal,omitempty"`
+	ToolCalls        []toolCallDelta `json:"tool_calls,omitempty"`
 }
 
 func toolDelta(index int, call ToolCall) delta {
@@ -63,15 +64,19 @@ func toolDelta(index int, call ToolCall) delta {
 }
 
 type reply struct {
-	text    strings.Builder
-	refusal strings.Builder
-	calls   []ToolCall
-	finish  Finish
+	text      strings.Builder
+	reasoning strings.Builder
+	refusal   strings.Builder
+	calls     []ToolCall
+	finish    Finish
 }
 
 func (r *reply) add(d delta, finish *Finish) error {
 	if d.Content != nil {
 		r.text.WriteString(*d.Content)
+	}
+	if d.ReasoningContent != nil {
+		r.reasoning.WriteString(*d.ReasoningContent)
 	}
 	if d.Refusal != nil {
 		r.refusal.WriteString(*d.Refusal)
@@ -95,10 +100,11 @@ type chunkChoice struct {
 }
 
 type message struct {
-	Role      string     `json:"role"`
-	Content   *string    `json:"content"`
-	Refusal   *string    `json:"refusal,omitempty"`
-	ToolCalls []ToolCall `json:"tool_calls,omitempty"`
+	Role             string     `json:"role"`
+	Content          *string    `json:"content"`
+	ReasoningContent *string    `json:"reasoning_content,omitempty"`
+	Refusal          *string    `json:"refusal,omitempty"`
+	ToolCalls        []ToolCall `json:"tool_calls,omitempty"`
 }
 
 type completionChoice struct {
@@ -177,6 +183,9 @@ func (e envelope) Completion(r *reply, u chat.Usage, detailed bool) []byte {
 	msg := message{Role: "assistant", ToolCalls: r.calls}
 	if text := r.text.String(); text != "" || (len(r.calls) == 0 && r.refusal.Len() == 0) {
 		msg.Content = &text
+	}
+	if reasoning := r.reasoning.String(); reasoning != "" {
+		msg.ReasoningContent = &reasoning
 	}
 	if refusal := r.refusal.String(); refusal != "" {
 		msg.Refusal = &refusal

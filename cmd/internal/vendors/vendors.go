@@ -238,7 +238,7 @@ func chatBy(newProvider newChatProvider) builder[routes.Chat] {
 		}
 		served.Upstream = worker.Plain{Provider: newProvider(rt, c, key, d), BusyWaits: chat.BusyWaits, Hedge: hedgeFor(rt)}
 		served.Reasoning, served.ReasoningUncapped = rt.Upstream.(routes.Vendor).Provider.Reasoning(c.ReasoningEfforts), rt.ReasoningUncapped()
-		served.SilentWhileReasoning, served.IgnoresOutputLimit = rt.SilentWhileReasoning(), rt.IgnoresOutputLimit()
+		served.SilentWhileReasoning, served.IgnoresOutputLimit = rt.SilentWhileReasoning() && !c.SummarizesReasoning, rt.IgnoresOutputLimit()
 		return served, nil
 	}
 }
@@ -256,8 +256,10 @@ func openAIProvider(rt routes.Route, _ routes.Chat, key string, d Deps) chat.Pro
 }
 
 func translating(newProvider func(baseURL, key, model string, client *http.Client) *completions.Provider) newChatProvider {
-	return func(rt routes.Route, _ routes.Chat, key string, d Deps) chat.Provider {
-		return newProvider(rt.BaseURL, key, rt.UpstreamModel, d.Client)
+	return func(rt routes.Route, c routes.Chat, key string, d Deps) chat.Provider {
+		p := newProvider(rt.BaseURL, key, rt.UpstreamModel, d.Client)
+		p.SummarizesReasoning = c.SummarizesReasoning
+		return p
 	}
 }
 

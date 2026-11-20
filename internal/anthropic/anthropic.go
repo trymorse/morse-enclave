@@ -17,6 +17,7 @@ const (
 	roleAssistant = "assistant"
 	blockText     = "text"
 	blockToolUse  = "tool_use"
+	blockThinking = "thinking"
 )
 
 var roles = map[bool]string{false: roleUser, true: roleAssistant}
@@ -44,8 +45,14 @@ type request struct {
 	Messages     []turn        `json:"messages"`
 	Tools        []tool        `json:"tools,omitempty"`
 	ToolChoice   *toolChoice   `json:"tool_choice,omitempty"`
+	Thinking     *thinking     `json:"thinking,omitempty"`
 	OutputConfig *outputConfig `json:"output_config,omitempty"`
 	Stream       bool          `json:"stream"`
+}
+
+type thinking struct {
+	Type    string `json:"type"`
+	Display string `json:"display"`
 }
 
 type outputConfig struct {
@@ -53,11 +60,16 @@ type outputConfig struct {
 }
 
 type tool struct {
-	Name         string          `json:"name"`
-	Description  string          `json:"description,omitempty"`
-	InputSchema  json.RawMessage `json:"input_schema"`
-	CacheControl *cacheControl   `json:"cache_control,omitempty"`
+	Name                string          `json:"name"`
+	Description         string          `json:"description,omitempty"`
+	InputSchema         json.RawMessage `json:"input_schema"`
+	EagerInputStreaming bool            `json:"eager_input_streaming,omitempty"`
+	CacheControl        *cacheControl   `json:"cache_control,omitempty"`
 }
+
+// why: Anthropic otherwise holds each input value until it is whole, so a widget's markup reached the client only as
+// its call ended. Eager input is not checked as JSON, so a reply cut at its limit can end a call mid-value.
+var eagerTools = map[string]bool{"show_widget": true}
 
 type cacheControl struct {
 	Type string `json:"type"`
@@ -144,6 +156,7 @@ type blockDelta struct {
 	Delta struct {
 		Type        string `json:"type"`
 		Text        string `json:"text"`
+		Thinking    string `json:"thinking"`
 		PartialJSON string `json:"partial_json"`
 	} `json:"delta"`
 }
@@ -197,15 +210,20 @@ func (s *translation) events() completions.Events {
 			return false, s.w.Start()
 		}),
 		"content_block_start": completions.On(func(e blockStart) (bool, error) {
-			if e.ContentBlock.Type != blockToolUse {
-				return false, nil
+			switch e.ContentBlock.Type {
+			case blockToolUse:
+				return false, s.w.ToolStart(e.Index, e.ContentBlock.ID, e.ContentBlock.Name)
+			case blockThinking:
+				s.w.ReasoningBlock()
 			}
-			return false, s.w.ToolStart(e.Index, e.ContentBlock.ID, e.ContentBlock.Name)
+			return false, nil
 		}),
 		"content_block_delta": completions.On(func(e blockDelta) (bool, error) {
 			switch e.Delta.Type {
 			case "text_delta":
 				return false, s.w.Text(e.Delta.Text)
+			case "thinking_delta":
+				return false, s.w.Reasoning(e.Delta.Thinking)
 			case "input_json_delta":
 				return false, s.w.ToolArguments(e.Index, e.Delta.PartialJSON)
 			}
@@ -248,6 +266,9 @@ func (t translator) request(conv completions.Conversation) request {
 	if conv.ForwardedEffort != "" && conv.Effort != chat.NoEffort {
 		out.OutputConfig = &outputConfig{Effort: conv.ForwardedEffort}
 	}
+	if conv.SummarizesReasoning {
+		out.Thinking = &thinking{Type: "adaptive", Display: "summarized"}
+	}
 	system, exchanges := conv.Alternating()
 	for _, text := range system {
 		out.System = append(out.System, textBlock{Type: blockText, Text: text})
@@ -287,7 +308,7 @@ func textBlocks(text string) []block {
 func tools(defs []completions.Tool) []tool {
 	var out []tool
 	for _, def := range defs {
-		out = append(out, tool{Name: def.Name, Description: def.Description, InputSchema: def.Schema()})
+		out = append(out, tool{Name: def.Name, Description: def.Description, InputSchema: def.Schema(), EagerInputStreaming: eagerTools[def.Name]})
 	}
 	return out
 }

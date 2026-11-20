@@ -181,6 +181,7 @@ type ChatTerms struct {
 	ContextTokens          int
 	CompactAtTokens        int
 	HidesReasoning         bool
+	SummarizesReasoning    bool
 	Quantization           Quantization
 	NoCharacters           bool
 	ResponseFormats        ResponseFormats

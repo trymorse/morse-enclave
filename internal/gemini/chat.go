@@ -25,7 +25,8 @@ var callingModes = map[string]string{
 }
 
 type thinkingConfig struct {
-	ThinkingLevel string `json:"thinkingLevel"`
+	ThinkingLevel   string `json:"thinkingLevel,omitempty"`
+	IncludeThoughts bool   `json:"includeThoughts,omitempty"`
 }
 
 type functionResponse struct {
@@ -104,7 +105,10 @@ func (s *translation) chunk(e streamChunk) (bool, error) {
 func (s *translation) part(p replyPart) error {
 	switch {
 	case p.Thought:
-		return nil
+		if p.Text == nil {
+			return nil
+		}
+		return s.w.Reasoning(*p.Text)
 	case p.FunctionCall != nil:
 		key := s.w.Calls()
 		if err := s.w.ToolStart(key, "call_"+rand.Text(), p.FunctionCall.Name); err != nil {
@@ -119,8 +123,8 @@ func (s *translation) part(p replyPart) error {
 
 func (t translator) request(conv completions.Conversation) request {
 	out := request{GenerationConfig: generationConfig{MaxOutputTokens: conv.OutputLimit}}
-	if conv.ForwardedEffort != "" {
-		out.GenerationConfig.ThinkingConfig = &thinkingConfig{ThinkingLevel: conv.ForwardedEffort}
+	if conv.ForwardedEffort != "" || conv.SummarizesReasoning {
+		out.GenerationConfig.ThinkingConfig = &thinkingConfig{ThinkingLevel: conv.ForwardedEffort, IncludeThoughts: conv.SummarizesReasoning}
 	}
 	if len(conv.Tools) > 0 {
 		out.Tools = []toolSet{{FunctionDeclarations: declarations(conv.Tools)}}

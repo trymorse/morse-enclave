@@ -63,6 +63,7 @@ type chatRoute struct {
 	Tokenizer              string      `json:"tokenizer"`
 	OpenRouterID           string      `json:"openrouter_id"`
 	HidesReasoning         bool        `json:"hides_reasoning"`
+	SummarizesReasoning    bool        `json:"summarizes_reasoning"`
 	Tools                  *bool       `json:"tools"`
 	Characters             *bool       `json:"characters"`
 	ResponseFormats        []string    `json:"response_formats"`

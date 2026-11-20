@@ -23,8 +23,9 @@ type capability struct {
 	makes          map[string]string
 	needsKey       bool
 	// lacks lists the efforts on chat.EffortLadder the provider's API has no level for, so no route may list them.
-	lacks []string
-	hides bool
+	lacks      []string
+	hides      bool
+	summarizes bool
 	// The provider spends reasoning beyond the client's output limit, so a hold covers the route maximum.
 	uncapped bool
 	// The provider generates past the output limit it is sent, whichever field carries it, so the worker counts the reply
@@ -57,10 +58,10 @@ var capabilities = map[Provider]capability{
 	ProviderOpenAI: {kinds: servedAt{catalog.KindChat: anonAndPrivate, catalog.KindTranscription: anonAndPrivate}, makes: map[string]string{"api.openai.com": "OpenAI"}},
 	// Meta's muse routes share this provider, and their dry-account reply is undocumented, so a dry account is no
 	// account refusal.
-	ProviderOpenAIResponses: {kinds: servedAt{catalog.KindChat: anonOnly}, makes: map[string]string{"api.openai.com": "OpenAI", "api.meta.ai": "Meta"}, needsKey: true, hides: true, reasonsUnasked: true},
+	ProviderOpenAIResponses: {kinds: servedAt{catalog.KindChat: anonOnly}, makes: map[string]string{"api.openai.com": "OpenAI", "api.meta.ai": "Meta"}, needsKey: true, hides: true, summarizes: true, reasonsUnasked: true},
 	// An empty Anthropic prepaid balance is a 400 by report only, and a spend limit we set is a 400 that stands as a bad
 	// request, so a dry account is no account refusal.
-	ProviderAnthropic: {kinds: servedAt{catalog.KindChat: anonOnly}, makes: map[string]string{"api.anthropic.com": "Anthropic"}, needsKey: true, lacks: []string{chat.NoEffort}, hides: true, slowsTogether: true, reasonsUnasked: true},
+	ProviderAnthropic: {kinds: servedAt{catalog.KindChat: anonOnly}, makes: map[string]string{"api.anthropic.com": "Anthropic"}, needsKey: true, lacks: []string{chat.NoEffort}, hides: true, summarizes: true, slowsTogether: true, reasonsUnasked: true},
 	// Gemini's docs name no status for a dry billing account, and its 403 PERMISSION_DENIED maps to upstream_refused,
 	// so a dry account is no account refusal.
 	ProviderGemini: {
@@ -69,6 +70,7 @@ var capabilities = map[Provider]capability{
 		needsKey:             true,
 		lacks:                []string{chat.NoEffort, "max"},
 		hides:                true,
+		summarizes:           true,
 		reasonsUnasked:       true,
 		silentWhileReasoning: true,
 	},
@@ -355,6 +357,10 @@ func (c capability) reasoningShown(up Upstream, chat Chat) error {
 		return fmt.Errorf("uses %s, which keeps a model's reasoning from the client, and must set hides_reasoning", up)
 	case (!c.hides || !chat.reasons()) && chat.HidesReasoning:
 		return fmt.Errorf("sets hides_reasoning, but %s streams whatever reasoning the model does", up)
+	case chat.SummarizesReasoning && !chat.HidesReasoning:
+		return fmt.Errorf("sets summarizes_reasoning without hides_reasoning")
+	case chat.SummarizesReasoning && !c.summarizes:
+		return fmt.Errorf("sets summarizes_reasoning, but the proxy asks %s for no summary of the reasoning it hides", up)
 	case chat.AnswersInReasoning && !c.answersFromReasoning:
 		return fmt.Errorf("sets answers_in_reasoning, but %s would show a reply that is all reasoning as an empty answer", up)
 	}

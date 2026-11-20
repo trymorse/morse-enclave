@@ -673,7 +673,7 @@ func (u Plain) serve(ctx context.Context, w *InProcess, o *openedChat, a attempt
 	}
 	var clock *thinkingClock
 	if a.route.HidesReasoning {
-		clock = &thinkingClock{now: w.now}
+		clock = &thinkingClock{now: w.now, summarized: a.route.SummarizesReasoning}
 	}
 	var got served
 	retry := chat.BusyRetry{Provider: u.Provider, Waits: a.waits, HedgeAfter: a.hedgeAfter, StallAfter: a.stallAfter}
@@ -761,6 +761,7 @@ type thinkingClock struct {
 	now                     func() time.Time
 	firstEvent, firstAnswer time.Time
 	interleaved             bool
+	summarized              bool
 }
 
 func (t *thinkingClock) startAtCall() {
@@ -783,6 +784,14 @@ func (t *thinkingClock) observe(d chat.Delta) {
 	case d.Reasons() && !t.firstAnswer.IsZero():
 		t.interleaved = true
 	}
+}
+
+func (t *thinkingClock) billed(d chat.Delta) (chat.Delta, bool) {
+	if t == nil || !t.summarized || !d.Reasons() {
+		return d, true
+	}
+	d.Reasoning = ""
+	return d, d != chat.Delta{}
 }
 
 func (t *thinkingClock) thought() thought {
@@ -823,7 +832,8 @@ func complete(ctx context.Context, w http.ResponseWriter, prov chat.BusyRetry, c
 	}
 	w.Header().Set("Content-Type", "application/json")
 	d := body.Delta()
-	if unanswered(d.Finish, d.Delivered()) {
+	billed, _ := clock.billed(d)
+	if unanswered(d.Finish, billed.Delivered()) {
 		body = body.MarkUnanswered()
 	}
 	var calls chat.ToolCalls
@@ -835,13 +845,13 @@ func complete(ctx context.Context, w http.ResponseWriter, prov chat.BusyRetry, c
 	n, writeErr := w.Write(encoder.Whole(body, tokens))
 	written := int64(n)
 	if written > 0 {
-		transcript.Add(d)
+		transcript.Add(billed)
 	}
 	measured := int(written)
 	if rv != nil && written > 0 {
 		measured = vendorBytes
 	}
-	return served{reported: tokens, attempts: attempts, reply: measure.Buffered{Bytes: measured}, finish: d.Finish, unanswered: unanswered(d.Finish, d.Delivered()), answer: measure.AnswerOf(writeErr == nil && d.Answers(), d.Unreadable), malformed: calls.Malformed(d.Finish, c.Stops()), writeErr: writeErr, atLimit: cut.atLimit()}
+	return served{reported: tokens, attempts: attempts, reply: measure.Buffered{Bytes: measured}, finish: d.Finish, unanswered: unanswered(d.Finish, billed.Delivered()), answer: measure.AnswerOf(writeErr == nil && d.Answers(), d.Unreadable), malformed: calls.Malformed(d.Finish, c.Stops()), writeErr: writeErr, atLimit: cut.atLimit()}
 }
 
 var errDialectSealed = apierr.InvalidParameter("This route takes a plaintext request only. Send an end-to-end encrypted chat to POST /v1/chat/completions.")

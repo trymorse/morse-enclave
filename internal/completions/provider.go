@@ -58,7 +58,8 @@ type Provider struct {
 	Translator Translator
 	// ReadsToEnd marks a vendor whose stream has no closing event: once the reply has finished, the end of the
 	// stream is its clean end.
-	ReadsToEnd bool
+	ReadsToEnd          bool
+	SummarizesReasoning bool
 }
 
 var _ chat.Provider = (*Provider)(nil)
@@ -92,6 +93,7 @@ func (p *Provider) Complete(ctx context.Context, c chat.Call) (chat.Chunk, chat.
 }
 
 func (p *Provider) run(ctx context.Context, conv Conversation, w *Writer) (chat.Usage, bool, error) {
+	conv.SummarizesReasoning = p.SummarizesReasoning
 	path, accept, body := p.Translator.Request(conv)
 	resp, err := p.Open(ctx, upstream.Request{Method: http.MethodPost, Path: path, Header: http.Header{"Accept": {accept}}, Body: jsonx.Encode(body)})
 	if err != nil {
@@ -114,6 +116,8 @@ type Writer struct {
 	emit     func(delta, *Finish) error
 	started  bool
 	finished bool
+	reasoned bool
+	apart    bool
 	calls    map[int]*toolCall
 	usage    chat.Usage
 	detailed bool
@@ -148,6 +152,19 @@ func (w *Writer) Text(fragment string) error {
 		return err
 	}
 	return w.emit(delta{Content: &fragment}, nil)
+}
+
+func (w *Writer) ReasoningBlock() { w.apart = w.reasoned }
+
+func (w *Writer) Reasoning(fragment string) error {
+	if err := w.Start(); err != nil || fragment == "" {
+		return err
+	}
+	if w.apart {
+		fragment = "\n\n" + fragment
+	}
+	w.reasoned, w.apart = true, false
+	return w.emit(delta{ReasoningContent: &fragment}, nil)
 }
 
 func (w *Writer) Refusal(fragment string) error {

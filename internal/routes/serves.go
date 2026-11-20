@@ -79,7 +79,7 @@ func (r chatRoute) chat(defaultMarkup money.Markup) (Chat, error) {
 		ChatTerms: catalog.ChatTerms{
 			MaxOutputTokens: r.MaxOutputTokens, DefaultMaxTokens: r.DefaultMaxTokens, DefaultReasoningEffort: r.DefaultReasoningEffort, ReasoningEfforts: r.ReasoningEfforts,
 			AlwaysReasons: r.AlwaysReasons,
-			Inputs:        inputs, ContextTokens: r.ContextTokens, CompactAtTokens: compactAt, HidesReasoning: r.HidesReasoning,
+			Inputs:        inputs, ContextTokens: r.ContextTokens, CompactAtTokens: compactAt, HidesReasoning: r.HidesReasoning, SummarizesReasoning: r.SummarizesReasoning,
 			Quantization: quantization, Fixes: r.withTools(), NoCharacters: r.Characters != nil && !*r.Characters,
 			ResponseFormats: formats,
 		},

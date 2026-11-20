@@ -3,6 +3,7 @@ package openairesponses
 import (
 	"encoding/json"
 
+	"morse/backend/internal/chat"
 	"morse/backend/internal/completions"
 )
 
@@ -10,6 +11,7 @@ const (
 	minOutputTokens  = 16
 	phaseCommentary  = "commentary"
 	phaseFinalAnswer = "final_answer"
+	summaryAuto      = "auto"
 )
 
 type request struct {
@@ -29,7 +31,8 @@ type unstored struct{}
 func (unstored) MarshalJSON() ([]byte, error) { return []byte("false"), nil }
 
 type reasoning struct {
-	Effort string `json:"effort"`
+	Effort  string `json:"effort,omitempty"`
+	Summary string `json:"summary,omitempty"`
 }
 
 type tool struct {
@@ -84,6 +87,9 @@ func newRequest(conv completions.Conversation, model string) request {
 	}
 	if conv.ForwardedEffort != "" {
 		out.Reasoning = &reasoning{Effort: conv.ForwardedEffort}
+	}
+	if conv.SummarizesReasoning && conv.ForwardedEffort != chat.NoEffort {
+		out.Reasoning = &reasoning{Effort: conv.ForwardedEffort, Summary: summaryAuto}
 	}
 	return out
 }
