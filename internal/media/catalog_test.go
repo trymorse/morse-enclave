@@ -75,6 +75,8 @@ func TestEveryImageSpecHasAReferenceLimit(t *testing.T) {
 	for name, spec := range map[string]media.ImageSpec{
 		"flux max": media.Flux2Max, "flux pro": media.Flux2Pro, "seedream": media.Seedream5Pro, "ideogram": media.Ideogram45, "qwen": media.QwenImage3,
 		"seedream lite": media.Seedream5Lite, "seedream 4.5": media.Seedream45, "upscale": media.Upscale, "remove background": media.RemoveBackground, "inpaint": media.Inpaint,
+		"muse": media.MuseImage, "seedream 5.5": media.Seedream55, "kling image 4": media.KlingImage4, "flux 3": media.Flux3, "flux 3 klein": media.Flux3Klein,
+		"gpt image 2.6": media.GPTImage26, "ideogram 4.6": media.Ideogram46, "nano banana 2.1": media.NanoBanana21, "grok 1": media.GrokImagine1,
 	} {
 		if spec.MaxReferences == 0 {
 			t.Errorf("%s: spec %+v lacks a reference limit", name, spec)
@@ -87,6 +89,8 @@ func TestEveryGeneratorTakesKnownSizesAndEveryToolOneImage(t *testing.T) {
 		"flux max": media.Flux2Max, "flux pro": media.Flux2Pro, "seedream": media.Seedream5Pro, "ideogram": media.Ideogram45, "qwen": media.QwenImage3,
 		"sdxl": media.SDXLCheckpoint, "z-image": media.ZImageTurbo, "seedream lite": media.Seedream5Lite, "seedream 4.5": media.Seedream45,
 		"nano banana pro": media.NanoBananaPro, "nano banana 2": media.NanoBanana2, "nano banana 2 lite": media.NanoBanana2Lite, "grok": media.GrokImagine2,
+		"seedream 5.5": media.Seedream55, "flux 3": media.Flux3, "flux 3 klein": media.Flux3Klein, "gpt image 2.6": media.GPTImage26,
+		"ideogram 4.6": media.Ideogram46, "nano banana 2.1": media.NanoBanana21, "grok 1": media.GrokImagine1,
 	}
 	for name, spec := range generators {
 		if len(spec.AspectRatios) == 0 || len(spec.Resolutions) == 0 || spec.Tool != "" || spec.Mask || spec.PromptUse() != media.PromptRequired || spec.NegativePrompt > media.MaxNegativePrompt {

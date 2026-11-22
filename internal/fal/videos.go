@@ -51,7 +51,7 @@ var videoModels = map[string]videoModel{
 	},
 	"minimax/h3-max/text-to-video": {
 		i2v:       "minimax/h3-max/image-to-video",
-		VideoSpec: media.MiniMaxH3Max, unit: 25_000,
+		VideoSpec: media.MiniMaxH3Max, unit: 50_000,
 		resolution: resolutionUpper, promptExpansion: "balanced",
 	},
 	"alibaba/wan-3.0/text-to-video": {

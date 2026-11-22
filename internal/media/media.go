@@ -22,6 +22,7 @@ import (
 	"morse/backend/internal/apierr"
 	"morse/backend/internal/billing/money"
 	"morse/backend/internal/dataurl"
+	"morse/backend/internal/frameconsent"
 	"morse/backend/internal/strictjson"
 	"morse/backend/internal/upstream"
 )
@@ -64,6 +65,7 @@ type ImageRequest struct {
 	prompt        string
 	images        []dataurl.URL
 	dims          []Dims
+	digests       []frameconsent.Digest
 	negative      string
 	mask          dataurl.URL
 	sizedByClient Size
@@ -73,6 +75,8 @@ func (r ImageRequest) ModelName() string              { return r.Model }
 func (r ImageRequest) Prompt() string                 { return r.prompt }
 func (r ImageRequest) NegativePrompt() string         { return r.negative }
 func (r ImageRequest) ReferenceImages() []dataurl.URL { return r.images }
+
+func (r ImageRequest) ReferenceDigests() []frameconsent.Digest { return slices.Clone(r.digests) }
 
 func (r ImageRequest) Mask() string {
 	if r.mask.Base64 == "" {
@@ -144,6 +148,7 @@ func ParseImageRequest(body io.Reader) (*ImageRequest, error) {
 		}
 		req.images = append(req.images, image)
 		req.dims = append(req.dims, dimsOf(data))
+		req.digests = append(req.digests, frameconsent.Of(data))
 	}
 	if src, ok := req.Source(); ok && wire.AspectRatio == "" {
 		req.Size.AspectRatio = closestOf(AspectRatios, src)

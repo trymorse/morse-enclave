@@ -89,6 +89,10 @@
       {
         "name": "dstack-0.5.12-53cd435e",
         "compose_hash": "53cd435edbc129f848ed0ddce301f7f192446fe39683713a38537820bea7e1fb"
+      },
+      {
+        "name": "dstack-0.5.12-1787a4af",
+        "compose_hash": "1787a4af87eaf4bb139b555c3148ea6cffb01442b9fd7db4304e23b24f4db993"
       }
     ],
     "images": [
@@ -283,6 +287,14 @@
         "rtmr0": "bc122d143ab768565ba5c3774ff5f03a63c89a4df7c1f5ea38d3bd173409d14f8cbdcc36d40e703cccb996a9d9687590",
         "rtmr1": "786417fa26b5d90d1289025506055e511ff09fd608f4727bb3cf159279a52af23117b6248024d0b186aceabebf6f86ec",
         "rtmr2": "41800152afda682372d33b484e357002e2b179f64b7882e0f0529ad2373ad93898a3b4d3ffb9a433f406b986d4f4f291"
+      },
+      {
+        "name": "dstack-nvidia-0.5.16",
+        "os_image_hash": "d9837689d1ee4bc898eecc2391e44a5a442e4ad78da2cc1dd49798e201055081",
+        "mrtd": "e107136c99ae1745ab299e9462927890b7b1c984d5ef53fa5830584ad4246db663fdf96563b913e9e2471906b26f7aae",
+        "rtmr0": "bc122d143ab768565ba5c3774ff5f03a63c89a4df7c1f5ea38d3bd173409d14f8cbdcc36d40e703cccb996a9d9687590",
+        "rtmr1": "0aeb0837dcfd2af038f52fad4a51f559c4b296eece5105d2ab21367ac33ef3dfbe0f030b781cc0c4404bf98c8f0b99e8",
+        "rtmr2": "4e8adae85dba1d4caaa781906f6c10c45bac1cd847342dd68fdb73e6a1b9035a9c419f4722ccd284cc865179f46e8366"
       }
     ]
   }

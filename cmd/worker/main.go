@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"maps"
@@ -25,6 +27,7 @@ import (
 	"morse/backend/internal/plugins"
 	"morse/backend/internal/privacyveil"
 	"morse/backend/internal/routes"
+	"morse/backend/internal/routesdata"
 	"morse/backend/internal/seal"
 	"morse/backend/internal/taskseal"
 	"morse/backend/internal/tee"
@@ -40,12 +43,13 @@ const (
 )
 
 type built struct {
-	server *http.Server
-	inner  *worker.InProcess
-	gates  *vendors.Gates
-	pins   *vendorpins.Loader
-	routes int
-	door   *listeningDoor
+	server     *http.Server
+	inner      *worker.InProcess
+	gates      *vendors.Gates
+	pins       *vendorpins.Loader
+	routes     int
+	routesData routesdata.Checker
+	door       *listeningDoor
 	// filter and veil are the Privacy Veil's, when this worker serves it: in an enclave, or in dev, with a filter key.
 	filter *tee.PrivacyFilter
 	veil   *worker.PrivacyVeil
@@ -68,11 +72,17 @@ func build(getenv func(string) string, log *logger) (built, error) {
 	if path == "" {
 		return built{}, errors.New("PROXY_ROUTES_FILE is required")
 	}
-	file, digest, err := routes.ReadFile(path, money.ListPrice)
-	rts := file.Routes
+	boot, err := os.ReadFile(path)
 	if err != nil {
 		return built{}, fmt.Errorf("PROXY_ROUTES_FILE: %w", err)
 	}
+	file, err := routes.ParseFile(boot, money.ListPrice)
+	if err != nil {
+		return built{}, fmt.Errorf("PROXY_ROUTES_FILE: %w", err)
+	}
+	rts := file.Routes
+	bootSum := sha256.Sum256(boot)
+	digest := hex.EncodeToString(bootSum[:])
 	environment := getenv("PROXY_ENVIRONMENT")
 	if environment != "dev" && environment != "prod" {
 		return built{}, errors.New("PROXY_ENVIRONMENT must be dev or prod, the environment the web app checks in each attestation")
@@ -98,28 +108,41 @@ func build(getenv func(string) string, log *logger) (built, error) {
 	if err != nil {
 		return built{}, err
 	}
-	front, err := doorOf(getenv, environment, gate, identity.PublicKey(), log)
+	tasks := taskKeys(attester, taskKey, time.Now())
+	_, enclave := attester.(nitro.NSM)
+	clips, receiver, err := sealedClipsOf(getenv, rts, enclave, tasks)
 	if err != nil {
 		return built{}, err
 	}
-	tasks := taskKeys(attester, taskKey, time.Now())
+	if receiver != nil {
+		receiver.Observe = log.clipUpload
+	}
+	front, err := doorOf(getenv, environment, gate, identity.PublicKey(), receiver, log)
+	if err != nil {
+		return built{}, err
+	}
 	gate.ServeTaskKeys(tasks)
 	mode, err := vendorpins.ParseMode(getenv("PROXY_VENDOR_PINS"))
 	if err != nil {
 		return built{}, fmt.Errorf("PROXY_VENDOR_PINS: %w", err)
 	}
+	routesMode, err := routesdata.ParseMode(getenv(routesDataEnv))
+	if err != nil {
+		return built{}, fmt.Errorf("%s: %w", routesDataEnv, err)
+	}
+	// The trusted time is the NSM attestation document's, which the host cannot move, as in the door's handoff.
+	trustedTime := func(ctx context.Context) (time.Time, error) {
+		document, err := gate.Attest(ctx, nil)
+		if err != nil {
+			return time.Time{}, err
+		}
+		return self.Time(document)
+	}
 	transport, client := vendors.NewClient()
 	gates := vendors.NewGates(transport, client, attestation.NVIDIAPolicy(), log.attestation)
-	// The trusted time is the NSM attestation document's, which the host cannot move, as in the door's handoff.
 	pins := vendorpins.New(vendorpins.Config{
 		Mode: mode, Client: client, Root: trust.Root, Identity: trust.Identity, Witnesses: trust.Witnesses, MaxAge: door.PinsMaxAge, Floor: floor,
-		Now: func(ctx context.Context) (time.Time, error) {
-			document, err := gate.Attest(ctx, nil)
-			if err != nil {
-				return time.Time{}, err
-			}
-			return self.Time(document)
-		},
+		Now:     trustedTime,
 		Observe: log.vendorPins,
 		OnSwap:  gates.Wake,
 	})
@@ -169,6 +192,7 @@ func build(getenv func(string) string, log *logger) (built, error) {
 		},
 		VendorPinsMode: string(mode),
 		PrivacyVeil:    veil,
+		Clips:          clips,
 	})
 	if err != nil {
 		return built{}, err
@@ -187,7 +211,8 @@ func build(getenv func(string) string, log *logger) (built, error) {
 	mux.Handle("/", worker.NewServer(inner, digest))
 	gate.Register(mux)
 	srv := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: readHeaderTimeout, ErrorLog: discarded()}
-	return built{server: srv, inner: inner, gates: gates, pins: pins, routes: len(models), door: front, filter: filter, veil: veil}, nil
+	checker := routesDataChecker(routesMode, bootRoutes{environment: environment, file: boot, floor: floor}, trust, trustedTime, getenv, log)
+	return built{server: srv, inner: inner, gates: gates, pins: pins, routes: len(models), routesData: checker, door: front, filter: filter, veil: veil}, nil
 }
 
 const taskKeyWait = 3 * time.Minute
@@ -267,6 +292,9 @@ func main() {
 		log.configFailed(err)
 		os.Exit(exitBadConfig)
 	}
+	checkCtx, checked := context.WithTimeout(context.Background(), routesDataTimeout)
+	w.routesData.Check(checkCtx)
+	checked()
 	gatesCtx, stopGates := context.WithCancel(context.Background())
 	defer stopGates()
 	w.gates.Run(gatesCtx)

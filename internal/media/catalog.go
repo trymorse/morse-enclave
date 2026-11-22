@@ -54,6 +54,21 @@ var (
 	GrokImagine2    = ImageSpec{AspectRatios: without(AspectRatios, "4:5", "5:4"), Resolutions: UpTo2K, MaxReferences: 5, Qualities: []string{"low", "medium"}}
 )
 
+// why: Runware's schemas (2026-11-22) draw Muse Image only at its 2K presets and Kling Image 4.0 from 2K up, neither
+// at 4:5 or 5:4; GPT Image 2.6 takes 16 references, FLUX 3 Klein 4, and only Klein and Ideogram 4.6 a seed. Google
+// lists Nano Banana 2.1 at 1K, 2K, and 4K, and xAI takes a quality only on Grok Imagine Image 2.0.
+var (
+	MuseImage    = ImageSpec{AspectRatios: without(AspectRatios, "4:5", "5:4"), Resolutions: []string{"2k"}, MaxReferences: 10}
+	Seedream55   = ImageSpec{AspectRatios: AspectRatios, Resolutions: UpTo2K, MaxReferences: 10}
+	KlingImage4  = ImageSpec{AspectRatios: without(AspectRatios, "4:5", "5:4"), Resolutions: []string{"2k", "4k"}, MaxReferences: 10}
+	Flux3        = ImageSpec{AspectRatios: AspectRatios, Resolutions: UpTo2K, MaxReferences: 10}
+	Flux3Klein   = ImageSpec{AspectRatios: AspectRatios, Resolutions: UpTo2K, MaxReferences: 4, Seed: true}
+	GPTImage26   = ImageSpec{AspectRatios: AspectRatios, Resolutions: UpTo2K, MaxReferences: 16, Qualities: []string{"low", "medium", "high"}}
+	Ideogram46   = ImageSpec{AspectRatios: AspectRatios, Resolutions: UpTo2K, MaxReferences: 5, Qualities: []string{"low", "medium", "high"}, Seed: true}
+	NanoBanana21 = ImageSpec{AspectRatios: AspectRatios, Resolutions: upTo4K, MaxReferences: 14}
+	GrokImagine1 = ImageSpec{AspectRatios: without(AspectRatios, "4:5", "5:4"), Resolutions: UpTo2K, MaxReferences: 5}
+)
+
 var (
 	Upscale          = ImageSpec{Resolutions: []string{"2k", "4k"}, MaxReferences: 1, Seed: true, Prompt: PromptNone, Tool: ToolUpscale}
 	RemoveBackground = ImageSpec{MaxReferences: 1, Prompt: PromptNone, Tool: ToolRemoveBackground}
@@ -76,4 +91,15 @@ var (
 	Seedance20Fast = VideoSpec{MinSeconds: 4, MaxSeconds: 15, Resolutions: []string{"480p", "720p"}, Audio: true, LastFrame: true}
 	MiniMaxH3Max   = VideoSpec{MinSeconds: 5, MaxSeconds: 15, Resolutions: []string{"480p", "768p"}, LastFrame: true}
 	Wan30          = VideoSpec{MinSeconds: 2, MaxSeconds: 30, Resolutions: []string{"480p", "720p", "1080p"}, Audio: true, LastFrame: true}
+)
+
+// why: Runware's schemas (2026-11-22) draw Gemini Omni Flash 1.2 at 16:9 and 9:16 only and cut a clip with a last frame
+// to 10 s, so it takes none here, and take one frame on HeyGen Video 1; each model makes sound of its own except Seedance, whose switch it is.
+var (
+	GeminiOmniFlash12 = VideoSpec{MinSeconds: 3, MaxSeconds: 15, Resolutions: []string{"720p", "1080p"}, AspectRatios: []string{"16:9", "9:16"}}
+	HeyGenVideo1      = VideoSpec{MinSeconds: 5, MaxSeconds: 30, Resolutions: []string{"480p", "768p"}}
+	PVideo2Pro        = VideoSpec{MinSeconds: 5, MaxSeconds: 15, Resolutions: []string{"480p", "768p"}, LastFrame: true}
+	MiniMaxH3         = VideoSpec{MinSeconds: 4, MaxSeconds: 15, Resolutions: []string{"768p", "1440p"}, LastFrame: true}
+	Seedance25Flash   = VideoSpec{MinSeconds: 4, MaxSeconds: 30, Resolutions: []string{"480p", "720p"}, Audio: true, LastFrame: true}
+	Seedance20Mini    = VideoSpec{MinSeconds: 4, MaxSeconds: 15, Resolutions: []string{"480p", "720p"}, Audio: true, LastFrame: true}
 )

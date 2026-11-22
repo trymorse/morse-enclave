@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"net/http"
+	"slices"
 	"sync"
 	"unicode/utf8"
 
@@ -25,6 +26,9 @@ type imageModel struct {
 	edit           string
 	sendsExpansion bool
 	sendsThinking  bool
+	sizes          map[media.Size]media.Dims
+	editsOne       bool
+	adult          bool
 }
 
 // why: spicyapi.ai's catalog (GET /console/v1/catalog/models/{model}, inputSchema, 2026-11-17) refuses a field a schema
@@ -43,6 +47,23 @@ var imageModels = map[string]imageModel{
 		ImageSpec: unchecked(10), edit: "bytedance/seedream-5.0-pro/edit", sendsThinking: true,
 	},
 	"krea/2-turbo-lora/text-to-image": {ImageSpec: unchecked(0)},
+	"bytedance/seedream-5.5/text-to-image": {
+		ImageSpec: media.ImageSpec{AspectRatios: append(slices.Clone(media.SevenRatios), "21:9"), Resolutions: media.UpTo2K, MaxReferences: 10},
+		edit:      "bytedance/seedream-5.5/edit",
+	},
+	"circlestone-labs/anima-turbo/text-to-image": {ImageSpec: media.ImageSpec{AspectRatios: media.AspectRatios, Resolutions: []string{"1k"}}},
+	// why: the adult fine-tunes' inputSchema (GET https://api.spicyapi.ai/api/v1/models/{model}, 2026-11-22) takes width and
+	// height, at most 1536 on Z-Image Spicy and 2560 on its Pro, and Qwen Image Edit Spicy one image_url and no size, so
+	// its edit keeps the shape of the image it edits.
+	"alibaba/z-image-spicy/text-to-image": {
+		ImageSpec: media.ImageSpec{AspectRatios: media.SevenRatios, Resolutions: []string{"1k"}}, sizes: media.StandardSizes, sendsExpansion: true, adult: true,
+	},
+	"alibaba/z-image-spicy-pro/text-to-image": {
+		ImageSpec: media.ImageSpec{AspectRatios: media.AspectRatios, Resolutions: media.UpTo2K}, sizes: media.StandardSizes, sendsExpansion: true, adult: true,
+	},
+	"alibaba/qwen-image-spicy-edit/edit": {
+		ImageSpec: media.ImageSpec{AspectRatios: media.SevenRatios, Resolutions: []string{"1k"}, MaxReferences: 1}, editsOne: true, adult: true,
+	},
 }
 
 func unchecked(references int) media.ImageSpec {
@@ -63,12 +84,17 @@ func NewImages(baseURL, apiKey, model string, httpClient *http.Client) (*Images,
 	return &Images{client: newClient(baseURL, apiKey, httpClient), imageModel: info, model: model}, nil
 }
 
+func (p *Images) FramesNeedConsent() bool { return p.adult }
+
 func (p *Images) CheckImages(req *media.ImageRequest) error {
 	if err := p.ImageSpec.CheckImages(req); err != nil {
 		return err
 	}
 	if utf8.RuneCountInString(req.Prompt()) > maxPrompt {
 		return strictjson.Invalid(fmt.Sprintf("prompt must be at most %d characters for this model.", maxPrompt))
+	}
+	if p.editsOne && len(req.ReferenceImages()) != 1 {
+		return strictjson.Invalid("This model takes exactly one image.")
 	}
 	for _, ref := range req.ReferenceImages() {
 		if base64.StdEncoding.DecodedLen(len(ref.Base64)) > maxReference {
@@ -82,8 +108,11 @@ func (p *Images) CheckImages(req *media.ImageRequest) error {
 // (2026-11-17) spells 1K and 2K as Morse does, "1k" and "2k".
 type input struct {
 	Prompt                string   `json:"prompt"`
-	AspectRatio           string   `json:"aspect_ratio"`
-	Resolution            string   `json:"resolution"`
+	AspectRatio           string   `json:"aspect_ratio,omitempty"`
+	Resolution            string   `json:"resolution,omitempty"`
+	Width                 int      `json:"width,omitempty"`
+	Height                int      `json:"height,omitempty"`
+	ImageURL              string   `json:"image_url,omitempty"`
 	ImageURLs             []string `json:"image_urls,omitempty"`
 	EnablePromptExpansion *bool    `json:"enable_prompt_expansion,omitempty"`
 	EnableThinking        *bool    `json:"enable_thinking,omitempty"`
@@ -92,7 +121,16 @@ type input struct {
 var off = new(bool)
 
 func (p *Images) task(req *media.ImageRequest, refs []string) task {
-	in := input{Prompt: req.Prompt(), AspectRatio: req.Size.AspectRatio, Resolution: req.Size.Resolution, ImageURLs: refs}
+	in := input{Prompt: req.Prompt()}
+	switch {
+	case p.editsOne:
+		in.ImageURL = refs[0]
+	case p.sizes != nil:
+		d := p.sizes[req.Size]
+		in.Width, in.Height = d.Width, d.Height
+	default:
+		in.AspectRatio, in.Resolution, in.ImageURLs = req.Size.AspectRatio, req.Size.Resolution, refs
+	}
 	if p.sendsExpansion {
 		in.EnablePromptExpansion = off
 	}
@@ -100,7 +138,7 @@ func (p *Images) task(req *media.ImageRequest, refs []string) task {
 		in.EnableThinking = off
 	}
 	model := p.model
-	if len(refs) > 0 {
+	if len(refs) > 0 && p.edit != "" {
 		model = p.edit
 	}
 	return task{Model: model, Input: in}

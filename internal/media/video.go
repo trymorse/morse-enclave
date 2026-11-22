@@ -23,6 +23,10 @@ import (
 
 const VideoKeep = time.Hour
 
+const VideoJobLifetime = 30 * time.Minute
+
+const VideoUploadGrace = 15 * time.Minute
+
 const VendorKeep = VideoKeep + 3*time.Minute
 
 var (
@@ -101,11 +105,19 @@ func ParseVideoRequest(body io.Reader) (*VideoRequest, error) {
 }
 
 type VideoSpec struct {
-	MinSeconds  int
-	MaxSeconds  int
-	Resolutions []string
-	Audio       bool
-	LastFrame   bool
+	MinSeconds   int
+	MaxSeconds   int
+	Resolutions  []string
+	AspectRatios []string
+	Audio        bool
+	LastFrame    bool
+}
+
+func (s VideoSpec) Ratios() []string {
+	if len(s.AspectRatios) > 0 {
+		return s.AspectRatios
+	}
+	return VideoAspectRatios
 }
 
 func (s VideoSpec) ResolveVideo(r VideoRequest) (VideoRequest, error) {
@@ -115,6 +127,8 @@ func (s VideoSpec) ResolveVideo(r VideoRequest) (VideoRequest, error) {
 		return VideoRequest{}, strictjson.Invalid(fmt.Sprintf("seconds must be between %d and %d for this model.", s.MinSeconds, s.MaxSeconds))
 	case !slices.Contains(s.Resolutions, r.Resolution):
 		return VideoRequest{}, strictjson.Invalid("resolution must be one of " + strings.Join(s.Resolutions, ", ") + " for this model.")
+	case r.FirstFrame() == "" && !slices.Contains(s.Ratios(), r.AspectRatio):
+		return VideoRequest{}, strictjson.Invalid("aspect_ratio must be one of " + strings.Join(s.Ratios(), ", ") + " for this model.")
 	case r.Audio != nil && !s.Audio:
 		return VideoRequest{}, strictjson.Invalid("This model has no audio setting.")
 	case r.last != "" && !s.LastFrame:

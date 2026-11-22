@@ -137,3 +137,23 @@ func TestEachFrameIsKnownByTheSHA256OfTheFileItsDataURLCarries(t *testing.T) {
 		t.Errorf("a clip from its prompt alone has digests %v", got)
 	}
 }
+
+func TestAVideoSpecWithItsOwnRatiosRefusesAnotherOnlyWithoutAFrame(t *testing.T) {
+	frame := "data:image/png;base64," + pngBase64
+	spec := media.GeminiOmniFlash12
+	if _, err := spec.ResolveVideo(*parseVideo(t, `{"model":"m","prompt":"p","seconds":5,"aspect_ratio":"1:1"}`)); err == nil || !strings.Contains(err.Error(), "aspect_ratio must be one of 16:9, 9:16") {
+		t.Errorf("1:1 on a model without it: err %v", err)
+	}
+	for _, body := range []string{
+		`{"model":"m","prompt":"p","seconds":5}`,
+		`{"model":"m","prompt":"p","seconds":5,"aspect_ratio":"9:16"}`,
+		`{"model":"m","prompt":"p","seconds":5,"aspect_ratio":"1:1","image":"` + frame + `"}`,
+	} {
+		if _, err := spec.ResolveVideo(*parseVideo(t, body)); err != nil {
+			t.Errorf("%s: %v", body, err)
+		}
+	}
+	if !slices.Equal(media.Seedance20Fast.Ratios(), media.VideoAspectRatios) {
+		t.Errorf("a spec that names no ratios takes %v, want every video ratio", media.Seedance20Fast.Ratios())
+	}
+}

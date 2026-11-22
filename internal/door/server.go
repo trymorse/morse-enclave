@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"morse/backend/internal/apierr"
+	"morse/backend/internal/clip"
 	"morse/backend/internal/dialect"
 	"morse/backend/internal/enum"
 	"morse/backend/internal/seal"
@@ -32,6 +33,8 @@ type Config struct {
 	RequireProxyV2 bool
 	ProxyPeers     []netip.Prefix
 	Reports        Reporter
+	DialRelay      func(ctx context.Context, network, addr string) (net.Conn, error)
+	Clips          *clip.Receiver
 }
 
 type Reporter interface {
@@ -286,13 +289,20 @@ func NewServer(c Config) (*Server, error) {
 	if s.reports == nil {
 		s.reports = NopReporter{}
 	}
+	dial := c.DialRelay
+	if dial == nil {
+		dial = (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext
+	}
 	s.client = &http.Client{Transport: &http.Transport{
-		DialContext:        (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+		DialContext:        dial,
 		DisableCompression: true,
 	}}
 	mux := http.NewServeMux()
 	for pattern, rt := range table {
 		mux.HandleFunc(pattern, s.pass(pattern, rt))
+	}
+	if c.Clips != nil {
+		mux.HandleFunc(clip.UploadPattern, s.receiveClip(c.Clips))
 	}
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) { apierr.WriteError(w, errNotFound) })
 	s.server = &http.Server{Handler: mux, TLSConfig: &tls.Config{GetCertificate: c.Door.certificate, MinVersion: tls.VersionTLS12}, MaxHeaderBytes: maxHeaderBytes, Protocols: new(http.Protocols)}
@@ -312,6 +322,17 @@ func (s *Server) ListenAndServe(addr string) error {
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		return err
+	}
+	s.reports.Listening()
+	return s.serve(ln)
+}
+
+func (s *Server) Serve(ln net.Listener) error {
+	select {
+	case <-s.door.Ready():
+	case <-s.closed:
+		ln.Close()
+		return http.ErrServerClosed
 	}
 	s.reports.Listening()
 	return s.serve(ln)
@@ -391,6 +412,16 @@ func (s *Server) pass(pattern string, rt route) http.HandlerFunc {
 		}
 		defer resp.Body.Close()
 		s.answer(w, r, resp, cek, pattern)
+	}
+}
+
+func (s *Server) receiveClip(clips *clip.Receiver) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		rc := http.NewResponseController(w)
+		rc.SetReadDeadline(time.Now().Add(s.limits.bodyGrace))
+		r.Body = io.NopCloser(&flooredBody{Reader: r.Body, rc: rc, ramp: s.limits.bodyRamp, rate: s.limits.bodyRate})
+		s.entrance.markBusy(r.Context())
+		clips.ServeHTTP(w, r)
 	}
 }
 

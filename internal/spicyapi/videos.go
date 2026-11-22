@@ -1,6 +1,7 @@
 package spicyapi
 
 import (
+	"cmp"
 	"context"
 	"encoding/base64"
 	"fmt"
@@ -21,8 +22,10 @@ const expired = "expired"
 
 type videoModel struct {
 	media.VideoSpec
-	sendsThinking bool
-	fromFrames    string
+	sendsExpansion bool
+	sendsThinking  bool
+	fromFrames     string
+	framesOnly     bool
 }
 
 // why: GET https://api.spicyapi.ai/api/v1/models/{model} (2026-11-17) lists the only fields each takes, and H3 bills
@@ -30,13 +33,54 @@ type videoModel struct {
 // endpoint costs what its text-to-video one does (catalog, 2026-11-18), and H3's takes no aspect_ratio.
 var videoModels = map[string]videoModel{
 	"minimax/h3/text-to-video": {
-		VideoSpec:  media.VideoSpec{MinSeconds: 5, MaxSeconds: 15, Resolutions: []string{"768p", "480p"}, LastFrame: true},
-		fromFrames: "minimax/h3/image-to-video",
+		VideoSpec:      media.VideoSpec{MinSeconds: 5, MaxSeconds: 15, Resolutions: []string{"768p", "480p"}, LastFrame: true},
+		sendsExpansion: true,
+		fromFrames:     "minimax/h3/image-to-video",
 	},
 	"alibaba/wan-3.0/text-to-video": {
-		VideoSpec:     media.VideoSpec{MinSeconds: 5, MaxSeconds: 15, Resolutions: []string{"720p", "480p"}, Audio: true, LastFrame: true},
-		sendsThinking: true,
-		fromFrames:    "alibaba/wan-3.0/image-to-video",
+		VideoSpec:      media.VideoSpec{MinSeconds: 5, MaxSeconds: 15, Resolutions: []string{"720p", "480p"}, Audio: true, LastFrame: true},
+		sendsExpansion: true,
+		sendsThinking:  true,
+		fromFrames:     "alibaba/wan-3.0/image-to-video",
+	},
+	"bytedance/seedance-2.5/text-to-video": {
+		VideoSpec:  media.VideoSpec{MinSeconds: 4, MaxSeconds: 30, Resolutions: []string{"720p", "480p"}, Audio: true, LastFrame: true},
+		fromFrames: "bytedance/seedance-2.5/image-to-video",
+	},
+	"bytedance/seedance-2.0-fast/text-to-video": {
+		VideoSpec:  media.VideoSpec{MinSeconds: 4, MaxSeconds: 15, Resolutions: []string{"720p", "480p"}, Audio: true, LastFrame: true},
+		fromFrames: "bytedance/seedance-2.0-fast/image-to-video",
+	},
+	"bytedance/seedance-2.0-mini/text-to-video": {
+		VideoSpec:  media.VideoSpec{MinSeconds: 4, MaxSeconds: 15, Resolutions: []string{"720p", "480p"}, Audio: true, LastFrame: true},
+		fromFrames: "bytedance/seedance-2.0-mini/image-to-video",
+	},
+	"pruna-ai/p-video-2-pro/text-to-video": {
+		VideoSpec:  media.VideoSpec{MinSeconds: 5, MaxSeconds: 15, Resolutions: []string{"768p", "480p"}, LastFrame: true},
+		fromFrames: "pruna-ai/p-video-2-pro/image-to-video",
+	},
+	// why: the adult fine-tunes are image-to-video only, each at most 15 s here though some take 30, and their schemas
+	// (GET https://api.spicyapi.ai/api/v1/models/{model}, 2026-11-22) list prompt expansion only on Wan 3.0 Spicy.
+	"alibaba/wan-3.0-spicy/image-to-video": {
+		VideoSpec:      media.VideoSpec{MinSeconds: 2, MaxSeconds: 15, Resolutions: []string{"720p", "480p"}, Audio: true, LastFrame: true},
+		sendsExpansion: true,
+		framesOnly:     true,
+	},
+	"bytedance/seedance-2.5-spicy/image-to-video": {
+		VideoSpec:  media.VideoSpec{MinSeconds: 4, MaxSeconds: 15, Resolutions: []string{"720p", "480p"}, Audio: true, LastFrame: true},
+		framesOnly: true,
+	},
+	"minimax/h3-spicy/image-to-video": {
+		VideoSpec:  media.VideoSpec{MinSeconds: 3, MaxSeconds: 15, Resolutions: []string{"768p", "480p"}, LastFrame: true},
+		framesOnly: true,
+	},
+	"lightricks/ltx-2.3-spicy/image-to-video": {
+		VideoSpec:  media.VideoSpec{MinSeconds: 3, MaxSeconds: 15, Resolutions: []string{"720p", "480p"}},
+		framesOnly: true,
+	},
+	"vidu/q3-spicy/image-to-video": {
+		VideoSpec:  media.VideoSpec{MinSeconds: 1, MaxSeconds: 15, Resolutions: []string{"720p", "540p"}, Audio: true},
+		framesOnly: true,
 	},
 }
 
@@ -65,6 +109,9 @@ func (p *Videos) ResolveVideo(req media.VideoRequest) (media.VideoRequest, error
 	frames, err := framesOf(req)
 	if err != nil {
 		return media.VideoRequest{}, err
+	}
+	if p.framesOnly && req.FirstFrame() == "" {
+		return media.VideoRequest{}, strictjson.Invalid("This model makes a clip only from a first frame; send image.")
 	}
 	for _, frame := range frames {
 		if base64.StdEncoding.DecodedLen(len(frame.Base64)) > maxReference {
@@ -97,7 +144,7 @@ type videoInput struct {
 	ImageURL              string `json:"image_url,omitempty"`
 	LastImageURL          string `json:"last_image_url,omitempty"`
 	GenerateAudio         *bool  `json:"generate_audio,omitempty"`
-	EnablePromptExpansion *bool  `json:"enable_prompt_expansion"`
+	EnablePromptExpansion *bool  `json:"enable_prompt_expansion,omitempty"`
 	EnableThinking        *bool  `json:"enable_thinking,omitempty"`
 }
 
@@ -106,7 +153,10 @@ type videoInput struct {
 func (p *Videos) SubmitVideo(ctx context.Context, req *media.VideoRequest, _ media.Submission) (media.Submitted, error) {
 	in := videoInput{
 		Prompt: req.Prompt(), Resolution: req.Resolution, AspectRatio: req.AspectRatio, DurationSeconds: req.Seconds,
-		GenerateAudio: req.Audio, EnablePromptExpansion: off,
+		GenerateAudio: req.Audio,
+	}
+	if p.sendsExpansion {
+		in.EnablePromptExpansion = off
 	}
 	if p.sendsThinking {
 		in.EnableThinking = off
@@ -121,7 +171,7 @@ func (p *Videos) SubmitVideo(ctx context.Context, req *media.VideoRequest, _ med
 		if err != nil {
 			return media.Submitted{}, err
 		}
-		model, in.AspectRatio, in.ImageURL = p.fromFrames, "", uris[0]
+		model, in.AspectRatio, in.ImageURL = cmp.Or(p.fromFrames, p.model), "", uris[0]
 		if len(uris) > 1 {
 			in.LastImageURL = uris[1]
 		}

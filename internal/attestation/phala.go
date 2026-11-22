@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	"morse/backend/internal/aci"
@@ -63,6 +64,7 @@ type Workload struct {
 }
 
 type phalaReport struct {
+	APIVersion  *string `json:"api_version"`
 	Attestation struct {
 		TEEType          string `json:"tee_type"`
 		ReportData       string `json:"report_data"`
@@ -110,6 +112,9 @@ func (p Policy) VerifyPhalaUnboundToHost(ctx context.Context, raw []byte, nonce 
 	a := r.Attestation
 	now := p.now()
 
+	if r.APIVersion == nil || *r.APIVersion != sessionAPIVersion {
+		return PhalaReport{}, fmt.Errorf("%w: api_version %s, not %s", ErrUnreadable, jsonOrAbsent(r.APIVersion), sessionAPIVersion)
+	}
 	if a.TEEType != teeTypeTDX {
 		return PhalaReport{}, fmt.Errorf("%w: %q", ErrTEEType, a.TEEType)
 	}
@@ -216,4 +221,11 @@ func checkProvenance(compose, repoURL, repoCommit string) (launcher, error) {
 		return launcher{}, fmt.Errorf("%w: the launcher service %s builds %s%s%s, the report claims %s%s%s", ErrProvenance, l.service, l.repoURL, sourceCommitSep, l.commit, repoURL, sourceCommitSep, repoCommit)
 	}
 	return l, nil
+}
+
+func jsonOrAbsent(s *string) string {
+	if s == nil {
+		return "absent"
+	}
+	return strconv.Quote(*s)
 }

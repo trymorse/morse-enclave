@@ -1,11 +1,14 @@
 package openaihosts
 
 import (
+	"encoding/json"
+	"maps"
 	"net/http"
 
 	"morse/backend/internal/catalog"
 	"morse/backend/internal/chat"
 	"morse/backend/internal/openaicompat"
+	"morse/backend/internal/phala"
 	"morse/backend/internal/upstream"
 )
 
@@ -19,6 +22,8 @@ type Host struct {
 	thinkingField  string
 	sendsCacheKey  bool
 	cacheKeyHeader string
+	force          map[string]json.RawMessage
+	usageEachChunk bool
 }
 
 var (
@@ -31,9 +36,19 @@ var (
 	// why: DeepInfra documents that requests with the same prompt_cache_key and model share a KV cache
 	// (https://docs.deepinfra.com/chat/prompt-caching.md). Wafer, Isoquant and Novita document no cache key.
 	DeepInfra = Host{Name: "deepinfra", limitField: openaicompat.MaxTokens, sendsCacheKey: true}
+	// why: Phala's zero data retention is a field of the request body, so it is forced on every request as the
+	// attested Phala route forces it (internal/phala), with the usage on each chunk that route asks for.
+	PhalaZDR = Host{Name: "phala-zdr", limitField: openaicompat.MaxTokens, force: map[string]json.RawMessage{"provider": json.RawMessage(phala.Constraint)}, usageEachChunk: true}
+	Heabsy   = Host{Name: "heabsy", limitField: openaicompat.MaxTokens}
+	Silk     = Host{Name: "silk", limitField: openaicompat.MaxTokens}
+	// why: Abliteration documents prompt_cache_key as the routing hint that keeps a conversation's requests on a warm
+	// cache (https://docs.abliteration.ai/capabilities/prompt-caching.md).
+	Abliteration = Host{Name: "abliteration", limitField: openaicompat.MaxTokens, sendsCacheKey: true}
 )
 
-func Hosts() []Host { return []Host{Wafer, Isoquant, Novita, Morph, DeepInfra} }
+func Hosts() []Host {
+	return []Host{Wafer, Isoquant, Novita, Morph, DeepInfra, PhalaZDR, Heabsy, Silk, Abliteration}
+}
 
 func (h Host) Endpoint(baseURL, key string, client *http.Client) upstream.Endpoint {
 	auth := upstream.Bearer(key)
@@ -50,13 +65,15 @@ func (h Host) SwitchesThinking() bool { return h.thinkingField != "" }
 
 func (h Host) NewChat(baseURL, key, model string, fixes catalog.Fixes, client *http.Client) *openaicompat.Provider {
 	return &openaicompat.Provider{
-		Sender:         openaicompat.HTTPSender{Endpoint: h.Endpoint(baseURL, key, client)},
-		Model:          model,
-		LimitField:     h.limitField,
-		Admit:          h.admit,
-		Fixes:          fixes,
-		ThinkingField:  h.thinkingField,
-		SendsCacheKey:  h.sendsCacheKey,
-		CacheKeyHeader: h.cacheKeyHeader,
+		Sender:          openaicompat.HTTPSender{Endpoint: h.Endpoint(baseURL, key, client)},
+		Model:           model,
+		Force:           maps.Clone(h.force),
+		ContinuousUsage: h.usageEachChunk,
+		LimitField:      h.limitField,
+		Admit:           h.admit,
+		Fixes:           fixes,
+		ThinkingField:   h.thinkingField,
+		SendsCacheKey:   h.sendsCacheKey,
+		CacheKeyHeader:  h.cacheKeyHeader,
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"morse/backend/internal/baseurl"
+	"morse/backend/internal/clip"
 	"morse/backend/internal/door"
 )
 
@@ -15,7 +16,7 @@ type listeningDoor struct {
 	server *door.Server
 }
 
-func doorOf(getenv func(string) string, environment string, gate *door.Door, sealTo []byte, log *logger) (*listeningDoor, error) {
+func doorOf(getenv func(string) string, environment string, gate *door.Door, sealTo []byte, clips *clip.Receiver, log *logger) (*listeningDoor, error) {
 	addr := getenv("PROXY_DOOR_ADDR")
 	if addr == "" {
 		return nil, nil
@@ -43,7 +44,7 @@ func doorOf(getenv func(string) string, environment string, gate *door.Door, sea
 	if err != nil {
 		return nil, err
 	}
-	server, err := door.NewServer(door.Config{Door: gate, SealTo: sealTo, Relay: relay, RequireProxyV2: proxied, ProxyPeers: peers, Reports: log})
+	server, err := door.NewServer(door.Config{Door: gate, SealTo: sealTo, Relay: relay, RequireProxyV2: proxied, ProxyPeers: peers, Reports: log, Clips: clips})
 	if err != nil {
 		return nil, err
 	}

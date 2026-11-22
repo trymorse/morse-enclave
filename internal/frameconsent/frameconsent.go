@@ -73,6 +73,12 @@ func Required(frame int) error {
 	return ErrRequired.Naming("last_image")
 }
 
+var errImageRequired = apierr.Invalid(http.StatusForbidden, "frame_consent_required",
+	"This model takes an uploaded image only once the account's owner has accepted the frame consent statement for that exact file. "+
+		"Read it with GET /v1/account/frame-consents, accept it with POST /v1/account/frame-consents, then send the request again.").Naming("images")
+
+func RequiredImage(int) error { return errImageRequired }
+
 func Missing(frames, consented []Digest) (frame int, missing bool) {
 	for i, d := range frames {
 		if !slices.Contains(consented, d) {

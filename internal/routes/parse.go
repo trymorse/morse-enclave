@@ -29,6 +29,7 @@ func parseRetention(raw string) (catalog.Retention, error) {
 }
 
 var tierInLabel = regexp.MustCompile(`(?i)\b(tee|e2ee)\b`)
+var flagName = regexp.MustCompile(`^[a-z][a-z0-9]*(_[a-z0-9]+)*$`)
 
 func Load(path string, defaultMarkup money.Markup) ([]Route, error) {
 	rts, _, err := Read(path, defaultMarkup)
@@ -220,6 +221,12 @@ func (c common) route(serves Serves) (Route, error) {
 	if !share.Valid() {
 		return Route{}, fmt.Errorf("rebate_share_bps %d must be from 0 to %d basis points of the margin; leave it out for %d", share, money.WholeMargin, money.DefaultRebateShare)
 	}
+	if err := c.checkAdult(requires); err != nil {
+		return Route{}, err
+	}
+	if c.Flag != "" && !flagName.MatchString(c.Flag) {
+		return Route{}, fmt.Errorf("flag %q is no runtime flag name, which is lowercase words joined by _; leave it out to serve the model to everyone", c.Flag)
+	}
 	rt := Route{
 		Model:         c.Model,
 		Tier:          tier,
@@ -233,6 +240,7 @@ func (c common) route(serves Serves) (Route, error) {
 		Lab:           c.Lab,
 		OpenWeights:   c.OpenWeights,
 		Uncensored:    c.Uncensored,
+		Adult:         c.Adult,
 		Retention:     retention,
 		ProviderName:  c.ProviderName,
 		Serves:        serves,
@@ -240,6 +248,7 @@ func (c common) route(serves Serves) (Route, error) {
 		RequiresPlan:  requires,
 		AppOnly:       c.AppOnly,
 		Pick:          slices.Contains(c.Picks, tier.String()),
+		Flag:          c.Flag,
 		RebateShare:   share,
 		OnBehalfOf:    c.OnBehalfOf,
 	}
@@ -247,6 +256,28 @@ func (c common) route(serves Serves) (Route, error) {
 		return Route{}, err
 	}
 	return rt, c.checkProviderName(up)
+}
+
+// why: an adult fine-tune is made for explicit output, so it is sold only where the uncensored line already is (a paid
+// plan, in the app, never from Free's allowance or a pick) and only as an image or a clip.
+func (c common) checkAdult(requires plankind.Kind) error {
+	switch {
+	case !c.Adult:
+		return nil
+	case !c.Uncensored:
+		return errors.New("is adult and must be uncensored")
+	case !c.AppOnly:
+		return errors.New("is adult and must be app_only")
+	case !requires.Paid():
+		return errors.New("is adult and must set requires_plan")
+	case c.Included != nil:
+		return errors.New("is adult and must not be included")
+	case len(c.Picks) > 0:
+		return errors.New("is adult and must not be a pick")
+	case c.Kind != catalog.KindImage && c.Kind != catalog.KindVideo:
+		return fmt.Errorf("is adult and must be of kind %s or %s", catalog.KindImage, catalog.KindVideo)
+	}
+	return nil
 }
 
 func requiredPlan(raw string) (plankind.Kind, error) {

@@ -1,11 +1,13 @@
 package attestation
 
 import (
+	"bytes"
 	"crypto/sha512"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -19,11 +21,14 @@ const (
 	eventOSImageHash              = "os-image-hash"
 	eventKeyProvider              = "key-provider"
 	eventSystemReady              = "system-ready"
+	eventLogV1                    = 1
+	eventLogV2                    = 2
 )
 
 type event struct {
 	IMR     int
 	Type    uint32
+	Version uint32
 	Digest  [sha512.Size384]byte
 	Name    string
 	Payload []byte
@@ -41,18 +46,26 @@ func unquoted(raw json.RawMessage) json.RawMessage {
 func parseEventLog(raw json.RawMessage) ([]event, error) {
 	raw = unquoted(raw)
 	var wire []struct {
-		IMR     int    `json:"imr"`
-		Type    uint32 `json:"event_type"`
-		Digest  string `json:"digest"`
-		Name    string `json:"event"`
-		Payload string `json:"event_payload"`
+		IMR      int     `json:"imr"`
+		Type     uint32  `json:"event_type"`
+		Version  *uint32 `json:"version"`
+		Digest   string  `json:"digest"`
+		Name     string  `json:"event"`
+		Payload  string  `json:"event_payload"`
+		Preimage *string `json:"preimage"`
 	}
 	if err := json.Unmarshal(raw, &wire); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrEventLog, err)
 	}
 	events := make([]event, len(wire))
 	for i, w := range wire {
-		e := event{IMR: w.IMR, Type: w.Type, Name: w.Name}
+		e := event{IMR: w.IMR, Type: w.Type, Version: eventLogV1, Name: w.Name}
+		if w.Version != nil {
+			e.Version = *w.Version
+		}
+		if e.Version != eventLogV1 && (e.IMR != runtimeIMR || e.Version != eventLogV2) {
+			return nil, fmt.Errorf("%w: %w: event %d in IMR %d has version %d", ErrEventLog, ErrUnreadable, i, e.IMR, e.Version)
+		}
 		payload, err := hex.DecodeString(w.Payload)
 		if err != nil {
 			return nil, fmt.Errorf("%w: event %d payload: %w", ErrEventLog, i, err)
@@ -71,6 +84,9 @@ func parseEventLog(raw json.RawMessage) ([]event, error) {
 			}
 		}
 		if e.IMR == runtimeIMR {
+			if w.Preimage != nil && *w.Preimage != hex.EncodeToString(runtimePreimage(e)) {
+				return nil, fmt.Errorf("%w: runtime event %d %q has a preimage that is not its version %d preimage", ErrEventLog, i, e.Name, e.Version)
+			}
 			if err := checkRuntimeEvent(e); err != nil {
 				return nil, fmt.Errorf("%w: runtime event %d %q %w", ErrEventLog, i, e.Name, err)
 			}
@@ -84,7 +100,7 @@ func checkRuntimeEvent(e event) error {
 	switch {
 	case e.Type != dstackRuntimeEventType:
 		return fmt.Errorf("has event_type %#x, not %#x", e.Type, dstackRuntimeEventType)
-	case strings.Contains(e.Name, runtimeFieldSeparator):
+	case e.Version == eventLogV1 && strings.Contains(e.Name, runtimeFieldSeparator):
 		return fmt.Errorf("contains %q in its name, which makes its digest preimage ambiguous", runtimeFieldSeparator)
 	case e.Digest != runtimeDigest(e):
 		return fmt.Errorf("digest %x is not the hash of its payload", e.Digest)
@@ -93,13 +109,50 @@ func checkRuntimeEvent(e event) error {
 }
 
 func runtimeDigest(e event) [sha512.Size384]byte {
-	h := sha512.New384()
-	h.Write(binary.LittleEndian.AppendUint32(nil, e.Type))
-	h.Write([]byte(runtimeFieldSeparator + e.Name + runtimeFieldSeparator))
-	h.Write(e.Payload)
-	var sum [sha512.Size384]byte
-	h.Sum(sum[:0])
-	return sum
+	return sha512.Sum384(runtimePreimage(e))
+}
+
+// why: dstack's cc-eventlog runtime_events.rs hashes a version 1 event as event_type_le || ":" || name ||
+// ":" || payload, and a version 2 event as the RFC 8785 JSON {"name":...,"payload":"<hex>","type":...}.
+func runtimePreimage(e event) []byte {
+	if e.Version == eventLogV2 {
+		var b bytes.Buffer
+		b.WriteString(`{"name":`)
+		jcsString(&b, e.Name)
+		b.WriteString(`,"payload":"` + hex.EncodeToString(e.Payload) + `","type":` + strconv.FormatUint(uint64(e.Type), 10) + `}`)
+		return b.Bytes()
+	}
+	b := binary.LittleEndian.AppendUint32(nil, e.Type)
+	b = append(b, runtimeFieldSeparator+e.Name+runtimeFieldSeparator...)
+	return append(b, e.Payload...)
+}
+
+// why: RFC 8785 section 3.2.2.2 escapes only '"', '\\' and the controls below U+0020, the five with a short
+// escape by it and the rest as lowercase \u00xx, and writes every other character as UTF-8.
+func jcsString(b *bytes.Buffer, s string) {
+	b.WriteByte('"')
+	for _, r := range s {
+		switch {
+		case r == '"' || r == '\\':
+			b.WriteByte('\\')
+			b.WriteRune(r)
+		case r == '\b':
+			b.WriteString(`\b`)
+		case r == '\f':
+			b.WriteString(`\f`)
+		case r == '\n':
+			b.WriteString(`\n`)
+		case r == '\r':
+			b.WriteString(`\r`)
+		case r == '\t':
+			b.WriteString(`\t`)
+		case r < 0x20:
+			fmt.Fprintf(b, `\u%04x`, r)
+		default:
+			b.WriteRune(r)
+		}
+	}
+	b.WriteByte('"')
 }
 
 func replayRuntime(events []event) [sha512.Size384]byte {

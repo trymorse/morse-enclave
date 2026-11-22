@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	_ "embed"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -25,6 +26,7 @@ const (
 	tdAttributeDebug    = 1
 	configIDLen         = 48
 	configIDComposeHash = 0x01
+	tdxQuoteVersion     = 4
 )
 
 var (
@@ -36,6 +38,7 @@ var (
 	ErrComposeHash     = errors.New("attestation: app_compose is not the measured compose-hash")
 	ErrConfigID        = errors.New("attestation: the quote's MRCONFIGID is not 01 || sha256(app_compose) || zeros")
 	ErrProvenance      = errors.New("attestation: the release provenance is not corroborated by the measured app_compose")
+	ErrUnreadable      = errors.New("attestation: the report declares a format version this build cannot read")
 )
 
 type Nonce [32]byte
@@ -118,7 +121,7 @@ func (o Outage) Unwrap() error { return o.Err }
 
 func Unjudged(err error) bool {
 	_, ok := err.(Outage)
-	return ok
+	return ok || errors.Is(err, ErrUnreadable)
 }
 
 func (p Policy) now() time.Time {
@@ -156,6 +159,9 @@ func measured(body *pb.TDQuoteBody) Measured {
 // passes a TDX module level below UpToDate, so every admitted quote's standing is read from the
 // collateral it fetched.
 func (p Policy) verifyQuote(ctx context.Context, raw []byte, now time.Time, tcb tcbPolicy) (*pb.TDQuoteBody, TCB, error) {
+	if len(raw) < 2 || binary.LittleEndian.Uint16(raw) != tdxQuoteVersion {
+		return nil, TCB{}, fmt.Errorf("%w: %w: the quote header is not version %d", ErrQuote, ErrUnreadable, tdxQuoteVersion)
+	}
 	parsed, err := abi.QuoteToProto(raw)
 	if err != nil {
 		return nil, TCB{}, fmt.Errorf("%w: %w", ErrQuote, err)

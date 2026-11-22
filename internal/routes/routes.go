@@ -30,6 +30,10 @@ const (
 	ProviderMorph
 	ProviderDeepInfra
 	ProviderSpicyAPI
+	ProviderPhalaZDR
+	ProviderHeabsy
+	ProviderSilk
+	ProviderAbliteration
 )
 
 var providerNames = enum.Names[Provider]{
@@ -48,6 +52,10 @@ var providerNames = enum.Names[Provider]{
 	ProviderMorph:           "morph",
 	ProviderDeepInfra:       "deepinfra",
 	ProviderSpicyAPI:        "spicyapi",
+	ProviderPhalaZDR:        "phala-zdr",
+	ProviderHeabsy:          "heabsy",
+	ProviderSilk:            "silk",
+	ProviderAbliteration:    "abliteration",
 }
 
 func (p Provider) String() string { return providerNames.String(p) }
@@ -78,6 +86,7 @@ type Route struct {
 	Lab           string
 	OpenWeights   bool
 	Uncensored    bool
+	Adult         bool `json:",omitempty"`
 	Retention     catalog.Retention
 	ProviderName  string
 	Serves        Serves
@@ -89,6 +98,7 @@ type Route struct {
 	Order         int
 	AppOnly       bool
 	Pick          bool
+	Flag          string `json:",omitempty"`
 	RebateShare   money.RebateShare
 }
 
@@ -104,6 +114,35 @@ func (rt Route) At(places ...catalog.Place) []Route {
 		}
 	}
 	return at
+}
+
+var VideoStoreEnvs = []string{"VIDEO_STORE_URL", "VIDEO_STORE_ACCESS_KEY_ID", "VIDEO_STORE_SECRET_ACCESS_KEY"}
+
+func (rt Route) UploadsVideo() bool {
+	up, vendor := rt.Upstream.(Vendor)
+	return vendor && up.Provider == ProviderXAI && rt.Serves.Kind() == catalog.KindVideo
+}
+
+func VideoUploaders(rts []Route) []string {
+	var names []string
+	for _, served := range rts {
+		for _, rt := range served.Upstreams() {
+			if rt.UploadsVideo() {
+				names = append(names, rt.Model)
+			}
+		}
+	}
+	slices.Sort(names)
+	return slices.Compact(names)
+}
+
+func RequiredEnvs(rts []Route) []string {
+	names := KeyEnvs(rts)
+	if len(VideoUploaders(rts)) > 0 {
+		names = append(names, VideoStoreEnvs...)
+	}
+	slices.Sort(names)
+	return slices.Compact(names)
 }
 
 func KeyEnvs(rts []Route) []string {

@@ -20,7 +20,7 @@ var (
 	endpointIDPattern = regexp.MustCompile(catalog.EndpointIDPattern)
 )
 
-var ModelFields = []string{"label", "lab", "open_weights", "uncensored", "kind", "reasoning_efforts", "always_reasons", "input_modalities", "hides_reasoning", "answers_in_reasoning", "tools", "characters", "markup", "app_only", "picks", "prices", "rebate_share_bps"}
+var ModelFields = []string{"label", "lab", "open_weights", "uncensored", "adult", "kind", "reasoning_efforts", "always_reasons", "input_modalities", "hides_reasoning", "answers_in_reasoning", "tools", "characters", "markup", "app_only", "picks", "flag", "prices", "rebate_share_bps"}
 
 var EndpointModelFields = []string{"app_only", "input_modalities", "reasoning_efforts"}
 
@@ -249,6 +249,9 @@ func parseModel(raw json.RawMessage) (model, error) {
 		m.endpoints = append(m.endpoints, e)
 	}
 	if err := m.checkEndpointModelFields(); err != nil {
+		return model{}, err
+	}
+	if err := m.checkFlag(); err != nil {
 		return model{}, err
 	}
 	if err := m.checkPicks(); err != nil {

@@ -30,3 +30,15 @@ func (m model) checkPicks() error {
 	}
 	return nil
 }
+
+func (m model) checkFlag() error {
+	if _, ok := m.fields["flag"]; !ok {
+		return nil
+	}
+	for _, e := range m.endpoints {
+		if tier, err := catalog.ParseTier(e.tier()); err == nil && tier.Attested() {
+			return fmt.Errorf("model %q sets flag and serves tier %s; a flag keeps a model's chats from a caller it does not admit, but its attestation and receipts would still name it, so only a model served wholly in the clear may set one", m.id, tier)
+		}
+	}
+	return nil
+}

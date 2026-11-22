@@ -12,6 +12,7 @@ import (
 
 var imageModels = map[string]media.ImageSpec{
 	"grok-imagine-image-2.0": media.GrokImagine2,
+	"grok-imagine-image":     media.GrokImagine1,
 }
 
 type Images struct {

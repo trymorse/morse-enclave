@@ -16,6 +16,7 @@ import (
 	"morse/backend/internal/billing/measure"
 	"morse/backend/internal/catalog"
 	"morse/backend/internal/chat"
+	"morse/backend/internal/clip"
 	"morse/backend/internal/health"
 	"morse/backend/internal/plugins"
 	"morse/backend/internal/research"
@@ -182,7 +183,7 @@ func (w *InProcess) OpenSealed(ctx context.Context, o SealedOpening) (SealedAdmi
 	}
 	cek := req.CEK
 	admitted, err := w.Open(ctx, Opening{Method: req.Method, Path: target.Path, Query: target.RawQuery, Header: ContentHeaders(header), Body: bytes.NewReader(req.Body), Cast: o.Cast, Framing: o.Framing, KeyCaller: o.KeyCaller, KeyFloor: o.KeyFloor, KeySettings: o.KeySettings,
-		PrivacyVeil: o.PrivacyVeil, cek: &cek, veilHead: req.PrivacyVeil, veilPartition: req.PrivacyVeilPartition})
+		PrivacyVeil: o.PrivacyVeil, cek: &cek, veilHead: req.PrivacyVeil, veilPartition: req.PrivacyVeilPartition, clipKey: header.Get(clip.KeyHeader)})
 	if err != nil {
 		refusal := refusalWire(contentRefusal(err))
 		return refuse(refusal.Envelope(), refusal.Status)

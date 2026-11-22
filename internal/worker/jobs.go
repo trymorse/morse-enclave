@@ -12,6 +12,7 @@ import (
 	"morse/backend/internal/apierr"
 	"morse/backend/internal/billing/measure"
 	"morse/backend/internal/catalog"
+	"morse/backend/internal/clip"
 	"morse/backend/internal/frameconsent"
 	"morse/backend/internal/jobs"
 	"morse/backend/internal/media"
@@ -21,6 +22,7 @@ import (
 type openedVideo struct {
 	cuts
 	endpoint  catalog.EndpointID
+	route     string
 	generator media.VideoGenerator
 	req       *media.VideoRequest
 }
@@ -34,6 +36,9 @@ func (w *InProcess) openVideo(o Opening) (Admission, error) {
 	if !known {
 		return nil, apierr.ErrModelNotFound
 	}
+	if o.cek == nil && w.sealsClipsOf(req.Model) {
+		return nil, errClipsSealedOnly
+	}
 	if err := refuseProtocol(nil, protocolOf(o.Header.Get)); err != nil {
 		return nil, err
 	}
@@ -41,21 +46,30 @@ func (w *InProcess) openVideo(o Opening) (Admission, error) {
 	if err != nil {
 		return nil, apierr.InvalidParameter(err.Error())
 	}
-	ov := &openedVideo{cuts: newCuts(), endpoint: w.endpoints[req.Model], generator: generator, req: &resolved}
+	ov := &openedVideo{cuts: newCuts(), endpoint: w.endpoints[req.Model], route: req.Model, generator: generator, req: &resolved}
 	return MediaAdmission{admitted: admitted{w.keep(o, ov)}, Route: req.Model, Units: resolved.Seconds, Frames: resolved.FrameDigests()}, nil
 }
 
 func (o *openedVideo) cut(reason measure.Cut) { o.cuts.cut(reason, false) }
 
 func (o *openedVideo) submit(w *InProcess, g JobGrant, reply http.ResponseWriter, accepted func(media.Submitted)) Measured {
-	queued := VideoView{ID: g.ID, Object: "video", Model: o.req.Model, Status: media.Statuses.String(jobs.Queued), CreatedAt: g.CreatedAt.Unix()}
+	queued := &VideoView{ID: g.ID, Object: "video", Model: o.req.Model, Status: media.Statuses.String(jobs.Queued), CreatedAt: g.CreatedAt.Unix()}
 	return submit(o.cuts, o.endpoint, reply, queued, accepted, func(ctx context.Context) (media.Submitted, error) {
 		if err := o.unconsented(g); err != nil {
 			return media.Submitted{}, err
 		}
 		ctx, cancel := context.WithTimeout(ctx, w.videoSubmit)
 		defer cancel()
-		return o.generator.SubmitVideo(ctx, o.req, media.Submission{Deadline: g.Deadline, UploadURL: g.UploadURL})
+		upload := g.UploadURL
+		if w.sealsClipsOf(o.route) {
+			var key clip.Key
+			var err error
+			if upload, key, err = w.clips.uploadURL(g); err != nil {
+				return media.Submitted{}, err
+			}
+			queued.ClipKey = key.Encode()
+		}
+		return o.generator.SubmitVideo(ctx, o.req, media.Submission{Deadline: g.Deadline, UploadURL: upload})
 	})
 }
 
@@ -113,12 +127,13 @@ const (
 
 type openedRead struct {
 	cuts
-	id string
+	id      string
+	clipKey string
 }
 
 func (w *InProcess) openRead(o Opening, pathValue func(string) string) (Admission, error) {
 	id := pathValue("id")
-	return ReadAdmission{admitted: admitted{w.keep(o, &openedRead{cuts: newCuts(), id: id})}, JobID: id}, nil
+	return ReadAdmission{admitted: admitted{w.keep(o, &openedRead{cuts: newCuts(), id: id, clipKey: o.clipKey})}, JobID: id}, nil
 }
 
 func (o *openedRead) cut(reason measure.Cut) { o.cuts.cut(reason, true) }
@@ -127,7 +142,7 @@ func (o *openedRead) run(_ context.Context, w *InProcess, _ Handle, g Grant, rep
 	rw := newReplyWriter(reply)
 	switch g := g.(type) {
 	case VideoReadGrant:
-		return w.streamVideo(o.cuts.run, rw, g)
+		return w.streamVideo(o.cuts.run, rw, g, o.id, o.clipKey)
 	case ResearchReadGrant:
 		return w.readResearch(o.cuts.run, rw, o.id, g)
 	case ResearchEventsGrant:
@@ -136,7 +151,7 @@ func (o *openedRead) run(_ context.Context, w *InProcess, _ Handle, g Grant, rep
 	return unrunnable(rw)
 }
 
-func (w *InProcess) streamVideo(ctx context.Context, rw *replyWriter, g VideoReadGrant) Measured {
+func (w *InProcess) streamVideo(ctx context.Context, rw *replyWriter, g VideoReadGrant, id, clipKey string) Measured {
 	rc, size, err := w.videos[g.Route].OpenVideo(ctx, g.Output)
 	switch {
 	case errors.Is(err, media.ErrVideoGone):
@@ -147,12 +162,20 @@ func (w *InProcess) streamVideo(ctx context.Context, rw *replyWriter, g VideoRea
 		return Measured{Measurement: measure.Measurement{Outcome: measure.Failed}}
 	}
 	defer rc.Close()
+	var body io.Reader = rc
+	if w.sealsClipsOf(g.Route) {
+		if body, size, err = w.clips.open(id, clipKey, rc, size); err != nil {
+			refusal, _ := apierr.Refusal(err, errClipUnopened)
+			apierr.WriteError(rw, refusal)
+			return Measured{Measurement: measure.Measurement{Outcome: measure.Failed}}
+		}
+	}
 	rw.Header().Set("Content-Type", "video/mp4")
 	rw.Header().Set("Cache-Control", "no-store")
 	if size > 0 {
 		rw.Header().Set("Content-Length", strconv.FormatInt(size, 10))
 	}
-	n, err := io.Copy(rw, rc)
+	n, err := io.Copy(rw, body)
 	return Measured{Served: true, Downloaded: err == nil && (size <= 0 || n == size)}
 }
 

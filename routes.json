@@ -45,9 +45,27 @@
       {"id": "morph", "unnamed": true, "api_key_env": "MORPH_API_KEY", "base_url": "https://api.morphllm.com", "context_tokens": 1048576, "default_max_tokens": 128000, "default_reasoning_effort": "high", "included": {"from":"free","quota":"messages"}, "max_output_tokens": 943718, "openrouter_id": "deepseek/deepseek-v4.1-flash-1017", "provider": "morph", "provider_name": "morph", "quantization": "fp8", "response_formats": ["json_object","json_schema"], "retention": "zdr", "tier": "private", "tokenizer": "deepseek-v4", "upstream_model": "morph-dsv41flash-1017"},
       {"id": "tinfoil", "quantization": "unknown", "sealed_model": "deepseek-v4-1-flash", "api_key_env": "TINFOIL_API_KEY", "attester": "tinfoil", "base_url": "https://inference.tinfoil.sh", "context_tokens": 1048576, "default_max_tokens": 393216, "included": {"from":"pro"}, "max_output_tokens": 393216, "openrouter_id": "deepseek/deepseek-v4.1-flash-1017", "provider_name": "tinfoil", "requires_plan": "pro", "tier": "e2ee", "upstream_model": "deepseek-v4-1-flash"}
     ]},
-    {"id": "deepseek-ai/deepseek-v4.1-flash-1017-abliterated", "lab": "DeepSeek", "label": "DeepSeek V4.1 Flash 1017 Uncensored", "open_weights": true, "prices": {"private": {"prompt_micros_per_mtok":330000,"cached_prompt_micros_per_mtok":8250,"completion_micros_per_mtok":1320000}, "e2ee": {"prompt_micros_per_mtok":375000,"cached_prompt_micros_per_mtok":7500,"completion_micros_per_mtok":1500000}}, "uncensored": true, "endpoints": [
-      {"id": "venice", "api_key_env": "VENICE_API_KEY", "app_only": true, "base_url": "https://api.venice.ai/api", "context_tokens": 1000000, "default_max_tokens": 128000, "included": {"from":"pro"}, "input_modalities": ["text","image"], "max_output_tokens": 131072, "openrouter_id": "deepseek/deepseek-v4.1-flash-1017", "provider": "venice", "provider_name": "venice", "quantization": "fp8", "reasoning_efforts": ["low","high","max"], "response_formats": ["json_schema"], "retention": "zdr", "tier": "private", "tokenizer": "deepseek-v4", "upstream_model": "deepseek-v4-1-flash-1017-uncensored"},
-      {"id": "near", "quantization": "unknown", "sealed_model": "deepseek-ai/DeepSeek-V4.1-Flash-1017-abliterated", "api_key_env": "NEAR_API_KEY", "attester": "near", "base_url": "https://cloud-api.near.ai", "context_tokens": 1048576, "default_max_tokens": 393216, "included": {"from":"pro"}, "max_output_tokens": 393216, "openrouter_id": "deepseek/deepseek-v4.1-flash-1017", "provider_name": "near", "reasoning_efforts": ["none","low","high","max"], "requires_plan": "pro", "retention": "zdr", "tier": "e2ee", "upstream_model": "deepseek-ai/DeepSeek-V4.1-Flash-1017-abliterated"}
+    {"id": "abliteration/abliterated-model", "flag": "abliteration_models", "input_modalities": ["text","image"], "lab": "Abliteration", "label": "Abliterated Model", "picks": ["private"], "reasoning_efforts": ["none","high"], "prices": {"private": {"prompt_micros_per_mtok":1000000,"cached_prompt_micros_per_mtok":100000,"completion_micros_per_mtok":3000000}}, "uncensored": true, "endpoints": [
+      {"id": "abliteration", "api_key_env": "ABLITERATION_API_KEY", "base_url": "https://api.abliteration.ai", "context_tokens": 262144, "default_max_tokens": 128000, "default_reasoning_effort": "high", "max_output_tokens": 262134, "provider": "abliteration", "provider_name": "abliteration", "quantization": "bf16", "response_formats": ["json_object","json_schema"], "retention": "zdr", "tier": "private", "upstream_model": "abliterated-model"}
+    ]},
+    {"id": "abliteration/abliterated-model-large-v2", "flag": "abliteration_models", "input_modalities": ["text"], "lab": "Abliteration", "label": "Abliterated Large v2", "picks": ["private"], "reasoning_efforts": ["low","high","max"], "prices": {"private": {"prompt_micros_per_mtok":3000000,"cached_prompt_micros_per_mtok":300000,"completion_micros_per_mtok":5000000}}, "uncensored": true, "endpoints": [
+      {"id": "abliteration", "api_key_env": "ABLITERATION_API_KEY", "base_url": "https://api.abliteration.ai", "context_tokens": 1000000, "default_max_tokens": 128000, "default_reasoning_effort": "high", "max_output_tokens": 999990, "openrouter_id": "z-ai/glm-5.3", "provider": "abliteration", "provider_name": "abliteration", "quantization": "fp8", "response_formats": ["json_object","json_schema"], "retention": "zdr", "tier": "private", "tokenizer": "glm-5", "upstream_model": "abliterated-model-large-v2"}
+    ]},
+    {"id": "z-ai/glm-5.3-flash-uncensored", "flag": "heabsy_models", "input_modalities": ["text","image"], "lab": "Z.ai", "label": "GLM 5.3 Flash Uncensored", "open_weights": true, "reasoning_efforts": ["low","high","max"], "prices": {"private": {"prompt_micros_per_mtok":250000,"cached_prompt_micros_per_mtok":80125,"completion_micros_per_mtok":1000125}}, "uncensored": true, "endpoints": [
+      {"id": "heabsy", "api_key_env": "HEABSY_API_KEY", "base_url": "https://api.heabsy.com", "context_tokens": 1048576, "default_max_tokens": 128000, "default_reasoning_effort": "high", "included": {"from":"pro"}, "max_output_tokens": 131072, "openrouter_id": "z-ai/glm-5.3-flash", "provider": "heabsy", "provider_name": "heabsy", "quantization": "nvfp4", "retention": "zdr", "tier": "private", "tokenizer": "glm-5", "upstream_model": "glm53-flash-unc"}
+    ]},
+    {"id": "xiaomi/mimo-v2.6-flash-uncensored", "flag": "heabsy_models", "input_modalities": ["text","image"], "lab": "Xiaomi", "label": "MiMo V2.6 Flash Uncensored", "open_weights": true, "reasoning_efforts": ["none","high"], "prices": {"private": {"prompt_micros_per_mtok":578000,"cached_prompt_micros_per_mtok":184250,"completion_micros_per_mtok":1874875}}, "uncensored": true, "endpoints": [
+      {"id": "heabsy", "api_key_env": "HEABSY_API_KEY", "base_url": "https://api.heabsy.com", "context_tokens": 1048576, "default_max_tokens": 65536, "default_reasoning_effort": "high", "included": {"from":"pro"}, "max_output_tokens": 65536, "openrouter_id": "xiaomi/mimo-v2.6-flash", "provider": "heabsy", "provider_name": "heabsy", "quantization": "nvfp4", "retention": "zdr", "tier": "private", "upstream_model": "mimo-v26-flash-unc"}
+    ]},
+    {"id": "moonshotai/kimi-k3.1-pro-uncensored", "flag": "silk_models", "input_modalities": ["text","image"], "lab": "Moonshot AI", "label": "Kimi K3.1 Pro Uncensored", "open_weights": true, "picks": ["private"], "reasoning_efforts": ["none","low","high","max"], "prices": {"private": {"prompt_micros_per_mtok":4375000,"cached_prompt_micros_per_mtok":437500,"completion_micros_per_mtok":10000000}}, "uncensored": true, "endpoints": [
+      {"id": "silk", "api_key_env": "SILK_COMPUTE_API_KEY", "base_url": "https://api.silkcompute.com", "context_tokens": 1048576, "default_max_tokens": 128000, "default_reasoning_effort": "high", "max_output_tokens": 131072, "openrouter_id": "moonshotai/kimi-k3.1-pro", "provider": "silk", "provider_name": "silk", "quantization": "mxfp4", "retention": "zdr", "tier": "private", "tokenizer": "kimi-k3", "upstream_model": "kimi-k3.1-pro-uncensored"}
+    ]},
+    {"id": "z-ai/glm-5.3-uncensored", "flag": "silk_models", "input_modalities": ["text"], "lab": "Z.ai", "label": "GLM 5.3 Uncensored", "open_weights": true, "picks": ["private"], "reasoning_efforts": ["low","high","max"], "prices": {"private": {"prompt_micros_per_mtok":2500000,"cached_prompt_micros_per_mtok":375000,"completion_micros_per_mtok":5000000}}, "uncensored": true, "endpoints": [
+      {"id": "silk", "api_key_env": "SILK_COMPUTE_API_KEY", "base_url": "https://api.silkcompute.com", "context_tokens": 1048576, "default_max_tokens": 128000, "default_reasoning_effort": "high", "max_output_tokens": 131072, "openrouter_id": "z-ai/glm-5.3", "provider": "silk", "provider_name": "silk", "quantization": "nvfp4", "retention": "zdr", "tier": "private", "tokenizer": "glm-5", "upstream_model": "glm-5.3-uncensored"}
+    ]},
+    {"id": "deepseek-ai/deepseek-v4.1-flash-1017-abliterated", "lab": "DeepSeek", "label": "DeepSeek V4.1 Flash 1017 Uncensored", "open_weights": true, "prices": {"private": {"prompt_micros_per_mtok":375000,"cached_prompt_micros_per_mtok":7500,"completion_micros_per_mtok":1500000}, "e2ee": {"prompt_micros_per_mtok":375000,"cached_prompt_micros_per_mtok":7500,"completion_micros_per_mtok":1500000}}, "uncensored": true, "endpoints": [
+      {"id": "phala-zdr", "api_key_env": "PHALA_API_KEY", "base_url": "https://inference.phala.com", "context_tokens": 1048576, "default_max_tokens": 128000, "default_reasoning_effort": "high", "included": {"from":"pro"}, "input_modalities": ["text","image"], "max_output_tokens": 262144, "openrouter_id": "deepseek/deepseek-v4.1-flash-1017", "provider": "phala-zdr", "provider_name": "phala", "quantization": "fp8", "reasoning_efforts": ["none","low","high","max"], "response_formats": ["json_schema"], "retention": "zdr", "tier": "private", "tokenizer": "deepseek-v4", "upstream_model": "phala/deepseek-v4.1-flash-1017-uncensored"},
+      {"id": "phala", "quantization": "fp8", "sealed_model": "phala/deepseek-v4.1-flash-1017-uncensored", "api_key_env": "PHALA_API_KEY", "attester": "phala", "base_url": "https://inference.phala.com", "context_tokens": 1048576, "default_max_tokens": 32768, "included": {"from":"pro"}, "input_modalities": ["text","image"], "max_output_tokens": 32768, "openrouter_id": "deepseek/deepseek-v4.1-flash-1017", "provider_name": "phala", "reasoning_efforts": ["none","low","high","max"], "requires_plan": "pro", "retention": "zdr", "tier": "e2ee", "upstream_model": "phala/deepseek-v4.1-flash-1017-uncensored"}
     ]},
     {"id": "inclusionai/ling-3.0-flash", "answers_in_reasoning": true, "input_modalities": ["text"], "lab": "inclusionAI", "label": "Ling 3.0 Flash", "open_weights": true, "reasoning_efforts": ["minimal"], "prices": {"private": {"prompt_micros_per_mtok":75000,"cached_prompt_micros_per_mtok":15000,"completion_micros_per_mtok":225000}}, "uncensored": false, "endpoints": [
       {"id": "novita", "api_key_env": "NOVITA_API_KEY", "base_url": "https://api.novita.ai/openai", "context_tokens": 262144, "default_max_tokens": 32768, "default_reasoning_effort": "minimal", "included": {"from":"free","quota":"messages","characters":true}, "max_output_tokens": 32768, "owned_by": "inclusionAI", "provider": "novita", "provider_name": "novita", "quantization": "unknown", "retention": "zdr", "tier": "private", "upstream_model": "inclusionai/ling-3.0-flash"},
@@ -256,11 +274,11 @@
       {"id": "phala-tee", "api_key_env": "PHALA_API_KEY", "attester": "phala", "base_url": "https://inference.phala.com", "context_tokens": 32768, "default_max_tokens": 8192, "max_output_tokens": 8192, "provider_name": "phala", "quantization": "unknown", "response_formats": ["json_object"], "retention": "zdr", "tier": "tee", "upstream_model": "qwen/qwen-2.5-7b-instruct"},
       {"id": "phala", "api_key_env": "PHALA_API_KEY", "attester": "phala", "base_url": "https://inference.phala.com", "context_tokens": 32768, "default_max_tokens": 8192, "max_output_tokens": 8192, "provider_name": "phala", "quantization": "unknown", "requires_plan": "pro", "retention": "zdr", "tier": "e2ee", "upstream_model": "qwen/qwen-2.5-7b-instruct"}
     ]},
-    {"id": "phala/qwen3.8-27b-uncensored", "app_only": true, "input_modalities": ["text","image"], "lab": "Alibaba", "label": "Qwen3.8 27B Uncensored", "open_weights": true, "reasoning_efforts": ["low","medium","xhigh"], "prices": {"tee": {"prompt_micros_per_mtok":300000,"cached_prompt_micros_per_mtok":50000,"completion_micros_per_mtok":1500000}, "e2ee": {"prompt_micros_per_mtok":300000,"cached_prompt_micros_per_mtok":50000,"completion_micros_per_mtok":1500000}}, "uncensored": true, "endpoints": [
+    {"id": "phala/qwen3.8-27b-uncensored", "input_modalities": ["text","image"], "lab": "Alibaba", "label": "Qwen3.8 27B Uncensored", "open_weights": true, "reasoning_efforts": ["low","medium","xhigh"], "prices": {"tee": {"prompt_micros_per_mtok":375000,"cached_prompt_micros_per_mtok":62500,"completion_micros_per_mtok":1875000}, "e2ee": {"prompt_micros_per_mtok":375000,"cached_prompt_micros_per_mtok":62500,"completion_micros_per_mtok":1875000}}, "uncensored": true, "endpoints": [
       {"id": "phala-tee", "api_key_env": "PHALA_API_KEY", "attester": "phala", "base_url": "https://inference.phala.com", "context_tokens": 262144, "default_max_tokens": 65536, "default_reasoning_effort": "medium", "included": {"from":"pro"}, "max_output_tokens": 65536, "openrouter_id": "qwen/qwen3.8-27b", "provider_name": "phala", "quantization": "int8", "response_formats": ["json_object","json_schema"], "retention": "zdr", "tier": "tee", "upstream_model": "phala/qwen3.8-27b-uncensored"},
       {"id": "phala", "api_key_env": "PHALA_API_KEY", "attester": "phala", "base_url": "https://inference.phala.com", "context_tokens": 262144, "default_max_tokens": 65536, "included": {"from":"pro"}, "max_output_tokens": 65536, "openrouter_id": "qwen/qwen3.8-27b", "provider_name": "phala", "quantization": "int8", "requires_plan": "pro", "retention": "zdr", "tier": "e2ee", "upstream_model": "phala/qwen3.8-27b-uncensored"}
     ]},
-    {"id": "phala/gemma-4-26b-a4b-uncensored", "app_only": true, "input_modalities": ["text","image"], "lab": "Google", "label": "Gemma 4 26B A4B Uncensored", "open_weights": true, "reasoning_efforts": ["high"], "prices": {"tee": {"prompt_micros_per_mtok":150000,"cached_prompt_micros_per_mtok":50000,"completion_micros_per_mtok":700000}, "e2ee": {"prompt_micros_per_mtok":150000,"cached_prompt_micros_per_mtok":50000,"completion_micros_per_mtok":700000}}, "uncensored": true, "endpoints": [
+    {"id": "phala/gemma-4-26b-a4b-uncensored", "input_modalities": ["text","image"], "lab": "Google", "label": "Gemma 4 26B A4B Uncensored", "open_weights": true, "reasoning_efforts": ["high"], "prices": {"tee": {"prompt_micros_per_mtok":187500,"cached_prompt_micros_per_mtok":62500,"completion_micros_per_mtok":875000}, "e2ee": {"prompt_micros_per_mtok":187500,"cached_prompt_micros_per_mtok":62500,"completion_micros_per_mtok":875000}}, "uncensored": true, "endpoints": [
       {"id": "phala-tee", "api_key_env": "PHALA_API_KEY", "attester": "phala", "base_url": "https://inference.phala.com", "context_tokens": 262144, "default_max_tokens": 128000, "included": {"from":"pro"}, "max_output_tokens": 262144, "openrouter_id": "google/gemma-4-26b-a4b-it", "provider_name": "phala", "quantization": "fp8", "response_formats": ["json_object","json_schema"], "retention": "zdr", "tier": "tee", "upstream_model": "phala/gemma-4-26b-a4b-uncensored"},
       {"id": "phala", "api_key_env": "PHALA_API_KEY", "attester": "phala", "base_url": "https://inference.phala.com", "context_tokens": 262144, "default_max_tokens": 262144, "included": {"from":"pro"}, "max_output_tokens": 262144, "openrouter_id": "google/gemma-4-26b-a4b-it", "provider_name": "phala", "quantization": "fp8", "requires_plan": "pro", "retention": "zdr", "tier": "e2ee", "upstream_model": "phala/gemma-4-26b-a4b-uncensored"}
     ]},
@@ -480,17 +498,8 @@
     {"id": "meta/muse-spark-1.1", "app_only": true, "hides_reasoning": true, "input_modalities": ["text","image"], "lab": "Meta", "label": "Muse Spark 1.1", "reasoning_efforts": ["minimal","low","medium","high","xhigh"], "prices": {"anon": {"prompt_micros_per_mtok":1250000,"cached_prompt_micros_per_mtok":150000,"completion_micros_per_mtok":4250000}}, "uncensored": false, "endpoints": [
       {"id": "openai-responses", "api_key_env": "META_API_KEY", "base_url": "https://api.meta.ai", "context_tokens": 1048576, "decode_max_tps": 305, "default_max_tokens": 128000, "hidden_reasoning_tps": 110, "max_output_tokens": 1048576, "openrouter_id": "meta/muse-spark-1.1", "owned_by": "Meta", "provider": "openai-responses", "provider_name": "meta", "quantization": "unknown", "tier": "anon", "upstream_model": "muse-spark-1.1"}
     ]},
-    {"id": "black-forest-labs/flux-2-max", "app_only": true, "kind": "image", "lab": "Black Forest Labs", "label": "FLUX.2 [max]", "uncensored": false, "endpoints": [
-      {"id": "fal", "api_key_env": "FAL_API_KEY", "base_url": "https://queue.fal.run", "owned_by": "Black Forest Labs", "price": {"hold_micros_per_image":70000,"hold_micros_per_image_by_resolution":{"2k":160000},"hold_micros_per_reference":120000}, "provider": "fal", "provider_name": "fal", "tier": "anon", "upstream_model": "fal-ai/flux-2-max"}
-    ]},
-    {"id": "black-forest-labs/flux-2-pro", "app_only": true, "kind": "image", "lab": "Black Forest Labs", "label": "FLUX.2 [pro]", "uncensored": false, "endpoints": [
-      {"id": "fal", "api_key_env": "FAL_API_KEY", "base_url": "https://queue.fal.run", "owned_by": "Black Forest Labs", "price": {"hold_micros_per_image":30000,"hold_micros_per_image_by_resolution":{"2k":75000},"hold_micros_per_reference":60000}, "provider": "fal", "provider_name": "fal", "tier": "anon", "upstream_model": "fal-ai/flux-2-pro"}
-    ]},
     {"id": "bytedance/seedream-5-pro", "app_only": true, "kind": "image", "lab": "ByteDance", "label": "Seedream 5.0 Pro", "uncensored": false, "endpoints": [
       {"id": "fal", "api_key_env": "FAL_API_KEY", "base_url": "https://queue.fal.run", "owned_by": "ByteDance", "price": {"hold_micros_per_image":67500,"hold_micros_per_image_by_resolution":{"2k":135000},"hold_micros_per_reference":4500}, "provider": "fal", "provider_name": "fal", "tier": "anon", "upstream_model": "bytedance/seedream/v5/pro/text-to-image"}
-    ]},
-    {"id": "ideogram/ideogram-4.5", "app_only": true, "kind": "image", "lab": "Ideogram", "label": "Ideogram 4.5", "uncensored": false, "endpoints": [
-      {"id": "fal", "api_key_env": "FAL_API_KEY", "base_url": "https://queue.fal.run", "owned_by": "Ideogram", "price": {"hold_micros_per_image":220000,"hold_micros_per_reference":0}, "provider": "fal", "provider_name": "fal", "tier": "anon", "upstream_model": "ideogram/v4.5"}
     ]},
     {"id": "alibaba/qwen-image-3-pro", "app_only": true, "kind": "image", "lab": "Alibaba", "label": "Qwen-Image-3.0-Pro", "uncensored": false, "endpoints": [
       {"id": "fal", "api_key_env": "FAL_API_KEY", "base_url": "https://queue.fal.run", "included": {"from":"pro"}, "owned_by": "Alibaba", "price": {"hold_micros_per_image":40000,"hold_micros_per_image_by_resolution":{"2k":75000},"hold_micros_per_reference":3000}, "provider": "fal", "provider_name": "fal", "tier": "anon", "upstream_model": "alibaba/qwen-image-3/text-to-image"}
@@ -519,15 +528,6 @@
     {"id": "civitai/hassaku-xl", "app_only": true, "kind": "image", "lab": "Stable Diffusion XL fine-tunes", "label": "Hassaku XL Anime (Uncensored)", "open_weights": true, "uncensored": true, "endpoints": [
       {"id": "runware", "api_key_env": "RUNWARE_API_KEY", "base_url": "https://api.runware.ai", "included": {"from":"pro"}, "owned_by": "Ikena", "price": {"hold_micros_per_image":5000}, "provider": "runware", "provider_name": "runware", "tier": "anon", "upstream_model": "civitai:140272@1617798"}
     ]},
-    {"id": "bytedance/seedream-5-pro-uncensored", "app_only": true, "kind": "image", "lab": "ByteDance", "label": "Seedream 5.0 Pro (Uncensored)", "markup": 1, "uncensored": true, "endpoints": [
-      {"id": "spicyapi", "api_key_env": "SPICYAPI_API_KEY", "base_url": "https://api.spicyapi.ai", "owned_by": "ByteDance", "price": {"hold_micros_per_image":72000,"hold_micros_per_reference":3000}, "provider": "spicyapi", "provider_name": "spicyapi", "tier": "anon", "upstream_model": "bytedance/seedream-5.0-pro/text-to-image"}
-    ]},
-    {"id": "bytedance/seedream-5-lite-uncensored", "app_only": true, "kind": "image", "lab": "ByteDance", "label": "Seedream 5.0 Lite (Uncensored)", "uncensored": true, "endpoints": [
-      {"id": "runware", "api_key_env": "RUNWARE_API_KEY", "base_url": "https://api.runware.ai", "owned_by": "ByteDance", "price": {"hold_micros_per_image":35000}, "provider": "runware", "provider_name": "runware", "tier": "anon", "upstream_model": "bytedance:seedream@5.0-lite"}
-    ]},
-    {"id": "bytedance/seedream-4.5-uncensored", "app_only": true, "kind": "image", "lab": "ByteDance", "label": "Seedream 4.5 (Uncensored)", "uncensored": true, "endpoints": [
-      {"id": "runware", "api_key_env": "RUNWARE_API_KEY", "base_url": "https://api.runware.ai", "owned_by": "ByteDance", "price": {"hold_micros_per_image":40000}, "provider": "runware", "provider_name": "runware", "tier": "anon", "upstream_model": "bytedance:seedream@4.5"}
-    ]},
     {"id": "alibaba/qwen-image-3-pro-uncensored", "app_only": true, "kind": "image", "lab": "Alibaba", "label": "Qwen-Image-3.0-Pro (Uncensored)", "markup": 1, "uncensored": true, "endpoints": [
       {"id": "spicyapi", "api_key_env": "SPICYAPI_API_KEY", "base_url": "https://api.spicyapi.ai", "owned_by": "Alibaba", "price": {"hold_micros_per_image":75000,"hold_micros_per_reference":3000}, "provider": "spicyapi", "provider_name": "spicyapi", "tier": "anon", "upstream_model": "alibaba/qwen-image-3.0-pro/text-to-image"}
     ]},
@@ -540,23 +540,119 @@
     {"id": "krea/krea-2-turbo-uncensored", "app_only": true, "kind": "image", "lab": "Krea", "label": "Krea 2 Turbo (Uncensored)", "markup": 1, "open_weights": true, "uncensored": true, "endpoints": [
       {"id": "spicyapi", "api_key_env": "SPICYAPI_API_KEY", "base_url": "https://api.spicyapi.ai", "owned_by": "Krea", "price": {"hold_micros_per_image":36000}, "provider": "spicyapi", "provider_name": "spicyapi", "tier": "anon", "upstream_model": "krea/2-turbo-lora/text-to-image"}
     ]},
+    {"id": "alibaba/z-image-spicy", "adult": true, "app_only": true, "flag": "new_media_models", "kind": "image", "lab": "spicyapi.ai", "label": "Z-Image Spicy", "uncensored": true, "endpoints": [
+      {"id": "spicyapi", "api_key_env": "SPICYAPI_API_KEY", "base_url": "https://api.spicyapi.ai", "owned_by": "Alibaba", "price": {"hold_micros_per_image":12350}, "provider": "spicyapi", "provider_name": "spicyapi", "requires_plan": "pro", "tier": "anon", "upstream_model": "alibaba/z-image-spicy/text-to-image"}
+    ]},
+    {"id": "alibaba/z-image-spicy-pro", "adult": true, "app_only": true, "flag": "new_media_models", "kind": "image", "lab": "spicyapi.ai", "label": "Z-Image Spicy Pro", "uncensored": true, "endpoints": [
+      {"id": "spicyapi", "api_key_env": "SPICYAPI_API_KEY", "base_url": "https://api.spicyapi.ai", "owned_by": "Alibaba", "price": {"hold_micros_per_image":19000}, "provider": "spicyapi", "provider_name": "spicyapi", "requires_plan": "pro", "tier": "anon", "upstream_model": "alibaba/z-image-spicy-pro/text-to-image"}
+    ]},
+    {"id": "alibaba/qwen-image-edit-spicy", "adult": true, "app_only": true, "flag": "new_media_models", "kind": "image", "lab": "spicyapi.ai", "label": "Qwen Image Edit Spicy", "uncensored": true, "endpoints": [
+      {"id": "spicyapi", "api_key_env": "SPICYAPI_API_KEY", "base_url": "https://api.spicyapi.ai", "owned_by": "Alibaba", "price": {"hold_micros_per_image":38000}, "provider": "spicyapi", "provider_name": "spicyapi", "requires_plan": "pro", "tier": "anon", "upstream_model": "alibaba/qwen-image-spicy-edit/edit"}
+    ]},
     {"id": "x-ai/grok-imagine-image-2.0", "app_only": true, "kind": "image", "lab": "xAI", "label": "Grok Imagine Image 2.0", "uncensored": false, "endpoints": [
       {"id": "xai", "api_key_env": "XAI_API_KEY", "base_url": "https://api.x.ai", "owned_by": "xAI", "price": {"hold_micros_per_image":80000,"hold_micros_per_reference":10000}, "provider": "xai", "provider_name": "xai", "retention": "zdr", "tier": "private", "upstream_model": "grok-imagine-image-2.0"}
     ]},
     {"id": "google/gemini-3-pro-image", "app_only": true, "kind": "image", "lab": "Google", "label": "Nano Banana Pro", "uncensored": false, "endpoints": [
       {"id": "gemini", "api_key_env": "GEMINI_API_KEY", "base_url": "https://generativelanguage.googleapis.com", "owned_by": "Google", "price": {"hold_micros_per_image":170000,"hold_micros_per_image_by_resolution":{"4k":280000},"hold_micros_per_reference":2300}, "provider": "gemini", "provider_name": "gemini", "tier": "anon", "upstream_model": "gemini-3-pro-image"}
     ]},
-    {"id": "google/gemini-3.1-flash-image", "app_only": true, "kind": "image", "lab": "Google", "label": "Nano Banana 2", "uncensored": false, "endpoints": [
-      {"id": "gemini", "api_key_env": "GEMINI_API_KEY", "base_url": "https://generativelanguage.googleapis.com", "owned_by": "Google", "price": {"hold_micros_per_image":77000,"hold_micros_per_image_by_resolution":{"2k":110000,"4k":161000},"hold_micros_per_reference":600}, "provider": "gemini", "provider_name": "gemini", "tier": "anon", "upstream_model": "gemini-3.1-flash-image"}
+    {"id": "bytedance/seedance-2.5", "app_only": true, "kind": "video", "lab": "ByteDance", "label": "Seedance 2.5", "uncensored": false, "endpoints": [
+      {"id": "runware", "api_key_env": "RUNWARE_API_KEY", "base_url": "https://api.runware.ai", "owned_by": "ByteDance", "price": {"hold_micros_per_second":620587}, "provider": "runware", "provider_name": "runware", "requires_plan": "pro", "tier": "anon", "upstream_model": "bytedance:seedance@2.5"}
     ]},
-    {"id": "google/gemini-3.1-flash-lite-image", "app_only": true, "kind": "image", "lab": "Google", "label": "Nano Banana 2 Lite", "uncensored": false, "endpoints": [
-      {"id": "gemini", "api_key_env": "GEMINI_API_KEY", "base_url": "https://generativelanguage.googleapis.com", "included": {"from":"pro"}, "owned_by": "Google", "price": {"hold_micros_per_image":40000,"hold_micros_per_reference":300}, "provider": "gemini", "provider_name": "gemini", "tier": "anon", "upstream_model": "gemini-3.1-flash-lite-image"}
+    {"id": "klingai/kling-video-3.0-pro", "app_only": true, "kind": "video", "lab": "Kling AI", "label": "Kling VIDEO 3.0 Pro", "uncensored": false, "endpoints": [
+      {"id": "fal", "api_key_env": "FAL_API_KEY", "base_url": "https://queue.fal.run", "owned_by": "Kling AI", "price": {"hold_micros_per_second":168000}, "provider": "fal", "provider_name": "fal", "requires_plan": "pro", "tier": "anon", "upstream_model": "fal-ai/kling-video/v3/pro/text-to-video"}
+    ]},
+    {"id": "alibaba/wan-3.0", "app_only": true, "kind": "video", "lab": "Alibaba", "label": "Wan 3.0", "uncensored": false, "endpoints": [
+      {"id": "runware", "api_key_env": "RUNWARE_API_KEY", "base_url": "https://api.runware.ai", "owned_by": "Alibaba", "price": {"hold_micros_per_second":200000}, "provider": "runware", "provider_name": "runware", "requires_plan": "pro", "tier": "anon", "upstream_model": "alibaba:wan@3.0"}
+    ]},
+    {"id": "minimax/h3-max", "app_only": true, "kind": "video", "lab": "MiniMax", "label": "MiniMax H3 Max", "uncensored": false, "endpoints": [
+      {"id": "runware", "api_key_env": "RUNWARE_API_KEY", "base_url": "https://api.runware.ai", "owned_by": "MiniMax", "price": {"hold_micros_per_second":80000}, "provider": "runware", "provider_name": "runware", "requires_plan": "pro", "tier": "anon", "upstream_model": "minimax:h3@max"}
     ]},
     {"id": "minimax/h3-uncensored", "app_only": true, "kind": "video", "lab": "MiniMax", "label": "MiniMax H3 (Uncensored)", "uncensored": true, "endpoints": [
       {"id": "spicyapi", "api_key_env": "SPICYAPI_API_KEY", "base_url": "https://api.spicyapi.ai", "owned_by": "MiniMax", "price": {"hold_micros_per_second":37000}, "provider": "spicyapi", "provider_name": "spicyapi", "requires_plan": "pro", "tier": "anon", "upstream_model": "minimax/h3/text-to-video"}
     ]},
     {"id": "alibaba/wan-3.0-uncensored", "app_only": true, "kind": "video", "lab": "Alibaba", "label": "Wan 3.0 (Uncensored)", "uncensored": true, "endpoints": [
       {"id": "spicyapi", "api_key_env": "SPICYAPI_API_KEY", "base_url": "https://api.spicyapi.ai", "owned_by": "Alibaba", "price": {"hold_micros_per_second":90000}, "provider": "spicyapi", "provider_name": "spicyapi", "requires_plan": "pro", "tier": "anon", "upstream_model": "alibaba/wan-3.0/text-to-video"}
+    ]},
+    {"id": "meta/muse-image", "app_only": true, "kind": "image", "lab": "Meta", "label": "Muse Image", "uncensored": false, "endpoints": [
+      {"id": "runware", "api_key_env": "RUNWARE_API_KEY", "base_url": "https://api.runware.ai", "included": {"from":"free","quota":"images"}, "owned_by": "Meta", "price": {"hold_micros_per_image":10000,"hold_micros_per_reference":0}, "provider": "runware", "provider_name": "runware", "tier": "anon", "upstream_model": "meta:muse@image"}
+    ]},
+    {"id": "bytedance/seedream-5.5", "app_only": true, "flag": "new_media_models", "kind": "image", "lab": "ByteDance", "label": "Seedream 5.5", "uncensored": false, "endpoints": [
+      {"id": "runware", "api_key_env": "RUNWARE_API_KEY", "base_url": "https://api.runware.ai", "owned_by": "ByteDance", "price": {"hold_micros_per_image":20000,"hold_micros_per_image_by_resolution":{"2k":35000},"hold_micros_per_reference":8000}, "provider": "runware", "provider_name": "runware", "tier": "anon", "upstream_model": "bytedance:seedream@5.5"}
+    ]},
+    {"id": "klingai/kling-image-4.0", "app_only": true, "flag": "new_media_models", "kind": "image", "lab": "Kling AI", "label": "Kling Image 4.0", "uncensored": false, "endpoints": [
+      {"id": "runware", "api_key_env": "RUNWARE_API_KEY", "base_url": "https://api.runware.ai", "owned_by": "Kling AI", "price": {"hold_micros_per_image":63000,"hold_micros_per_image_by_resolution":{"4k":94000},"hold_micros_per_reference":3000}, "provider": "runware", "provider_name": "runware", "tier": "anon", "upstream_model": "klingai:kling-image@4.0"}
+    ]},
+    {"id": "black-forest-labs/flux-3", "app_only": true, "kind": "image", "lab": "Black Forest Labs", "label": "FLUX 3", "uncensored": false, "endpoints": [
+      {"id": "runware", "api_key_env": "RUNWARE_API_KEY", "base_url": "https://api.runware.ai", "owned_by": "Black Forest Labs", "price": {"hold_micros_per_image":48000,"hold_micros_per_image_by_resolution":{"2k":100000},"hold_micros_per_reference":0}, "provider": "runware", "provider_name": "runware", "tier": "anon", "upstream_model": "bfl:flux@3-image"}
+    ]},
+    {"id": "black-forest-labs/flux-3-klein", "app_only": true, "flag": "new_media_models", "kind": "image", "lab": "Black Forest Labs", "label": "FLUX 3 [klein]", "open_weights": true, "uncensored": false, "endpoints": [
+      {"id": "runware", "api_key_env": "RUNWARE_API_KEY", "base_url": "https://api.runware.ai", "owned_by": "Black Forest Labs", "price": {"hold_micros_per_image":10000,"hold_micros_per_image_by_resolution":{"2k":30000},"hold_micros_per_reference":6000}, "provider": "runware", "provider_name": "runware", "tier": "anon", "upstream_model": "bfl:flux@3-image-klein"}
+    ]},
+    {"id": "openai/gpt-image-2.6-sunburst", "app_only": true, "flag": "new_media_models", "kind": "image", "lab": "OpenAI", "label": "GPT Image 2.6 Sunburst", "uncensored": false, "endpoints": [
+      {"id": "runware", "api_key_env": "RUNWARE_API_KEY", "base_url": "https://api.runware.ai", "owned_by": "OpenAI", "price": {"hold_micros_per_image":130000,"hold_micros_per_image_by_resolution":{"2k":200000},"hold_micros_per_reference":65000}, "provider": "runware", "provider_name": "runware", "tier": "anon", "upstream_model": "openai:gpt-image@2.6-sunburst"}
+    ]},
+    {"id": "ideogram/ideogram-4.6", "app_only": true, "kind": "image", "lab": "Ideogram", "label": "Ideogram 4.6", "uncensored": false, "endpoints": [
+      {"id": "runware", "api_key_env": "RUNWARE_API_KEY", "base_url": "https://api.runware.ai", "owned_by": "Ideogram", "price": {"hold_micros_per_image":220000,"hold_micros_per_reference":0}, "provider": "runware", "provider_name": "runware", "tier": "anon", "upstream_model": "ideogram:4.6@0"}
+    ]},
+    {"id": "google/gemini-nano-banana-2.1", "app_only": true, "kind": "image", "lab": "Google", "label": "Nano Banana 2.1", "uncensored": false, "endpoints": [
+      {"id": "gemini", "api_key_env": "GEMINI_API_KEY", "base_url": "https://generativelanguage.googleapis.com", "included": {"from":"pro"}, "owned_by": "Google", "price": {"hold_micros_per_image":58100,"hold_micros_per_image_by_resolution":{"2k":74900,"4k":137900},"hold_micros_per_reference":1800}, "provider": "gemini", "provider_name": "gemini", "tier": "anon", "upstream_model": "gemini-nano-banana-2.1"}
+    ]},
+    {"id": "x-ai/grok-imagine-image", "app_only": true, "flag": "new_media_models", "kind": "image", "lab": "xAI", "label": "Grok Imagine Image", "uncensored": false, "endpoints": [
+      {"id": "xai", "api_key_env": "XAI_API_KEY", "base_url": "https://api.x.ai", "owned_by": "xAI", "price": {"hold_micros_per_image":20000,"hold_micros_per_reference":2000}, "provider": "xai", "provider_name": "xai", "retention": "zdr", "tier": "private", "upstream_model": "grok-imagine-image"}
+    ]},
+    {"id": "bytedance/seedream-5.5-uncensored", "app_only": true, "kind": "image", "lab": "ByteDance", "label": "Seedream 5.5 (Uncensored)", "markup": 1, "uncensored": true, "endpoints": [
+      {"id": "spicyapi", "api_key_env": "SPICYAPI_API_KEY", "base_url": "https://api.spicyapi.ai", "owned_by": "ByteDance", "price": {"hold_micros_per_image":35000,"hold_micros_per_reference":0}, "provider": "spicyapi", "provider_name": "spicyapi", "tier": "anon", "upstream_model": "bytedance/seedream-5.5/text-to-image"}
+    ]},
+    {"id": "circlestone-labs/anima-turbo-uncensored", "app_only": true, "flag": "new_media_models", "kind": "image", "lab": "CircleStone Labs", "label": "Anima Turbo (Uncensored)", "markup": 1, "open_weights": true, "uncensored": true, "endpoints": [
+      {"id": "spicyapi", "api_key_env": "SPICYAPI_API_KEY", "base_url": "https://api.spicyapi.ai", "owned_by": "CircleStone Labs", "price": {"hold_micros_per_image":12000}, "provider": "spicyapi", "provider_name": "spicyapi", "tier": "anon", "upstream_model": "circlestone-labs/anima-turbo/text-to-image"}
+    ]},
+    {"id": "bytedance/seedance-2.0-fast", "app_only": true, "flag": "new_media_models", "kind": "video", "lab": "ByteDance", "label": "Seedance 2.0 Fast", "uncensored": false, "endpoints": [
+      {"id": "runware", "api_key_env": "RUNWARE_API_KEY", "base_url": "https://api.runware.ai", "owned_by": "ByteDance", "price": {"hold_micros_per_second":130000}, "provider": "runware", "provider_name": "runware", "requires_plan": "pro", "tier": "anon", "upstream_model": "bytedance:seedance@2.0-fast"}
+    ]},
+    {"id": "bytedance/seedance-2.0-mini", "app_only": true, "flag": "new_media_models", "kind": "video", "lab": "ByteDance", "label": "Seedance 2.0 Mini", "uncensored": false, "endpoints": [
+      {"id": "runware", "api_key_env": "RUNWARE_API_KEY", "base_url": "https://api.runware.ai", "owned_by": "ByteDance", "price": {"hold_micros_per_second":81000}, "provider": "runware", "provider_name": "runware", "requires_plan": "pro", "tier": "anon", "upstream_model": "bytedance:seedance@2.0-mini"}
+    ]},
+    {"id": "bytedance/seedance-2.5-flash", "app_only": true, "flag": "new_media_models", "kind": "video", "lab": "ByteDance", "label": "Seedance 2.5 Flash", "uncensored": false, "endpoints": [
+      {"id": "runware", "api_key_env": "RUNWARE_API_KEY", "base_url": "https://api.runware.ai", "owned_by": "ByteDance", "price": {"hold_micros_per_second":152460}, "provider": "runware", "provider_name": "runware", "requires_plan": "pro", "tier": "anon", "upstream_model": "bytedance:seedance@2.5-flash"}
+    ]},
+    {"id": "google/gemini-omni-flash-1.2", "app_only": true, "flag": "new_media_models", "kind": "video", "lab": "Google", "label": "Gemini Omni Flash 1.2", "uncensored": false, "endpoints": [
+      {"id": "runware", "api_key_env": "RUNWARE_API_KEY", "base_url": "https://api.runware.ai", "owned_by": "Google", "price": {"hold_micros_per_second":100000}, "provider": "runware", "provider_name": "runware", "requires_plan": "pro", "tier": "anon", "upstream_model": "google:gemini@omni-flash-1.2"}
+    ]},
+    {"id": "heygen/heygen-video-1", "app_only": true, "flag": "new_media_models", "kind": "video", "lab": "HeyGen", "label": "HeyGen Video 1", "uncensored": false, "endpoints": [
+      {"id": "runware", "api_key_env": "RUNWARE_API_KEY", "base_url": "https://api.runware.ai", "owned_by": "HeyGen", "price": {"hold_micros_per_second":36000}, "provider": "runware", "provider_name": "runware", "requires_plan": "pro", "tier": "anon", "upstream_model": "heygen:video@1.0"}
+    ]},
+    {"id": "prunaai/p-video-2-pro", "app_only": true, "flag": "new_media_models", "kind": "video", "lab": "Pruna AI", "label": "P-Video-2-Pro", "uncensored": false, "endpoints": [
+      {"id": "runware", "api_key_env": "RUNWARE_API_KEY", "base_url": "https://api.runware.ai", "owned_by": "Pruna AI", "price": {"hold_micros_per_second":35000}, "provider": "runware", "provider_name": "runware", "requires_plan": "pro", "tier": "anon", "upstream_model": "prunaai:p-video@2-pro"}
+    ]},
+    {"id": "minimax/h3", "app_only": true, "flag": "new_media_models", "kind": "video", "lab": "MiniMax", "label": "MiniMax H3", "open_weights": true, "uncensored": false, "endpoints": [
+      {"id": "runware", "api_key_env": "RUNWARE_API_KEY", "base_url": "https://api.runware.ai", "owned_by": "MiniMax", "price": {"hold_micros_per_second":130000}, "provider": "runware", "provider_name": "runware", "requires_plan": "pro", "tier": "anon", "upstream_model": "minimax:h3@0"}
+    ]},
+    {"id": "bytedance/seedance-2.5-uncensored", "app_only": true, "flag": "new_media_models", "kind": "video", "lab": "ByteDance", "label": "Seedance 2.5 (Uncensored)", "uncensored": true, "endpoints": [
+      {"id": "spicyapi", "api_key_env": "SPICYAPI_API_KEY", "base_url": "https://api.spicyapi.ai", "owned_by": "ByteDance", "price": {"hold_micros_per_second":277300}, "provider": "spicyapi", "provider_name": "spicyapi", "requires_plan": "pro", "tier": "anon", "upstream_model": "bytedance/seedance-2.5/text-to-video"}
+    ]},
+    {"id": "bytedance/seedance-2.0-fast-uncensored", "app_only": true, "flag": "new_media_models", "kind": "video", "lab": "ByteDance", "label": "Seedance 2.0 Fast (Uncensored)", "uncensored": true, "endpoints": [
+      {"id": "spicyapi", "api_key_env": "SPICYAPI_API_KEY", "base_url": "https://api.spicyapi.ai", "owned_by": "ByteDance", "price": {"hold_micros_per_second":96768}, "provider": "spicyapi", "provider_name": "spicyapi", "requires_plan": "pro", "tier": "anon", "upstream_model": "bytedance/seedance-2.0-fast/text-to-video"}
+    ]},
+    {"id": "bytedance/seedance-2.0-mini-uncensored", "app_only": true, "flag": "new_media_models", "kind": "video", "lab": "ByteDance", "label": "Seedance 2.0 Mini (Uncensored)", "uncensored": true, "endpoints": [
+      {"id": "spicyapi", "api_key_env": "SPICYAPI_API_KEY", "base_url": "https://api.spicyapi.ai", "owned_by": "ByteDance", "price": {"hold_micros_per_second":52920}, "provider": "spicyapi", "provider_name": "spicyapi", "requires_plan": "pro", "tier": "anon", "upstream_model": "bytedance/seedance-2.0-mini/text-to-video"}
+    ]},
+    {"id": "prunaai/p-video-2-pro-uncensored", "app_only": true, "flag": "new_media_models", "kind": "video", "lab": "Pruna AI", "label": "P-Video-2-Pro (Uncensored)", "uncensored": true, "endpoints": [
+      {"id": "spicyapi", "api_key_env": "SPICYAPI_API_KEY", "base_url": "https://api.spicyapi.ai", "owned_by": "Pruna AI", "price": {"hold_micros_per_second":35000}, "provider": "spicyapi", "provider_name": "spicyapi", "requires_plan": "pro", "tier": "anon", "upstream_model": "pruna-ai/p-video-2-pro/text-to-video"}
+    ]},
+    {"id": "alibaba/wan-3.0-spicy", "adult": true, "app_only": true, "flag": "new_media_models", "kind": "video", "lab": "spicyapi.ai", "label": "Wan 3.0 Spicy", "uncensored": true, "endpoints": [
+      {"id": "spicyapi", "api_key_env": "SPICYAPI_API_KEY", "base_url": "https://api.spicyapi.ai", "owned_by": "Alibaba", "price": {"hold_micros_per_second":114000}, "provider": "spicyapi", "provider_name": "spicyapi", "requires_plan": "pro", "tier": "anon", "upstream_model": "alibaba/wan-3.0-spicy/image-to-video"}
+    ]},
+    {"id": "bytedance/seedance-2.5-spicy", "adult": true, "app_only": true, "flag": "new_media_models", "kind": "video", "lab": "spicyapi.ai", "label": "Seedance 2.5 Spicy", "uncensored": true, "endpoints": [
+      {"id": "spicyapi", "api_key_env": "SPICYAPI_API_KEY", "base_url": "https://api.spicyapi.ai", "owned_by": "ByteDance", "price": {"hold_micros_per_second":432000}, "provider": "spicyapi", "provider_name": "spicyapi", "requires_plan": "pro", "tier": "anon", "upstream_model": "bytedance/seedance-2.5-spicy/image-to-video"}
+    ]},
+    {"id": "minimax/h3-spicy", "adult": true, "app_only": true, "flag": "new_media_models", "kind": "video", "lab": "spicyapi.ai", "label": "MiniMax H3 Spicy", "uncensored": true, "endpoints": [
+      {"id": "spicyapi", "api_key_env": "SPICYAPI_API_KEY", "base_url": "https://api.spicyapi.ai", "owned_by": "MiniMax", "price": {"hold_micros_per_second":84000}, "provider": "spicyapi", "provider_name": "spicyapi", "requires_plan": "pro", "tier": "anon", "upstream_model": "minimax/h3-spicy/image-to-video"}
+    ]},
+    {"id": "lightricks/ltx-2.3-spicy", "adult": true, "app_only": true, "flag": "new_media_models", "kind": "video", "lab": "spicyapi.ai", "label": "LTX 2.3 Spicy", "uncensored": true, "endpoints": [
+      {"id": "spicyapi", "api_key_env": "SPICYAPI_API_KEY", "base_url": "https://api.spicyapi.ai", "owned_by": "Lightricks", "price": {"hold_micros_per_second":38000}, "provider": "spicyapi", "provider_name": "spicyapi", "requires_plan": "pro", "tier": "anon", "upstream_model": "lightricks/ltx-2.3-spicy/image-to-video"}
+    ]},
+    {"id": "vidu/q3-spicy", "adult": true, "app_only": true, "flag": "new_media_models", "kind": "video", "lab": "spicyapi.ai", "label": "Vidu Q3 Spicy", "uncensored": true, "endpoints": [
+      {"id": "spicyapi", "api_key_env": "SPICYAPI_API_KEY", "base_url": "https://api.spicyapi.ai", "owned_by": "Vidu", "price": {"hold_micros_per_second":142500}, "provider": "spicyapi", "provider_name": "spicyapi", "requires_plan": "pro", "tier": "anon", "upstream_model": "vidu/q3-spicy/image-to-video"}
     ]},
     {"id": "parallel/search", "app_only": true, "kind": "search", "lab": "Parallel", "label": "Parallel Search", "prices": {"anon": {"micros_per_call":1000}, "private": {"micros_per_call":1000}}, "uncensored": false, "endpoints": [
       {"id": "parallel", "api_key_env": "PARALLEL_API_KEY", "base_url": "https://api.parallel.ai", "included": {"from":"free","quota":"web_calls"}, "owned_by": "Parallel", "provider": "parallel", "provider_name": "parallel", "retention": "zdr", "tier": "anon", "upstream_model": "fast"},
@@ -588,8 +684,14 @@
     {"name": "deepseek-v4.1-flash", "model": "deepseek/deepseek-v4.1-flash", "endpoint": "deepinfra"},
     {"name": "deepseek-v4.1-flash-1017", "model": "deepseek/deepseek-v4.1-flash-1017", "endpoint": "deepinfra"},
     {"name": "deepseek-v4-1-flash", "model": "deepseek/deepseek-v4.1-flash-1017", "endpoint": "tinfoil"},
-    {"name": "deepseek-v4.1-flash-uncensored", "model": "deepseek-ai/deepseek-v4.1-flash-1017-abliterated", "endpoint": "venice"},
-    {"name": "deepseek-ai/DeepSeek-V4.1-Flash-1017-abliterated", "model": "deepseek-ai/deepseek-v4.1-flash-1017-abliterated", "endpoint": "near"},
+    {"name": "deepseek-v4.1-flash-uncensored", "model": "deepseek-ai/deepseek-v4.1-flash-1017-abliterated", "endpoint": "phala-zdr"},
+    {"name": "kimi-k3.1-pro-uncensored", "model": "moonshotai/kimi-k3.1-pro-uncensored", "endpoint": "silk"},
+    {"name": "glm-5.3-uncensored", "model": "z-ai/glm-5.3-uncensored", "endpoint": "silk"},
+    {"name": "abliterated-model", "model": "abliteration/abliterated-model", "endpoint": "abliteration"},
+    {"name": "abliterated-model-large-v2", "model": "abliteration/abliterated-model-large-v2", "endpoint": "abliteration"},
+    {"name": "phala/deepseek-v4.1-flash-1017-uncensored", "model": "deepseek-ai/deepseek-v4.1-flash-1017-abliterated", "endpoint": "phala"},
+    {"name": "glm-5.3-flash-uncensored", "model": "z-ai/glm-5.3-flash-uncensored", "endpoint": "heabsy"},
+    {"name": "mimo-v2.6-flash-uncensored", "model": "xiaomi/mimo-v2.6-flash-uncensored", "endpoint": "heabsy"},
     {"name": "ling-3.0-flash", "model": "inclusionai/ling-3.0-flash", "endpoint": "novita"},
     {"name": "kimi-k3.1-pro", "model": "moonshotai/kimi-k3.1-pro", "endpoint": "novita"},
     {"name": "kimi-k3.1-pro-tee", "model": "moonshotai/kimi-k3.1-pro", "endpoint": "phala-tee"},
@@ -708,10 +810,7 @@
     {"name": "muse-ember-1.0", "model": "meta/muse-ember-1.0", "endpoint": "openai-responses"},
     {"name": "muse-spark-1.2", "model": "meta/muse-spark-1.2", "endpoint": "openai-responses"},
     {"name": "muse-spark-1.1", "model": "meta/muse-spark-1.1", "endpoint": "openai-responses"},
-    {"name": "flux-2-max", "model": "black-forest-labs/flux-2-max", "endpoint": "fal"},
-    {"name": "flux-2-pro", "model": "black-forest-labs/flux-2-pro", "endpoint": "fal"},
     {"name": "seedream-5-pro", "model": "bytedance/seedream-5-pro", "endpoint": "fal"},
-    {"name": "ideogram-4.5", "model": "ideogram/ideogram-4.5", "endpoint": "fal"},
     {"name": "qwen-image-3-pro", "model": "alibaba/qwen-image-3-pro", "endpoint": "fal"},
     {"name": "z-image-turbo", "model": "alibaba/z-image-turbo", "endpoint": "fal"},
     {"name": "upscale", "model": "bytedance/seedvr2-upscale", "endpoint": "fal"},
@@ -721,19 +820,48 @@
     {"name": "realvisxl-5", "model": "civitai/realvisxl-5", "endpoint": "runware"},
     {"name": "cyberillustrious", "model": "civitai/cyberillustrious", "endpoint": "runware"},
     {"name": "hassaku-xl", "model": "civitai/hassaku-xl", "endpoint": "runware"},
-    {"name": "seedream-5-pro-uncensored", "model": "bytedance/seedream-5-pro-uncensored", "endpoint": "spicyapi"},
-    {"name": "seedream-5-lite-uncensored", "model": "bytedance/seedream-5-lite-uncensored", "endpoint": "runware"},
-    {"name": "seedream-4.5-uncensored", "model": "bytedance/seedream-4.5-uncensored", "endpoint": "runware"},
     {"name": "qwen-image-3-pro-uncensored", "model": "alibaba/qwen-image-3-pro-uncensored", "endpoint": "spicyapi"},
     {"name": "qwen-image-3-uncensored", "model": "alibaba/qwen-image-3-uncensored", "endpoint": "spicyapi"},
     {"name": "qwen-image-2.1-turbo-uncensored", "model": "alibaba/qwen-image-2.1-turbo-uncensored", "endpoint": "spicyapi"},
     {"name": "krea-2-turbo-uncensored", "model": "krea/krea-2-turbo-uncensored", "endpoint": "spicyapi"},
+    {"name": "z-image-spicy", "model": "alibaba/z-image-spicy", "endpoint": "spicyapi"},
+    {"name": "z-image-spicy-pro", "model": "alibaba/z-image-spicy-pro", "endpoint": "spicyapi"},
+    {"name": "qwen-image-edit-spicy", "model": "alibaba/qwen-image-edit-spicy", "endpoint": "spicyapi"},
     {"name": "grok-imagine-image-2.0", "model": "x-ai/grok-imagine-image-2.0", "endpoint": "xai"},
     {"name": "gemini-3-pro-image", "model": "google/gemini-3-pro-image", "endpoint": "gemini"},
-    {"name": "gemini-3.1-flash-image", "model": "google/gemini-3.1-flash-image", "endpoint": "gemini"},
-    {"name": "gemini-3.1-flash-lite-image", "model": "google/gemini-3.1-flash-lite-image", "endpoint": "gemini"},
+    {"name": "seedance-2.5", "model": "bytedance/seedance-2.5", "endpoint": "runware"},
+    {"name": "kling-video-3-pro", "model": "klingai/kling-video-3.0-pro", "endpoint": "fal"},
+    {"name": "wan-3.0", "model": "alibaba/wan-3.0", "endpoint": "runware"},
+    {"name": "minimax-h3-max", "model": "minimax/h3-max", "endpoint": "runware"},
     {"name": "minimax-h3-uncensored", "model": "minimax/h3-uncensored", "endpoint": "spicyapi"},
     {"name": "wan-3.0-uncensored", "model": "alibaba/wan-3.0-uncensored", "endpoint": "spicyapi"},
+    {"name": "muse-image", "model": "meta/muse-image", "endpoint": "runware"},
+    {"name": "seedream-5.5", "model": "bytedance/seedream-5.5", "endpoint": "runware"},
+    {"name": "kling-image-4.0", "model": "klingai/kling-image-4.0", "endpoint": "runware"},
+    {"name": "flux-3", "model": "black-forest-labs/flux-3", "endpoint": "runware"},
+    {"name": "flux-3-klein", "model": "black-forest-labs/flux-3-klein", "endpoint": "runware"},
+    {"name": "gpt-image-2.6-sunburst", "model": "openai/gpt-image-2.6-sunburst", "endpoint": "runware"},
+    {"name": "ideogram-4.6", "model": "ideogram/ideogram-4.6", "endpoint": "runware"},
+    {"name": "gemini-nano-banana-2.1", "model": "google/gemini-nano-banana-2.1", "endpoint": "gemini"},
+    {"name": "grok-imagine-image", "model": "x-ai/grok-imagine-image", "endpoint": "xai"},
+    {"name": "seedream-5.5-uncensored", "model": "bytedance/seedream-5.5-uncensored", "endpoint": "spicyapi"},
+    {"name": "anima-turbo-uncensored", "model": "circlestone-labs/anima-turbo-uncensored", "endpoint": "spicyapi"},
+    {"name": "seedance-2.0-fast", "model": "bytedance/seedance-2.0-fast", "endpoint": "runware"},
+    {"name": "seedance-2.0-mini", "model": "bytedance/seedance-2.0-mini", "endpoint": "runware"},
+    {"name": "seedance-2.5-flash", "model": "bytedance/seedance-2.5-flash", "endpoint": "runware"},
+    {"name": "gemini-omni-flash-1.2", "model": "google/gemini-omni-flash-1.2", "endpoint": "runware"},
+    {"name": "heygen-video-1", "model": "heygen/heygen-video-1", "endpoint": "runware"},
+    {"name": "p-video-2-pro", "model": "prunaai/p-video-2-pro", "endpoint": "runware"},
+    {"name": "h3", "model": "minimax/h3", "endpoint": "runware"},
+    {"name": "seedance-2.5-uncensored", "model": "bytedance/seedance-2.5-uncensored", "endpoint": "spicyapi"},
+    {"name": "seedance-2.0-fast-uncensored", "model": "bytedance/seedance-2.0-fast-uncensored", "endpoint": "spicyapi"},
+    {"name": "seedance-2.0-mini-uncensored", "model": "bytedance/seedance-2.0-mini-uncensored", "endpoint": "spicyapi"},
+    {"name": "p-video-2-pro-uncensored", "model": "prunaai/p-video-2-pro-uncensored", "endpoint": "spicyapi"},
+    {"name": "wan-3.0-spicy", "model": "alibaba/wan-3.0-spicy", "endpoint": "spicyapi"},
+    {"name": "seedance-2.5-spicy", "model": "bytedance/seedance-2.5-spicy", "endpoint": "spicyapi"},
+    {"name": "minimax-h3-spicy", "model": "minimax/h3-spicy", "endpoint": "spicyapi"},
+    {"name": "ltx-2.3-spicy", "model": "lightricks/ltx-2.3-spicy", "endpoint": "spicyapi"},
+    {"name": "vidu-q3-spicy", "model": "vidu/q3-spicy", "endpoint": "spicyapi"},
     {"name": "parallel-search", "model": "parallel/search", "endpoint": "parallel"},
     {"name": "parallel-search-zdr", "model": "parallel/search", "endpoint": "parallel-zdr"},
     {"name": "parallel-extract", "model": "parallel/extract", "endpoint": "parallel"},
@@ -766,7 +894,24 @@
   "retired": [
     {"name": "tencent/hy4-preview", "to": "tencent/hy4", "since": "2026-11-20"},
     {"name": "hy4-preview", "to": "hy4", "since": "2026-11-20"},
-    {"name": "deepseek/deepseek-v4.1-flash-uncensored", "to": "deepseek-v4.1-flash-uncensored", "since": "2026-11-20"}
+    {"name": "deepseek/deepseek-v4.1-flash-uncensored", "to": "deepseek-v4.1-flash-uncensored", "since": "2026-11-20"},
+    {"name": "deepseek-ai/DeepSeek-V4.1-Flash-1017-abliterated", "to": "phala/deepseek-v4.1-flash-1017-uncensored", "since": "2026-11-20"},
+    {"name": "black-forest-labs/flux-2-max", "to": "black-forest-labs/flux-3", "since": "2026-11-22"},
+    {"name": "flux-2-max", "to": "flux-3", "since": "2026-11-22"},
+    {"name": "black-forest-labs/flux-2-pro", "to": "black-forest-labs/flux-3", "since": "2026-11-22"},
+    {"name": "flux-2-pro", "to": "flux-3", "since": "2026-11-22"},
+    {"name": "ideogram/ideogram-4.5", "to": "ideogram/ideogram-4.6", "since": "2026-11-22"},
+    {"name": "ideogram-4.5", "to": "ideogram-4.6", "since": "2026-11-22"},
+    {"name": "google/gemini-3.1-flash-image", "to": "google/gemini-nano-banana-2.1", "since": "2026-11-22"},
+    {"name": "gemini-3.1-flash-image", "to": "gemini-nano-banana-2.1", "since": "2026-11-22"},
+    {"name": "google/gemini-3.1-flash-lite-image", "to": "google/gemini-nano-banana-2.1", "since": "2026-11-22"},
+    {"name": "gemini-3.1-flash-lite-image", "to": "gemini-nano-banana-2.1", "since": "2026-11-22"},
+    {"name": "bytedance/seedream-5-pro-uncensored", "to": "bytedance/seedream-5.5-uncensored", "since": "2026-11-22"},
+    {"name": "seedream-5-pro-uncensored", "to": "seedream-5.5-uncensored", "since": "2026-11-22"},
+    {"name": "bytedance/seedream-5-lite-uncensored", "to": "bytedance/seedream-5.5-uncensored", "since": "2026-11-22"},
+    {"name": "seedream-5-lite-uncensored", "to": "seedream-5.5-uncensored", "since": "2026-11-22"},
+    {"name": "bytedance/seedream-4.5-uncensored", "to": "bytedance/seedream-5.5-uncensored", "since": "2026-11-22"},
+    {"name": "seedream-4.5-uncensored", "to": "seedream-5.5-uncensored", "since": "2026-11-22"}
   ],
   "privacy_veil": {"price": {"micros_per_call": 200, "prompt_micros_per_mtok": 800000}}
 }

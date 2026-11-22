@@ -55,6 +55,54 @@ var videoModels = map[string]videoModel{
 		}),
 		frameResolution: true,
 	},
+	"google:gemini@omni-flash-1.2": {
+		VideoSpec: media.GeminiOmniFlash12,
+		sizes: media.SizeTable(map[string][2]int{
+			"16:9 720p": {1280, 720}, "9:16 720p": {720, 1280},
+			"16:9 1080p": {1920, 1080}, "9:16 1080p": {1080, 1920},
+		}),
+		frameResolution: true,
+	},
+	"heygen:video@1.0": {
+		VideoSpec: media.HeyGenVideo1,
+		sizes: media.SizeTable(map[string][2]int{
+			"16:9 480p": {832, 480}, "9:16 480p": {480, 832}, "1:1 480p": {480, 480},
+			"16:9 768p": {1344, 768}, "9:16 768p": {768, 1344}, "1:1 768p": {768, 768},
+		}),
+		frameResolution: true,
+	},
+	"prunaai:p-video@2-pro": {
+		VideoSpec: media.PVideo2Pro,
+		sizes: media.SizeTable(map[string][2]int{
+			"16:9 480p": {832, 480}, "9:16 480p": {480, 832}, "1:1 480p": {480, 480},
+			"16:9 768p": {1344, 768}, "9:16 768p": {768, 1344}, "1:1 768p": {768, 768},
+		}),
+		frameResolution: true,
+	},
+	"minimax:h3@0": {
+		VideoSpec: media.MiniMaxH3,
+		sizes: media.SizeTable(map[string][2]int{
+			"16:9 768p": {1344, 768}, "9:16 768p": {768, 1344}, "1:1 768p": {768, 768},
+			"16:9 1440p": {2560, 1440}, "9:16 1440p": {1440, 2560}, "1:1 1440p": {1440, 1440},
+		}),
+		frameResolution: true,
+	},
+	"bytedance:seedance@2.5-flash": {
+		VideoSpec: media.Seedance25Flash,
+		sizes: media.SizeTable(map[string][2]int{
+			"16:9 480p": {854, 480}, "9:16 480p": {480, 854}, "1:1 480p": {640, 640},
+			"16:9 720p": {1280, 720}, "9:16 720p": {720, 1280}, "1:1 720p": {960, 960},
+		}),
+		frameResolution: true,
+	},
+	"bytedance:seedance@2.0-mini": {
+		VideoSpec: media.Seedance20Mini,
+		sizes: media.SizeTable(map[string][2]int{
+			"16:9 480p": {864, 496}, "9:16 480p": {496, 864}, "1:1 480p": {640, 640},
+			"16:9 720p": {1280, 720}, "9:16 720p": {720, 1280}, "1:1 720p": {960, 960},
+		}),
+		frameResolution: true,
+	},
 	"bytedance:seedance@2.0-fast": {
 		VideoSpec: media.Seedance20Fast,
 		sizes: media.SizeTable(map[string][2]int{

@@ -35,6 +35,7 @@ var imageModels = map[string]imageModel{
 	"gemini-3-pro-image":          {ImageSpec: media.NanoBananaPro, rates: rates{prompt: 2_000_000, text: 12_000_000, image: 120_000_000}},
 	"gemini-3.1-flash-image":      {ImageSpec: media.NanoBanana2, rates: rates{prompt: 500_000, text: 3_000_000, image: 60_000_000}},
 	"gemini-3.1-flash-lite-image": {ImageSpec: media.NanoBanana2Lite, rates: rates{prompt: 250_000, text: 1_500_000, image: 30_000_000}},
+	"gemini-nano-banana-2.1":      {ImageSpec: media.NanoBanana21, rates: rates{prompt: 1_500_000, text: 7_500_000, image: 30_000_000}},
 }
 
 type Images struct {

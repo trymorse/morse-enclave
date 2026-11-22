@@ -74,6 +74,8 @@ func (p *Videos) SubmitVideo(ctx context.Context, req *media.VideoRequest, s med
 	return media.Submitted{VendorID: reply.RequestID}, nil
 }
 
+// why: under zero retention xAI delivers a clip only by PUT to output.upload_url, and its poll reply echoes that
+// URL as video.url (paid probe, 2026-11-21), so the poll never reads video.url: a sealed clip's URL holds its key.
 func (p *Videos) PollVideo(ctx context.Context, vendorID string) (jobs.Poll, error) {
 	resp, err := p.vendor.JSON(ctx, upstream.Request{Method: http.MethodGet, Path: "/v1/videos/" + url.PathEscape(vendorID)}, nil, media.MaxReplyBody)
 	if err != nil {

@@ -20,8 +20,13 @@ from github_read import read_github
 
 # The public image signer, sign.yml in trymorse/morse-pins, for check 7. Its code is the .github tree of the commit a
 # run signs, so a change to it shows twice in public: once as the commit, and once as a change to this allowlist.
-# b06ce985 is the tree of 4e2a388c, the commit that added sign.yml (trymorse/morse-pins#1).
-SIGNER_TREES = {"b06ce985178151ac41cc22a84b2b8a7d033b2f80"}
+# A tree is listed here before its change merges there, and morse-pins' allowlist.yml, which reads this one set literal
+# without running the file, fails a pull request whose tree is not yet listed (DOOR.md, check 7).
+# b06ce985 is the tree of 4e2a388c, the commit that added sign.yml (trymorse/morse-pins#1). 9871adfb is the tree of
+# 3228c05e, which makes sign.yml also sign a morse-routes-v1 statement for each routes/<environment>/ (trymorse/morse-pins#2).
+# e7b5724b is the tree of the change that adds allowlist.yml, on 25bbc95a.
+SIGNER_TREES = {"b06ce985178151ac41cc22a84b2b8a7d033b2f80", "9871adfbf1660c9419281712f79b48081537095f",
+                "e7b5724b3044e990652981f9ec450a58b19bf42b"}
 SIGNER_WORKFLOW = ".github/workflows/sign.yml"
 STATEMENTS_REF = "origin/statements/images"
 GITHUB_API = "https://api.github.com/"
@@ -103,7 +108,7 @@ def push_refusal(pins_dir, event):
     if kind == "push" and actor == PUBLISHER:
         allowed, why = (lambda path: not path.startswith(".github/")), "the signer's code, which only an admin's merged pull request may change"
     elif kind == "pr_merge" and actor in ADMINS:
-        allowed, why = (lambda path: path not in signer.SIGNED_FILES), f"a file the signer signs, which only {PUBLISHER} pushes"
+        allowed, why = (lambda path: not signer.signs(path)), f"a file the signer signs, which only {PUBLISHER} pushes"
     else:
         return f"morse-pins main had a {kind} by {actor} at {event.get('timestamp')}, and only a push by {PUBLISHER} or a pull request an admin merged may move it"
     changed = changed_paths(pins_dir, event["before"], event["after"])
@@ -186,7 +191,8 @@ def statement_refusals(pins_dir, path, raw, signed):
         if key == "sequence":
             failures.append(f"{path} has sequence {statement.get(key)}, not the commit count {expected.get(key)} of {commit}")
         elif key in ("images", "files"):
-            failures.append(f"{path} lists other {key} than {'enclave_pins.json' if key == 'images' else 'the vendor pins files'} at {commit} give it")
+            source = "enclave_pins.json" if key == "images" else "the routes file" if statement.get("type") == "morse-routes-v1" else "the vendor pins files"
+            failures.append(f"{path} lists other {key} than {source} at {commit} give it")
         else:
             failures.append(f"{path} has {key} {statement.get(key)!r}, not {expected.get(key)!r}")
     return failures

@@ -116,7 +116,10 @@ func (Verbatim) hedge() chat.Hedge { return chat.Hedge{} }
 
 type Images struct{ media.ImageGenerator }
 
-type Videos struct{ media.VideoGenerator }
+type Videos struct {
+	media.VideoGenerator
+	UploadsOutput bool
+}
 
 type Search struct{ web.Searcher }
 

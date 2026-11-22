@@ -3,6 +3,7 @@ package openaihosts
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -16,6 +17,7 @@ import (
 	"morse/backend/internal/apierr"
 	"morse/backend/internal/catalog"
 	"morse/backend/internal/chat"
+	"morse/backend/internal/phala"
 	"morse/backend/internal/upstream"
 )
 
@@ -93,6 +95,42 @@ func zdrHosts(t *testing.T) []Host {
 	return hs
 }
 
+func TestEveryBodySentToPhalaCarriesItsZeroRetentionConstraintWhateverTheCallerSent(t *testing.T) {
+	msgs := `"messages":[{"role":"user","content":"hello"}]`
+	for name, body := range map[string]string{
+		"a plain call":              `{"model":"m",` + msgs + `}`,
+		"a caller's own provider":   `{"model":"m","provider":{"zdr":false,"aci_verified":false},` + msgs + `}`,
+		"a caller's provider order": `{"model":"m","provider":{"order":["someone-else"]},` + msgs + `}`,
+	} {
+		s := stub(t)
+		c := PhalaZDR.NewChat(s.srv.URL, "k", "phala/m", catalog.Fixes{}, s.srv.Client())
+		if _, _, err := c.Complete(context.Background(), call(t, body)); err != nil {
+			t.Fatalf("%s, whole: %v", name, err)
+		}
+		if _, err := c.Stream(context.Background(), call(t, strings.Replace(body, `{"model"`, `{"stream":true,"model"`, 1)), func(chat.Chunk) error { return nil }); err != nil {
+			t.Fatalf("%s, streamed: %v", name, err)
+		}
+		reqs := s.requests()
+		if len(reqs) != 2 {
+			t.Fatalf("%s: %d requests reached the host, want 2", name, len(reqs))
+		}
+		for _, r := range reqs {
+			var sent struct {
+				Provider json.RawMessage `json:"provider"`
+			}
+			if err := json.Unmarshal([]byte(r.body), &sent); err != nil {
+				t.Fatalf("%s: %v", name, err)
+			}
+			if string(sent.Provider) != phala.Constraint || strings.Count(r.body, `"provider"`) != 1 {
+				t.Errorf("%s: the host was sent %s, want its one provider field to be %s", name, r.body, phala.Constraint)
+			}
+		}
+		if !strings.Contains(reqs[1].body, `"continuous_usage_stats":true`) {
+			t.Errorf("%s: the stream was sent %s, want usage asked for on every chunk", name, reqs[1].body)
+		}
+	}
+}
+
 func TestEveryRequestToAZDRHeaderHostCarriesTheHeaderWhateverTheCall(t *testing.T) {
 	msgs := `"messages":[{"role":"user","content":"hello"}]`
 	for _, h := range zdrHosts(t) {
@@ -159,7 +197,7 @@ func TestAnEndpointWithoutAKeyStillSendsTheZDRHeader(t *testing.T) {
 	}
 }
 
-var limitFields = map[string]string{"wafer": "max_tokens", "isoquant": "max_tokens", "novita": "max_completion_tokens", "morph": "max_tokens", "deepinfra": "max_tokens"}
+var limitFields = map[string]string{"wafer": "max_tokens", "isoquant": "max_tokens", "novita": "max_completion_tokens", "morph": "max_tokens", "deepinfra": "max_tokens", "phala-zdr": "max_tokens", "heabsy": "max_tokens", "silk": "max_tokens", "abliteration": "max_tokens"}
 
 func TestAHostWithNoZDRHeaderIsSentTheKeyAloneAndEveryHostItsOwnModelAndLimitField(t *testing.T) {
 	for _, h := range Hosts() {
@@ -298,7 +336,7 @@ func TestAReplyNovitaCompletedAllAsReasoningReachesTheClientAsContent(t *testing
 	}
 }
 
-func TestOnlyDeepInfraIsSentTheCallsCacheKeyInTheBodyMorphInItsHeaderAndNoHostTheClients(t *testing.T) {
+func TestOnlyDeepInfraAndAbliterationAreSentTheCallsCacheKeyInTheBodyMorphInItsHeaderAndNoHostTheClients(t *testing.T) {
 	for _, h := range Hosts() {
 		for _, stream := range []bool{false, true} {
 			s := stub(t)
@@ -319,7 +357,7 @@ func TestOnlyDeepInfraIsSentTheCallsCacheKeyInTheBodyMorphInItsHeaderAndNoHostTh
 				t.Errorf("%s was sent the client's prompt_cache_key: %s", h.Name, body)
 			}
 			sentKey := strings.Contains(body, `"prompt_cache_key":"0123456789abcdef0123456789abcdef"`)
-			if want := h.Name == DeepInfra.Name; sentKey != want || strings.Count(body, "prompt_cache_key") > 1 {
+			if want := h.Name == DeepInfra.Name || h.Name == Abliteration.Name; sentKey != want || strings.Count(body, "prompt_cache_key") > 1 {
 				t.Errorf("%s (stream %t) was sent %s, want the call's cache key %t", h.Name, stream, body, want)
 			}
 			header := s.requests()[0].header

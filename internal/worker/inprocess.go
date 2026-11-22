@@ -25,6 +25,7 @@ type InProcess struct {
 	retired        map[string]string
 	images         map[string]media.ImageGenerator
 	videos         map[string]media.VideoGenerator
+	uploadsVideo   map[string]bool
 	searches       map[string]web.Searcher
 	fetches        map[string]web.Fetcher
 	researchers    map[string]research.Researcher
@@ -44,6 +45,7 @@ type InProcess struct {
 	counters       counters
 	sealing        sealedState
 	privacyVeil    *PrivacyVeil
+	clips          *SealedClips
 	mu             sync.Mutex
 	last           uint64
 	opened         map[Handle]*entry
@@ -86,6 +88,7 @@ type Config struct {
 	VendorPins     func() *VendorPinsLag
 	VendorPinsMode string
 	PrivacyVeil    *PrivacyVeil
+	Clips          *SealedClips
 }
 
 func NewInProcess(cfg Config) (*InProcess, error) {
@@ -95,11 +98,11 @@ func NewInProcess(cfg Config) (*InProcess, error) {
 		}
 	}
 	w := &InProcess{
-		chats: indexChats(cfg.Models), retired: cfg.Retired, images: map[string]media.ImageGenerator{}, videos: map[string]media.VideoGenerator{},
+		chats: indexChats(cfg.Models), retired: cfg.Retired, images: map[string]media.ImageGenerator{}, videos: map[string]media.VideoGenerator{}, uploadsVideo: map[string]bool{},
 		searches: map[string]web.Searcher{}, fetches: map[string]web.Fetcher{}, researchers: map[string]research.Researcher{}, transcribers: map[string]transcriber{},
 		speakers:  map[string]speech.Speaker{},
 		endpoints: map[string]catalog.EndpointID{},
-		lookup:    cfg.Lookup, plugins: cfg.Plugins, reports: cfg.Reports, unpinned: cfg.Unpinned, vendorPins: cfg.VendorPins, vendorPinsMode: cfg.VendorPinsMode, privacyVeil: cfg.PrivacyVeil,
+		lookup:    cfg.Lookup, plugins: cfg.Plugins, reports: cfg.Reports, unpinned: cfg.Unpinned, vendorPins: cfg.VendorPins, vendorPinsMode: cfg.VendorPinsMode, privacyVeil: cfg.PrivacyVeil, clips: cfg.Clips,
 		now: cfg.Now, keepaliveEvery: cmp.Or(cfg.Keepalive, keepalive), videoSubmit: cmp.Or(cfg.VideoSubmit, videoSubmitTimeout), proofBudget: cmp.Or(cfg.ProofBudget, proofBudget), opened: map[Handle]*entry{},
 		tiers: map[string]catalog.Tier{}, runs: map[Handle]*taskRun{}, taskLife: taskrun.RunLife,
 	}
@@ -109,6 +112,9 @@ func NewInProcess(cfg Config) (*InProcess, error) {
 	w.sealing.Sealing, w.sealing.started = cfg.Sealing, w.now()
 	if w.reports == nil {
 		w.reports = NopReporter{}
+	}
+	if w.clips != nil && w.clips.Tickets == nil {
+		return nil, errNoClipTickets
 	}
 	named := make([]catalog.Named, 0, len(cfg.Models))
 	for name, m := range cfg.Models {
@@ -128,6 +134,9 @@ func NewInProcess(cfg Config) (*InProcess, error) {
 		if tier, ok := w.tiers[live]; ok {
 			w.tiers[name] = tier
 		}
+		if m, ok := cfg.Models[live]; ok {
+			w.indexNonChat(name, m)
+		}
 	}
 	w.counters.init(cfg.CountingSlots)
 	return w, nil
@@ -144,6 +153,7 @@ func (w *InProcess) indexNonChat(name string, m Model) {
 			w.images[name] = s.ImageGenerator
 		case Videos:
 			w.videos[name] = s.VideoGenerator
+			w.uploadsVideo[name] = s.UploadsOutput
 		case Search:
 			w.searches[name] = s.Searcher
 		case Fetch:

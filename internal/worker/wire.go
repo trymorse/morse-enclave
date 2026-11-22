@@ -197,8 +197,9 @@ func (p pollRequest) context(ctx context.Context) (context.Context, context.Canc
 const WireVersion = 6
 
 type Served struct {
-	Digest string `json:"digest"`
-	Wire   int    `json:"wire"`
+	Digest      string `json:"digest"`
+	Wire        int    `json:"wire"`
+	SealedClips bool   `json:"sealed_clips,omitempty"`
 }
 
 type evidenceRequest struct {

@@ -3,6 +3,7 @@ package worker
 import (
 	"cmp"
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"time"
@@ -10,7 +11,9 @@ import (
 	"morse/backend/internal/apierr"
 	"morse/backend/internal/billing/measure"
 	"morse/backend/internal/catalog"
+	"morse/backend/internal/frameconsent"
 	"morse/backend/internal/media"
+	"morse/backend/internal/strictjson"
 	"morse/backend/internal/web"
 )
 
@@ -33,11 +36,28 @@ func (w *InProcess) openImages(o Opening) (Admission, error) {
 	if err := refuseProtocol(nil, protocolOf(o.Header.Get)); err != nil {
 		return nil, err
 	}
+	if err := asRetiredImageNameWasServed(w.retired, generator.Spec(), req); err != nil {
+		return nil, apierr.InvalidParameter(err.Error())
+	}
 	if err := generator.CheckImages(req); err != nil {
 		return nil, apierr.InvalidParameter(err.Error())
 	}
 	oi := &openedImages{cuts: newCuts(), endpoint: w.endpoints[req.Model], generator: generator, req: req}
-	return MediaAdmission{admitted: admitted{w.keep(o, oi)}, Route: req.Model, Units: req.N, References: len(req.References()), Resolution: req.Size.Resolution}, nil
+	return MediaAdmission{admitted: admitted{w.keep(o, oi)}, Route: req.Model, Units: req.N, References: len(req.References()), Resolution: req.Size.Resolution, Frames: req.ReferenceDigests()}, nil
+}
+
+func asRetiredImageNameWasServed(retired map[string]string, spec media.ImageSpec, req *media.ImageRequest) error {
+	to, isRetired := retired[req.Model]
+	if !isRetired {
+		return nil
+	}
+	if !spec.Seed {
+		req.Seed = nil
+	}
+	if refs := len(req.ReferenceImages()); spec.MaxReferences > 0 && refs > spec.MaxReferences {
+		return strictjson.Invalid(fmt.Sprintf("%s was retired; %s, which replaced it, takes at most %d reference images.", req.Model, to, spec.MaxReferences))
+	}
+	return nil
 }
 
 func (o *openedImages) cut(reason measure.Cut) { o.cuts.cut(reason, false) }
@@ -55,11 +75,13 @@ func (o *openedImages) run(_ context.Context, w *InProcess, h Handle, g Grant, r
 	rw := newReplyWriter(reply)
 	opened := time.Now()
 	var imgs media.Images
-	var err error
+	err := o.unconsented(mg)
 	canceller, cancels := o.generator.(media.Canceller)
-	if cancels {
+	switch {
+	case err != nil:
+	case cancels:
 		imgs, err = canceller.GenerateImagesUntil(ctx, o.cuts.client.Done(), o.req)
-	} else {
+	default:
 		imgs, err = o.generator.GenerateImages(ctx, o.req)
 	}
 	returned := time.Now()
@@ -87,6 +109,17 @@ func (o *openedImages) run(_ context.Context, w *InProcess, h Handle, g Grant, r
 		refuse(ctx, rw, err)
 	}
 	return m
+}
+
+func (o *openedImages) unconsented(g MediaGrant) error {
+	gated, ok := o.generator.(media.FrameConsentGated)
+	if !ok || !gated.FramesNeedConsent() {
+		return nil
+	}
+	if image, missing := frameconsent.Missing(o.req.ReferenceDigests(), g.ConsentedFrames); missing {
+		return frameconsent.RequiredImage(image)
+	}
+	return nil
 }
 
 func writeJSONBody(w http.ResponseWriter, write func(io.Writer) error) error {

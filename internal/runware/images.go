@@ -70,16 +70,46 @@ func twoKOnly(byRatio map[string][2]int) map[media.Size]media.Dims {
 	return media.SizeTable(sizes)
 }
 
+// why: Runware's schemas (2026-11-22) take Muse Image, Kling Image 4.0, and FLUX 3 Image only at their listed sizes, and
+// Seedream 5.5, FLUX 3 Klein, GPT Image 2.6, and Ideogram 4.6 at any size within bounds the standard sizes keep.
+var museSizes = media.SizeTable(map[string][2]int{
+	"1:1 2k": {1600, 1600}, "3:2 2k": {1920, 1280}, "2:3 2k": {1280, 1920}, "4:3 2k": {1792, 1344},
+	"3:4 2k": {1344, 1792}, "16:9 2k": {2048, 1152}, "9:16 2k": {1152, 2048}, "21:9 2k": {2352, 1008},
+})
+
+var klingImage4Sizes = media.SizeTable(map[string][2]int{
+	"1:1 2k": {2048, 2048}, "3:2 2k": {2496, 1664}, "2:3 2k": {1664, 2496}, "4:3 2k": {2336, 1760},
+	"3:4 2k": {1760, 2336}, "16:9 2k": {2720, 1536}, "9:16 2k": {1536, 2720}, "21:9 2k": {3136, 1326},
+	"1:1 4k": {4096, 4096}, "3:2 4k": {4992, 3328}, "2:3 4k": {3328, 4992}, "4:3 4k": {4672, 3520},
+	"3:4 4k": {3520, 4672}, "16:9 4k": {5440, 3072}, "9:16 4k": {3072, 5440}, "21:9 4k": {6272, 2651},
+})
+
+var flux3Sizes = media.SizeTable(map[string][2]int{
+	"1:1 1k": {1024, 1024}, "16:9 1k": {1360, 768}, "9:16 1k": {768, 1360}, "4:3 1k": {1184, 880},
+	"3:4 1k": {880, 1184}, "3:2 1k": {1248, 832}, "2:3 1k": {832, 1248},
+	"21:9 1k": {1568, 672}, "4:5 1k": {912, 1152}, "5:4 1k": {1152, 912},
+	"1:1 2k": {2048, 2048}, "16:9 2k": {2736, 1536}, "9:16 2k": {1536, 2736}, "4:3 2k": {2368, 1776},
+	"3:4 2k": {1776, 2368}, "3:2 2k": {2512, 1664}, "2:3 2k": {1664, 2512},
+	"21:9 2k": {3136, 1344}, "4:5 2k": {1824, 2288}, "5:4 2k": {2288, 1824},
+})
+
 var imageModels = map[string]imageModel{
-	"bfl:7@1":                     {ImageSpec: media.Flux2Max, dims: media.ImageDims{Base: media.StandardSizes}},
-	"bfl:5@1":                     {ImageSpec: media.Flux2Pro, dims: media.ImageDims{Base: media.StandardSizes}},
-	"bytedance:seedream@5.0-pro":  {ImageSpec: unchecked(media.Seedream5Pro), dims: media.ImageDims{Base: media.StandardSizes}},
-	"bytedance:seedream@5.0-lite": {ImageSpec: media.Seedream5Lite, dims: media.ImageDims{Base: seedream5LiteSizes}, maxPrompt: 3_000},
-	"bytedance:seedream@4.5":      {ImageSpec: media.Seedream45, dims: media.ImageDims{Base: seedream45Sizes}, maxPrompt: 3_000},
-	"alibaba:qwen-image@3.0-pro":  {ImageSpec: unchecked(media.QwenImage3), dims: media.ImageDims{Base: media.StandardSizes}},
-	"ideogram:4.5@0":              {ImageSpec: unchecked(media.Ideogram45), dims: media.ImageDims{Base: media.StandardSizes, Text: media.IdeogramSizes}},
-	"civitai:312530@1457203":      {ImageSpec: media.SDXLCheckpoint, dims: sdxl, checkpoint: checkpoint{steps: 30, cfg: 4, scheduler: "DPM++ 2M SDE Karras"}},
-	"civitai:139562@789646":       {ImageSpec: media.SDXLCheckpoint, dims: sdxl, checkpoint: checkpoint{steps: 30, scheduler: "DPM++ SDE Karras"}},
+	"bfl:7@1":                       {ImageSpec: media.Flux2Max, dims: media.ImageDims{Base: media.StandardSizes}},
+	"bfl:5@1":                       {ImageSpec: media.Flux2Pro, dims: media.ImageDims{Base: media.StandardSizes}},
+	"bytedance:seedream@5.0-pro":    {ImageSpec: unchecked(media.Seedream5Pro), dims: media.ImageDims{Base: media.StandardSizes}},
+	"bytedance:seedream@5.0-lite":   {ImageSpec: media.Seedream5Lite, dims: media.ImageDims{Base: seedream5LiteSizes}, maxPrompt: 3_000},
+	"bytedance:seedream@4.5":        {ImageSpec: media.Seedream45, dims: media.ImageDims{Base: seedream45Sizes}, maxPrompt: 3_000},
+	"alibaba:qwen-image@3.0-pro":    {ImageSpec: unchecked(media.QwenImage3), dims: media.ImageDims{Base: media.StandardSizes}},
+	"ideogram:4.5@0":                {ImageSpec: unchecked(media.Ideogram45), dims: media.ImageDims{Base: media.StandardSizes, Text: media.IdeogramSizes}},
+	"meta:muse@image":               {ImageSpec: media.MuseImage, dims: media.ImageDims{Base: museSizes}},
+	"bytedance:seedream@5.5":        {ImageSpec: media.Seedream55, dims: media.ImageDims{Base: media.StandardSizes}, maxPrompt: 10_000},
+	"klingai:kling-image@4.0":       {ImageSpec: media.KlingImage4, dims: media.ImageDims{Base: klingImage4Sizes}},
+	"bfl:flux@3-image":              {ImageSpec: media.Flux3, dims: media.ImageDims{Base: flux3Sizes}},
+	"bfl:flux@3-image-klein":        {ImageSpec: media.Flux3Klein, dims: media.ImageDims{Base: media.StandardSizes}, maxPrompt: 10_000},
+	"openai:gpt-image@2.6-sunburst": {ImageSpec: media.GPTImage26, dims: media.ImageDims{Base: media.StandardSizes}},
+	"ideogram:4.6@0":                {ImageSpec: media.Ideogram46, dims: media.ImageDims{Base: media.StandardSizes}, maxPrompt: 10_000},
+	"civitai:312530@1457203":        {ImageSpec: media.SDXLCheckpoint, dims: sdxl, checkpoint: checkpoint{steps: 30, cfg: 4, scheduler: "DPM++ 2M SDE Karras"}},
+	"civitai:139562@789646":         {ImageSpec: media.SDXLCheckpoint, dims: sdxl, checkpoint: checkpoint{steps: 30, scheduler: "DPM++ SDE Karras"}},
 	"civitai:1125067@1471829": {ImageSpec: media.SDXLCheckpoint, dims: sdxl, checkpoint: checkpoint{
 		steps: 30, cfg: 4.5, scheduler: "DPM++ 2M Karras", tags: "masterpiece, best quality, high quality, ultra-detailed, realistic",
 	}},

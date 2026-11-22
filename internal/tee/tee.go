@@ -316,7 +316,7 @@ func (g nearGate) Holds(k near.SigningKey) bool {
 	return ok
 }
 
-// tinfoilVendor's gate verifies one router host's bundle, which binds no nonce, and pins the route's client
+// tinfoilVendor's gate verifies one router host's v3 document for the gate's nonce, and pins the route's client
 // to the TLS key its report binds. The router signs no receipts.
 type tinfoilVendor struct{ vendor }
 
@@ -324,51 +324,39 @@ func (v tinfoilVendor) NewGate(up attester.Upstream, d Deps) Gate {
 	gateway := tinfoil.NewGateway(up.BaseURL, up.Host, d.Unpinned)
 	return tinfoilGate{TLSGate: attested.NewTLSGate(attested.Config[aci.SPKI]{
 		Scope:    v.Scope(up).String(),
-		Verifier: tinfoilVerifier(d.Policy, up.Host, gateway, attestation.TinfoilPins),
-		Fetch: func(ctx context.Context, _ attestation.Nonce) ([]byte, error) {
-			return gateway.Bundle(ctx)
+		Verifier: tinfoilVerifier(d.Policy, up.Host, attestation.TinfoilPins),
+		Fetch: func(ctx context.Context, nonce attestation.Nonce) ([]byte, error) {
+			return gateway.Nonced(ctx, nonce.String())
 		},
 		Observe: d.Observe,
 	}, up.Host, d.Base)}
 }
 
-// tinfoilVerifier judges the router's v2 bundle, whose TLS and HPKE keys the gate pins. The bundle carries no
-// provenance, so when its release is unpinned the verifier fetches the router's v3 document for the gate's
-// nonce and judges the Sigstore bundle it carries: the proof binds to the report by the measurement it names,
-// so the document needs no verification of its own. A fetch that fails leaves the report unjudged (an
-// Outage), so the gate keeps its anchor and tries again, rather than refusing the scope over a transient
-// error. It reads the active pins on each verification, so a runtime swap reaches the gate.
-func tinfoilVerifier(policy attestation.Policy, host string, gateway tinfoil.Gateway, active func() attestation.RouterPins) attested.Verifier[aci.SPKI] {
-	return func(ctx context.Context, bundle []byte, nonce attestation.Nonce) (attestation.Verdicts[aci.SPKI], error) {
-		pins := active()
-		r, err := policy.VerifyTinfoil(ctx, bundle, host)
+// It reads the active pins on each verification, so a runtime swap reaches the gate.
+func tinfoilVerifier(policy attestation.Policy, host string, active func() attestation.RouterPins) attested.Verifier[aci.SPKI] {
+	return func(ctx context.Context, doc []byte, nonce attestation.Nonce) (attestation.Verdicts[aci.SPKI], error) {
+		r, err := policy.VerifyTinfoilNonced(ctx, doc, nonce, host)
 		if err != nil {
 			return attestation.Verdicts[aci.SPKI]{}, err
 		}
-		if !pins.Pinned(r.Measurement) {
-			doc, err := gateway.Nonced(ctx, nonce.String())
-			if err != nil {
-				return attestation.Verdicts[aci.SPKI]{}, attestation.Outage{Err: fmt.Errorf("tinfoil: fetching the release's provenance: %w", err)}
-			}
-			r.Provenance = attestation.ProveRouterRelease(attestation.TinfoilCode(doc))
-		}
-		v, err := pins.Judge(r)
+		v, err := active().Judge(r)
 		if err != nil {
 			return attestation.Verdicts[aci.SPKI]{}, err
 		}
-		v.Serve = func(func(string) bool) json.RawMessage { return bundle }
+		v.Serve = func(func(string) bool) json.RawMessage { return doc }
 		return v, nil
 	}
 }
 
-// filterVerifier judges the privacy filter's bundle against the filter's own pins, and fetches no provenance: a
+// filterVerifier judges the privacy filter's document against the filter's own pins, and fetches no provenance: a
 // filter release serves only once a person pins it, after reviewing what its config lets the enclave reach.
 func filterVerifier(policy attestation.Policy, host string, pins func() attestation.RouterPins, verified func(attestation.TinfoilReport)) attested.Verifier[aci.SPKI] {
-	return func(ctx context.Context, bundle []byte, _ attestation.Nonce) (attestation.Verdicts[aci.SPKI], error) {
-		r, err := policy.VerifyTinfoil(ctx, bundle, host)
+	return func(ctx context.Context, doc []byte, nonce attestation.Nonce) (attestation.Verdicts[aci.SPKI], error) {
+		r, err := policy.VerifyTinfoilNonced(ctx, doc, nonce, host)
 		if err != nil {
 			return attestation.Verdicts[aci.SPKI]{}, err
 		}
+		r.Provenance = attestation.Provenance{}
 		v, err := pins().Judge(r)
 		if err != nil {
 			return attestation.Verdicts[aci.SPKI]{}, err
@@ -376,7 +364,7 @@ func filterVerifier(policy attestation.Policy, host string, pins func() attestat
 		if verified != nil {
 			verified(r)
 		}
-		v.Serve = func(func(string) bool) json.RawMessage { return bundle }
+		v.Serve = func(func(string) bool) json.RawMessage { return doc }
 		return v, nil
 	}
 }
@@ -422,8 +410,8 @@ func NewPrivacyFilter(apiKey string, d Deps) *PrivacyFilter {
 	pf.TLSGate = attested.NewTLSGate(attested.Config[aci.SPKI]{
 		Scope:    pf.scope,
 		Verifier: filterVerifier(d.Policy, host, attestation.TinfoilFilterPins, func(r attestation.TinfoilReport) { pf.hpke.Store(&r.HPKE) }),
-		Fetch: func(ctx context.Context, _ attestation.Nonce) ([]byte, error) {
-			return gateway.Bundle(ctx)
+		Fetch: func(ctx context.Context, nonce attestation.Nonce) ([]byte, error) {
+			return gateway.Nonced(ctx, nonce.String())
 		},
 		Observe: d.Observe,
 	}, host, d.Base)

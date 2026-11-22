@@ -345,7 +345,7 @@ func videosBy[G media.VideoGenerator](newGen newGenerator[G]) builder[routes.Vid
 		if err != nil {
 			return nil, upstreamModelError(rt, err)
 		}
-		return worker.Videos{VideoGenerator: gen}, nil
+		return worker.Videos{VideoGenerator: gen, UploadsOutput: rt.UploadsVideo()}, nil
 	}
 }
 

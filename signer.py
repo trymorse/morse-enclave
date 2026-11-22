@@ -5,7 +5,8 @@ It checks a Sigstore bundle over a statement as the enclave's pinsig.VerifyBundl
 entry in a Rekor v2 shard with k witness cosignatures, read by rekor.py, a Fulcio certificate that chains to
 Sigstore's trusted root at its NotBefore, the identity of sign.yml on main of trymorse/morse-pins in the first attempt
 of a push or schedule run, a signature over the statement's digest, and k cosignatures at or before the
-certificate's NotAfter. It also recomputes what a statement must say from the morse-pins commit it names.
+certificate's NotAfter. It also recomputes what a statement must say from the morse-pins commit it names: the images
+of an environment, the hashes of the vendor pins files, or the hash and base of an environment's routes file.
 """
 
 import base64
@@ -30,6 +31,16 @@ WORKFLOW = f"{REPOSITORY}/.github/workflows/sign.yml@refs/heads/main"
 TRIGGERS = ("push", "schedule")
 VENDOR_FILES = ("near_pins.json", "phala_model_pins.json", "phala_pins.json", "tinfoil_pins.json")
 SIGNED_FILES = ("enclave_pins.json", *VENDOR_FILES)
+# sign.yml signs routes/<environment>/routes.json and the base beside it, and refuses to sign anything while routes/
+# holds another path, so every path under routes/ is the signer's.
+ROUTES_DIR = "routes/"
+ROUTES_ENVIRONMENTS = ("dev", "prod")
+ROUTES_BASE = re.compile(r"[0-9a-f]{64}\n")
+
+
+def signs(path):
+    """Whether sign.yml reads the morse-pins file at path, so that only the publisher may push it."""
+    return path in SIGNED_FILES or path.startswith(ROUTES_DIR)
 
 OID = "1.3.6.1.4.1.57264.1."
 ISSUER_V1, ISSUER_V2, BUILD_SIGNER, RUNNER, SOURCE_URI, SOURCE_DIGEST, SOURCE_REF, SOURCE_ID, OWNER, CONFIG_URI, CONFIG_DIGEST, TRIGGER, RUN = (
@@ -209,6 +220,15 @@ def expected_statement(statement, show, count):
         body = {"environment": statement.get("environment"), "images": images}
     elif kind == "morse-vendor-pins-v1":
         body = {"files": {f"v4/{name}": jcs_sha256(show(name)) for name in VENDOR_FILES}}
+    elif kind == "morse-routes-v1":
+        environment = statement.get("environment")
+        if environment not in ROUTES_ENVIRONMENTS:
+            raise ValueError(f"the routes statement's environment is {environment!r}")
+        base = show(f"{ROUTES_DIR}{environment}/base").decode()
+        if not ROUTES_BASE.fullmatch(base):
+            raise ValueError(f"{ROUTES_DIR}{environment}/base is not 64 lowercase hex digits and a newline")
+        routes = f"{ROUTES_DIR}{environment}/routes.json"
+        body = {"environment": environment, "base": base[:-1], "files": {routes: hashlib.sha256(show(routes)).hexdigest()}}
     else:
         raise ValueError(f"the statement's type is {kind!r}")
     return {"type": kind, "sequence": count(), "pins_commit": statement.get("pins_commit"), "time": statement.get("time"), **body}

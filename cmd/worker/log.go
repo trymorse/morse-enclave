@@ -14,8 +14,10 @@ import (
 	"morse/backend/internal/attestation"
 	"morse/backend/internal/attested"
 	"morse/backend/internal/chat"
+	"morse/backend/internal/clip"
 	"morse/backend/internal/door"
 	"morse/backend/internal/health"
+	"morse/backend/internal/routesdata"
 	"morse/backend/internal/vendorpins"
 	"morse/backend/internal/worker"
 )
@@ -46,44 +48,54 @@ const (
 	vendorPinsFailed
 	vendorPinsWouldSwap
 	vendorPinsSwapped
+	routesDataNothingOffered
+	routesDataRefused
+	routesDataWouldLoad
 	privacyVeilUnavailable
 	privacyVeilRefused
 	privacyFilterLabelUnknown
 	privacyVeilReplyScans
+	clipUploadStored
+	clipUploadRefused
 )
 
 var messages = [...]struct {
 	text  string
 	level slog.Level
 }{
-	configInvalid:         {"config invalid", slog.LevelError},
-	listening:             {"listening", slog.LevelInfo},
-	shuttingDown:          {"shutting down", slog.LevelInfo},
-	serveFailed:           {"serve failed", slog.LevelError},
-	routeFailed:           {"route failed", slog.LevelWarn},
-	lookupVendorBusy:      {"lookup vendor busy", slog.LevelWarn},
-	vendorRefused:         {"vendor refused", slog.LevelWarn},
-	upstreamErrorChunk:    {"upstream error chunk", slog.LevelWarn},
-	unknownReplyField:     {"e2ee reply carried a field the gate does not know", slog.LevelWarn},
-	vendorUsageMissing:    {"sealed reply ended with no vendor usage, billed on its frames", slog.LevelWarn},
-	researchUnwrapped:     {"parallel research report unwrapped from its answer object", slog.LevelWarn},
-	upstreamAttested:      {"upstream attested", slog.LevelInfo},
-	upstreamDrifted:       {"upstream attested with drift", slog.LevelWarn},
-	upstreamRefused:       {"upstream refused", slog.LevelWarn},
-	upstreamUnpinned:      {"upstream unpinned", slog.LevelWarn},
-	upstreamRefreshFailed: {"upstream attestation refresh failed", slog.LevelWarn},
-	doorListening:         {"door listening", slog.LevelInfo},
-	doorServeFailed:       {"door serve failed", slog.LevelError},
-	doorConnectionRefused: {"door connection refused", slog.LevelWarn},
-	doorRelayFailed:       {"door relay failed", slog.LevelWarn},
-	vendorPinsFailed:      {"vendor pins release refused, active set kept", slog.LevelWarn},
-	vendorPinsWouldSwap:   {"vendor pins would swap (log mode, nothing swapped)", slog.LevelInfo},
-	vendorPinsSwapped:     {"vendor pins swapped", slog.LevelInfo},
+	configInvalid:            {"config invalid", slog.LevelError},
+	listening:                {"listening", slog.LevelInfo},
+	shuttingDown:             {"shutting down", slog.LevelInfo},
+	serveFailed:              {"serve failed", slog.LevelError},
+	routeFailed:              {"route failed", slog.LevelWarn},
+	lookupVendorBusy:         {"lookup vendor busy", slog.LevelWarn},
+	vendorRefused:            {"vendor refused", slog.LevelWarn},
+	upstreamErrorChunk:       {"upstream error chunk", slog.LevelWarn},
+	unknownReplyField:        {"e2ee reply carried a field the gate does not know", slog.LevelWarn},
+	vendorUsageMissing:       {"sealed reply ended with no vendor usage, billed on its frames", slog.LevelWarn},
+	researchUnwrapped:        {"parallel research report unwrapped from its answer object", slog.LevelWarn},
+	upstreamAttested:         {"upstream attested", slog.LevelInfo},
+	upstreamDrifted:          {"upstream attested with drift", slog.LevelWarn},
+	upstreamRefused:          {"upstream refused", slog.LevelWarn},
+	upstreamUnpinned:         {"upstream unpinned", slog.LevelWarn},
+	upstreamRefreshFailed:    {"upstream attestation refresh failed", slog.LevelWarn},
+	doorListening:            {"door listening", slog.LevelInfo},
+	doorServeFailed:          {"door serve failed", slog.LevelError},
+	doorConnectionRefused:    {"door connection refused", slog.LevelWarn},
+	doorRelayFailed:          {"door relay failed", slog.LevelWarn},
+	vendorPinsFailed:         {"vendor pins release refused, active set kept", slog.LevelWarn},
+	vendorPinsWouldSwap:      {"vendor pins would swap (log mode, nothing swapped)", slog.LevelInfo},
+	vendorPinsSwapped:        {"vendor pins swapped", slog.LevelInfo},
+	routesDataNothingOffered: {"routes data: the host offered no routes file (log mode), serving the image's own", slog.LevelInfo},
+	routesDataRefused:        {"routes file refused (log mode), serving the image's own", slog.LevelWarn},
+	routesDataWouldLoad:      {"routes would load (log mode, nothing loaded)", slog.LevelInfo},
 	// Once a minute, never per request: a line timed to one request would tell the host it held a detail.
 	privacyVeilUnavailable:    {"privacy veil unavailable", slog.LevelWarn},
 	privacyVeilRefused:        {"privacy veil refused", slog.LevelInfo},
 	privacyFilterLabelUnknown: {"privacy filter label unknown", slog.LevelWarn},
 	privacyVeilReplyScans:     {"privacy veil reply scans", slog.LevelInfo},
+	clipUploadStored:          {"clip upload stored sealed", slog.LevelInfo},
+	clipUploadRefused:         {"clip upload refused", slog.LevelWarn},
 }
 
 type fields struct {
@@ -101,6 +113,7 @@ type fields struct {
 	Reason     string
 	Drift      string
 	Pins       []slog.Attr
+	Routes     []slog.Attr
 }
 
 const unlisted = "unlisted"
@@ -163,6 +176,7 @@ func (l *logger) log(m message, f fields) {
 		attrs = append(attrs, slog.String("drift", f.Drift))
 	}
 	attrs = append(attrs, f.Pins...)
+	attrs = append(attrs, f.Routes...)
 	l.out.LogAttrs(context.Background(), messages[m].level, messages[m].text, attrs...)
 }
 
@@ -182,6 +196,26 @@ func (l *logger) vendorPins(e vendorpins.Event) {
 		pins = append(pins, slog.String("err", e.Err.Error()))
 	}
 	l.log(m, fields{Pins: pins})
+}
+
+func (l *logger) routesData(e routesdata.Event) {
+	attrs := []slog.Attr{slog.String("boot_sha256", e.BootSHA256)}
+	m := routesDataRefused
+	switch e.Kind {
+	case routesdata.NothingOffered:
+		m = routesDataNothingOffered
+	case routesdata.WouldLoad:
+		m = routesDataWouldLoad
+		attrs = append(attrs,
+			slog.Uint64("sequence", e.Offered.Sequence),
+			slog.String("statement_sha256", e.Offered.StatementSHA256),
+			slog.String("file_sha256", e.Offered.FileSHA256),
+			slog.String("signed", e.Offered.Signed.UTC().Format(time.RFC3339)),
+			slog.Bool("same_as_boot", e.SameAsBoot))
+	default:
+		attrs = append(attrs, slog.String("err", e.Err.Error()))
+	}
+	l.log(m, fields{Routes: attrs})
 }
 
 func (l *logger) configFailed(err error) {
@@ -319,4 +353,12 @@ func (l *logger) privacyVeilRefusals(counts map[string]int) {
 	for _, reason := range slices.Sorted(maps.Keys(counts)) {
 		l.log(privacyVeilRefused, fields{Reason: reason, Count: counts[reason]})
 	}
+}
+
+func (l *logger) clipUpload(o clip.Outcome) {
+	m := clipUploadRefused
+	if o == clip.Stored {
+		m = clipUploadStored
+	}
+	l.log(m, fields{Reason: string(o)})
 }

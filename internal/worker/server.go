@@ -342,7 +342,7 @@ func (s *Server) discard(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) serveRoutes(w http.ResponseWriter, r *http.Request) {
-	apierr.WriteJSON(w, http.StatusOK, Served{Digest: s.routesDigest, Wire: WireVersion})
+	apierr.WriteJSON(w, http.StatusOK, Served{Digest: s.routesDigest, Wire: WireVersion, SealedClips: s.inner.clips != nil})
 }
 
 func (s *Server) serveUnpinned(w http.ResponseWriter, r *http.Request) {

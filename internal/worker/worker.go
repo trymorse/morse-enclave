@@ -103,6 +103,7 @@ type Opening struct {
 	cek           *[32]byte
 	veilHead      json.RawMessage
 	veilPartition string
+	clipKey       string
 }
 
 func ContentHeaders(from http.Header) http.Header {
@@ -209,7 +210,10 @@ type ChatGrant struct {
 
 func (ChatGrant) kind() grantKind { return grantsChat }
 
-type MediaGrant struct{ Units int }
+type MediaGrant struct {
+	Units           int
+	ConsentedFrames []frameconsent.Digest `json:",omitempty"`
+}
 
 func (MediaGrant) kind() grantKind { return grantsMedia }
 

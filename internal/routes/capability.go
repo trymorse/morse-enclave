@@ -120,6 +120,20 @@ var capabilities = map[Provider]capability{
 		refusesDryAccount: true,
 		openAIHost:        true,
 	},
+	// why: Phala's gateway routes a request only to hosts that keep no prompt or completion when its body carries
+	// provider.zdr true, and fails it with 404 before the prompt is sent when none can. A dry account answered 402
+	// insufficient_quota on 2026-11-04 (internal/phala/phalatest/testdata/dry-account-402.http).
+	ProviderPhalaZDR: {
+		kinds:             servedAt{catalog.KindChat: privateOnly},
+		zdrAt:             privateOnly,
+		zdrWhy:            "because Phala keeps nothing only of a request whose body carries provider.zdr true, which this provider sends on every request beside aci_verified true; it is a body field, not a header, and no account setting replaces it",
+		zdrLink:           "https://docs.phala.com/phala-cloud/confidential-ai/confidential-model/zero-data-retention",
+		zdrLinkChecked:    "2026-11-21",
+		zdrHeld:           HeldRequestHeader,
+		needsKey:          true,
+		refusesDryAccount: true,
+		openAIHost:        true,
+	},
 	// Wafer documents no status for a dry account; its chat path takes apierr.SanitizedUpstreamError's default mapping
 	// of a 401 or 402 to upstream_unavailable. No dry account has answered a request yet. Wafer ignores the output
 	// limit: on DeepSeek V4 Flash 0731 with a limit of 256 it sent 9,379 completion tokens for max_tokens and 1,448 for
@@ -164,6 +178,47 @@ var capabilities = map[Provider]capability{
 		zdrLink:           "https://www.morphllm.com/zdr",
 		zdrLinkChecked:    "2026-11-17",
 		zdrHeld:           HeldAccountAgreement,
+		needsKey:          true,
+		refusesDryAccount: true,
+		openAIHost:        true,
+	},
+	// why: Abliteration serves its own fine-tunes, so a route whose lab is Abliteration is on its maker's own API. It
+	// answers a dry account with 402 (https://docs.abliteration.ai/api/errors.md).
+	ProviderAbliteration: {
+		kinds:             servedAt{catalog.KindChat: privateOnly},
+		zdrAt:             privateOnly,
+		zdrWhy:            "because Abliteration's data-handling page (https://abliteration.ai/data-handling) processes prompts and completions in memory, writes them to no disk or log, and marks every chat completion zero data retention, and its terms (https://abliteration.ai/terms-of-service) retain no input or output, which is zero data retention per Abliteration's terms; no per-request header",
+		zdrLink:           "https://abliteration.ai/data-handling",
+		zdrLinkChecked:    "2026-11-21",
+		zdrHeld:           HeldPublishedTerms,
+		makes:             map[string]string{"api.abliteration.ai": "Abliteration"},
+		needsKey:          true,
+		refusesDryAccount: true,
+		openAIHost:        true,
+	},
+	// why: Silk Compute names no legal entity in its terms (https://silkcompute.com/terms, read 2026-11-21), so its zero
+	// retention rests on its privacy policy alone. It answers a dry account with 402 insufficient_credits
+	// (https://silkcompute.com/docs/errors).
+	ProviderSilk: {
+		kinds:             servedAt{catalog.KindChat: privateOnly},
+		zdrAt:             privateOnly,
+		zdrWhy:            "because Silk Compute's privacy policy (https://silkcompute.com/privacy, updated 2026-11-14) stores no prompt and no model answer, and says the infrastructure providers it uses store none either, which is zero data retention per Silk Compute's terms; no per-request header",
+		zdrLink:           "https://silkcompute.com/privacy",
+		zdrLinkChecked:    "2026-11-21",
+		zdrHeld:           HeldPublishedTerms,
+		needsKey:          true,
+		refusesDryAccount: true,
+		openAIHost:        true,
+	},
+	// why: Heabsy resells partner models through NanoGPT with no zero retention, so a route may name only a model its
+	// catalog marks hosting heabsy (heabsyHostedModels in cmd/proxy). It documents no status for a dry account.
+	ProviderHeabsy: {
+		kinds:             servedAt{catalog.KindChat: privateOnly},
+		zdrAt:             privateOnly,
+		zdrWhy:            "because Heabsy's privacy policy (https://heabsy.com/privacy, effective 2026-10-26) writes no prompt or completion processed on Heabsy infrastructure to durable storage or logs and trains on nothing, which is zero data retention per Heabsy's terms only for the models it hosts itself; no per-request header",
+		zdrLink:           "https://heabsy.com/privacy",
+		zdrLinkChecked:    "2026-11-19",
+		zdrHeld:           HeldPublishedTerms,
 		needsKey:          true,
 		refusesDryAccount: true,
 		openAIHost:        true,

@@ -19,6 +19,7 @@ type VideoView struct {
 	CreatedAt int64     `json:"created_at"`
 	ExpiresAt *int64    `json:"expires_at"`
 	Error     *JobError `json:"error"`
+	ClipKey   string    `json:"clip_key,omitempty"`
 }
 
 type ResearchView struct {

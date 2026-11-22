@@ -136,6 +136,73 @@ class SignerTest(Fixture):
         self.door.statements.append(("vendor/2.statement.json", json.dumps({**statement, "files": {**files, "v4/near_pins.json": "0" * 64}}).encode(), fake_bundle(head)))
         self.fails(f"FAIL: vendor/2.statement.json lists other files than the vendor pins files at {head} give it")
 
+    ROUTES = '{"models": [ ],\n "aliases": []}\n'
+    BASE = hashlib.sha256(b"the routes.json inside an image").hexdigest()
+
+    def routes(self, environment="prod", routes=ROUTES, base=BASE + "\n"):
+        """Commits routes/<environment>/ as the publisher pushes it, and returns the statement sign.yml writes for it."""
+        self.commit(f"routes/{environment}/routes.json", routes)
+        head = self.commit(f"routes/{environment}/base", base)
+        return {"type": "morse-routes-v1", "environment": environment, "base": base.removesuffix("\n"), "sequence": int(git(self.door.root / "pins", "rev-list", "--count", "HEAD")),
+                "pins_commit": head, "time": "2026-11-21T00:00:00Z", "files": {f"routes/{environment}/routes.json": hashlib.sha256(routes.encode()).hexdigest()}}
+
+    def routes_statement(self, name, statement):
+        path = f"routes-{statement['environment']}/{name}.statement.json"
+        self.door.statements.append((path, json.dumps(statement).encode(), fake_bundle(statement["pins_commit"])))
+        return path
+
+    def test_a_routes_statement_hashes_the_bytes_of_the_routes_file_and_carries_the_base_beside_it(self):
+        statement = self.routes()
+        head, file = statement["pins_commit"], "routes/prod/routes.json"
+        self.routes_statement("1", statement)
+        self.assertEqual(self.check7(self.passes()), "  OK")
+        canonical = hashlib.sha256(b'{"aliases":[],"models":[]}').hexdigest()
+        path = self.routes_statement("2", {**statement, "files": {file: canonical}})
+        self.fails(f"FAIL: {path} lists other files than the routes file at {head} give it")
+        self.door.statements.pop()
+        path = self.routes_statement("3", {**statement, "files": {**statement["files"], "routes/prod/relay.json": "0" * 64}})
+        self.fails(f"FAIL: {path} lists other files than the routes file at {head} give it")
+        self.door.statements.pop()
+        other = hashlib.sha256(b"another image").hexdigest()
+        path = self.routes_statement("4", {**statement, "base": other})
+        self.fails(f"FAIL: {path} has base {other!r}, not {self.BASE!r}")
+        self.door.statements.pop()
+        path = self.routes_statement("5", {**statement, "sequence": statement["sequence"] + 1})
+        self.fails(f"FAIL: {path} has sequence {statement['sequence'] + 1}, not the commit count {statement['sequence']} of {head}")
+
+    def test_a_routes_statement_for_an_environment_whose_routes_the_commit_does_not_hold_fails(self):
+        statement = self.routes()
+        path = self.routes_statement("1", {**statement, "environment": "dev", "files": {"routes/dev/routes.json": statement["files"]["routes/prod/routes.json"]}})
+        self.fails(f"FAIL: {path} or its bundle cannot be read:")
+        self.door.statements.pop()
+        path = self.routes_statement("2", {**statement, "environment": "staging"})
+        self.fails(f"FAIL: {path} or its bundle cannot be read: ValueError(\"the routes statement's environment is 'staging'\")")
+
+    def test_a_routes_statement_over_a_base_that_is_not_64_hex_digits_and_a_newline_fails(self):
+        for n, base in enumerate((self.BASE, self.BASE.upper() + "\n", self.BASE[:-1] + "\n", self.BASE + "\n\n", "")):
+            statement = self.routes(routes=self.ROUTES + " " * n, base=base)
+            path = self.routes_statement(str(n), {**statement, "base": self.BASE})
+            self.fails(f"FAIL: {path} or its bundle cannot be read: ValueError('routes/prod/base is not 64 lowercase hex digits and a newline')")
+            self.door.statements.pop()
+
+    def test_the_publisher_pushes_routes_and_an_admins_merged_pull_request_does_not(self):
+        self.routes()
+        self.assertEqual(self.check7(self.passes()), "  OK")
+        for file in ("routes/prod/routes.json", "routes/prod/base", "routes/dev/routes.json", "routes/README"):
+            before = self.door.head()
+            self.door.edit_state(lambda s: s["tips"].update({"morse-pins": before}))
+            self.commit(file, "changed by a person\n")
+            self.last_push(activity_type="pr_merge", actor={"login": "youdaniel"})
+            code, out = self.door.run("--ack-refused", before)
+            self.assertEqual(code, 1, out)
+            self.assertIn(f"FAIL: the pr_merge by youdaniel at {PUSHED}, from {before} to {self.door.head()}, changes {file}: a file the signer signs, which only morse-pins-publisher[bot] pushes", out)
+
+    def test_the_signer_signs_its_pins_files_and_every_path_under_routes(self):
+        for path in ("enclave_pins.json", *signer.VENDOR_FILES, "routes/prod/routes.json", "routes/prod/base", "routes/dev/routes.json", "routes/staging/x", "routes/README"):
+            self.assertTrue(signer.signs(path), path)
+        for path in ("README.md", "composes/a.yml", "routes", "routes.json", "v4/routes/prod/routes.json", ".github/workflows/sign.yml", "sigstore_trusted_root.json"):
+            self.assertFalse(signer.signs(path), path)
+
     def runs_bound(self):
         """The created>= bound of the newest read of sign.yml's runs."""
         url = [u for u in self.door.github_reads if u.startswith(check_door.signer_watch.RUNS_URL)][-1]

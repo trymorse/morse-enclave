@@ -29,7 +29,11 @@ func retiredNames(list []Retirement, rts []Route) (map[string]string, error) {
 	retired := map[string]string{}
 	for _, r := range list {
 		to, served := live(r.To)
-		_, chats := ChatOf(to.Serves)
+		redirects := false
+		switch to.Serves.(type) {
+		case Chat, Image, Video:
+			redirects = true
+		}
 		_, taken := retired[r.Name]
 		_, serves := live(r.Name)
 		switch {
@@ -41,8 +45,8 @@ func retiredNames(list []Retirement, rts []Route) (map[string]string, error) {
 			return nil, fmt.Errorf("retired name %q still serves; retire a name only once no model or alias has it", r.Name)
 		case !served:
 			return nil, fmt.Errorf("retired name %q goes to %q, which is no model id or alias", r.Name, r.To)
-		case !chats:
-			return nil, fmt.Errorf("retired name %q goes to %q, which serves no chat", r.Name, r.To)
+		case !redirects:
+			return nil, fmt.Errorf("retired name %q goes to %q, which serves no chat, image, or video", r.Name, r.To)
 		}
 		if _, err := time.Parse(time.DateOnly, r.Since); err != nil {
 			return nil, fmt.Errorf("retired name %q: since must be a date, YYYY-MM-DD", r.Name)

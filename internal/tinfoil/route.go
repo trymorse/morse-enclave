@@ -63,7 +63,7 @@ var (
 func New(baseURL, host, upstreamModel, apiKey string, pinned *http.Client, gate Gate) *Route {
 	return &Route{
 		endpoint:  upstream.Endpoint{BaseURL: baseURL, Auth: upstream.Bearer(apiKey), HTTP: pinned, Refuse: refuseSealed},
-		wellKnown: upstream.Objects(baseURL, "", pinned),
+		wellKnown: wellKnown(baseURL, pinned),
 		host:      host,
 		model:     upstreamModel,
 		gate:      gate,

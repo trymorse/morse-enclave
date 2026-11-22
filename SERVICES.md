@@ -4,12 +4,15 @@ The worker calls these services.
 
 Model and media vendors that serve the developer API, and the Morse Chat app too:
 
+- Abliteration, `api.abliteration.ai`
 - DeepInfra, `api.deepinfra.com`
+- Heabsy, `api.heabsy.com`
 - Isoquant, `api.isoquant.ai`
 - Morph, `api.morphllm.com`
 - NEAR AI, `cloud-api.near.ai`
 - Novita AI, `api.novita.ai`
 - Phala, `inference.phala.com`
+- Silk Compute, `api.silkcompute.com`
 - Tinfoil, `inference.tinfoil.sh`
 - Tinfoil's privacy filter, `pii-filter.tinfoil.sh`, which reads the text of a chat that asks for the Privacy Veil, over TLS pinned to the key its attested report binds
 - Wafer, `pass.wafer.ai`
@@ -24,7 +27,6 @@ Model and media vendors that only the Morse Chat app reaches. An API key cannot 
 - Parallel, `api.parallel.ai`
 - Runware, `api.runware.ai`
 - SpicyAPI, `api.spicyapi.ai`
-- Venice, `api.venice.ai`
 - xAI, `api.x.ai`
 
 Lookup tools:
@@ -40,7 +42,6 @@ Attestation checks for the NEAR AI, Phala and Tinfoil enclaves:
 
 - NVIDIA's attestation service, `nras.attestation.nvidia.com`
 - Intel's Provisioning Certification Service, for TDX collateral
-- AMD's Key Distribution Service, `kdsintf.amd.com`, for the VCEK that signs a Tinfoil router's SEV-SNP report
 
 Each plugin is the user's own account at its vendor. The worker calls the vendor's MCP server with the user's token, and sends the sign-in code and refresh token to the vendor's sign-in host. `internal/plugins/servers.go` pins each one's hosts:
 
