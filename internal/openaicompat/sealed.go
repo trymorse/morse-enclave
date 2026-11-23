@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"slices"
 
 	"morse/backend/internal/capped"
 	"morse/backend/internal/chat"
@@ -28,6 +29,14 @@ type Sealing interface {
 	Open(replyID string, f e2ee.ResponseField, sealed string) ([]byte, error)
 }
 
+// why: NEAR seals tool fields only on version 3, which binds each field's label and the client key into its seal
+// (nearai/inference-proxy docs/e2ee.md), so a call with tools is sealed and opened on that version's sealing.
+type ToolSealing interface {
+	Sealing
+	WithTools() ToolSealing
+	SealField(label string, plaintext []byte) (string, error)
+}
+
 type SealedSender struct {
 	upstream.Endpoint
 	Sealer Sealer
@@ -37,7 +46,7 @@ var _ Sender = SealedSender{}
 
 func (s SealedSender) Stream(ctx context.Context, body []byte, header http.Header, each func([]byte) (bool, error)) error {
 	return s.Sealer.Seal(func(seal Sealing) error {
-		resp, err := s.open(ctx, body, accepting(header, "text/event-stream"), seal)
+		resp, seal, err := s.open(ctx, body, accepting(header, "text/event-stream"), seal)
 		if err != nil {
 			return err
 		}
@@ -59,7 +68,7 @@ func (s SealedSender) Stream(ctx context.Context, body []byte, header http.Heade
 func (s SealedSender) Complete(ctx context.Context, body []byte, header http.Header) ([]byte, error) {
 	var opened []byte
 	err := s.Sealer.Seal(func(seal Sealing) error {
-		resp, err := s.open(ctx, body, accepting(header, "application/json"), seal)
+		resp, seal, err := s.open(ctx, body, accepting(header, "application/json"), seal)
 		if err != nil {
 			return err
 		}
@@ -74,24 +83,24 @@ func (s SealedSender) Complete(ctx context.Context, body []byte, header http.Hea
 	return opened, err
 }
 
-func (s SealedSender) open(ctx context.Context, body []byte, header http.Header, seal Sealing) (*http.Response, error) {
+func (s SealedSender) open(ctx context.Context, body []byte, header http.Header, seal Sealing) (*http.Response, Sealing, error) {
 	if err := upstream.CheckEgress(ctx, body); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	sealed, err := sealBody(body, seal)
+	sealed, seal, err := sealBody(body, seal)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	seal.Forward(header.Set)
 	resp, err := s.Endpoint.Open(upstream.WithoutEgress(ctx), upstream.Request{Method: http.MethodPost, Path: ChatCompletionsPath, Header: header, Body: sealed})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if err := seal.Confirm(resp.Header.Get); err != nil {
 		resp.Body.Close()
-		return nil, brokenSeal(err.Error())
+		return nil, nil, brokenSeal(err.Error())
 	}
-	return resp, nil
+	return resp, seal, nil
 }
 
 type UnsealableField struct{ Name string }
@@ -105,11 +114,12 @@ var (
 		"stream": true, "stream_options": true, "temperature": true, "top_p": true, "frequency_penalty": true,
 		"presence_penalty": true, "seed": true, "n": true, "reasoning_effort": true, "provider": true}
 	sealableRoles = map[string]bool{"system": true, "user": true, "assistant": true}
+	textTurnKeys  = map[string]bool{"role": true, "content": true}
 )
 
-func Unsealable(req *chat.Request) error {
+func Unsealable(req *chat.Request, tools bool) error {
 	for _, field := range req.FieldNames() {
-		if !sealableFields[field] {
+		if !sealableFields[field] && !(tools && sealableToolField(req, field)) {
 			return &UnsealableField{Name: field}
 		}
 	}
@@ -118,19 +128,65 @@ func Unsealable(req *chat.Request) error {
 		return err
 	}
 	for _, m := range msgs {
-		if !sealableRoles[m.Role] {
-			return &UnsealableField{Name: "messages.role"}
-		}
-		for _, key := range m.Keys() {
-			if key != "role" && key != "content" {
-				return &UnsealableField{Name: "messages." + key}
-			}
-		}
-		if _, ok := contentText(m); !ok {
-			return &UnsealableField{Name: "messages.content"}
+		if err := unsealableMessage(m, tools); err != nil {
+			return err
 		}
 	}
 	return nil
+}
+
+func sealableToolField(req *chat.Request, field string) bool {
+	raw, _ := req.Field(field)
+	switch field {
+	case "tools":
+		return nearseal.Tools(raw, nearseal.Plain)
+	case "tool_choice":
+		return nearseal.IsToolChoice(raw)
+	}
+	return false
+}
+
+func unsealableMessage(m chat.Message, tools bool) error {
+	allowed := textTurnKeys
+	switch {
+	case tools && m.Role == "tool":
+		allowed = nearseal.ToolTurnKeys
+	case tools && m.Role == "assistant":
+		allowed = nearseal.CallingKeys
+	case !sealableRoles[m.Role]:
+		return &UnsealableField{Name: "messages.role"}
+	}
+	for _, key := range m.Keys() {
+		if !allowed[key] {
+			return &UnsealableField{Name: "messages." + key}
+		}
+	}
+	if m.Role == "tool" && !nearseal.IsCallID(m.Raw("tool_call_id")) {
+		return &UnsealableField{Name: "messages.tool_call_id"}
+	}
+	if calls := m.Raw("tool_calls"); calls != nil {
+		if !nearseal.Calls(calls, nearseal.Plain) {
+			return &UnsealableField{Name: "messages.tool_calls"}
+		}
+		if content := m.Raw("content"); content == nil || string(content) == "null" {
+			return nil
+		}
+	}
+	if _, ok := contentText(m); !ok {
+		return &UnsealableField{Name: "messages.content"}
+	}
+	return nil
+}
+
+func carriesTools(req *chat.Request) bool {
+	if _, ok := req.Field("tools"); ok {
+		return true
+	}
+	if _, ok := req.Field("tool_choice"); ok {
+		return true
+	}
+	msgs, _ := req.Messages()
+	return slices.ContainsFunc(msgs, func(m chat.Message) bool { return m.Role == "tool" || m.Raw("tool_calls") != nil })
 }
 
 func LooksSealed(req *chat.Request) bool {
@@ -154,35 +210,84 @@ func contentText(m chat.Message) (string, bool) {
 }
 
 type sealedMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role       string          `json:"role"`
+	Content    *string         `json:"content"`
+	ToolCallID json.RawMessage `json:"tool_call_id,omitempty"`
+	ToolCalls  json.RawMessage `json:"tool_calls,omitempty"`
 }
 
-func sealBody(body []byte, seal Sealing) ([]byte, error) {
+func sealBody(body []byte, seal Sealing) ([]byte, Sealing, error) {
 	req, err := chat.ParseRequest(bytes.NewReader(body))
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	if err := Unsealable(req); err != nil {
-		return nil, brokenSeal(err.Error())
+	fields, sealsFields := seal.(ToolSealing)
+	if err := Unsealable(req, sealsFields); err != nil {
+		return nil, nil, brokenSeal(err.Error())
+	}
+	set := map[string]json.RawMessage{}
+	if sealsFields && carriesTools(req) {
+		fields = fields.WithTools()
+		seal = fields
+		if raw, ok := req.Field("tools"); ok {
+			if set["tools"], err = nearseal.SealTools(raw, fields.SealField); err != nil {
+				return nil, nil, err
+			}
+		}
+	} else {
+		fields = nil
 	}
 	msgs, err := req.Messages()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	sealed := make([]sealedMessage, len(msgs))
 	for i, m := range msgs {
+		sealed[i] = sealedMessage{Role: m.Role, ToolCallID: m.Raw("tool_call_id")}
 		text, _ := contentText(m)
-		if sealed[i].Content, err = seal.SealContent(i, text); err != nil {
-			return nil, err
+		if calls := m.Raw("tool_calls"); calls != nil {
+			if sealed[i].ToolCalls, err = nearseal.SealCalls(calls, fields.SealField); err != nil {
+				return nil, nil, err
+			}
+			if text == "" {
+				continue
+			}
 		}
-		sealed[i].Role = m.Role
+		content, err := seal.SealContent(i, text)
+		if err != nil {
+			return nil, nil, err
+		}
+		sealed[i].Content = &content
 	}
-	messages, err := json.Marshal(sealed)
-	if err != nil {
-		return nil, err
+	if set["messages"], err = json.Marshal(sealed); err != nil {
+		return nil, nil, err
 	}
-	return req.EncodeOnly(req.FieldNames(), map[string]json.RawMessage{"messages": messages}), nil
+	if !sealedThroughout(set, seal) {
+		return nil, nil, brokenSeal("a field it sealed holds no ciphertext")
+	}
+	return req.EncodeOnly(req.FieldNames(), set), seal, nil
+}
+
+func sealedThroughout(set map[string]json.RawMessage, seal Sealing) bool {
+	ciphertext := func(_ string, raw json.RawMessage) bool { return seal.IsCiphertext(raw) }
+	if tools, ok := set["tools"]; ok && !nearseal.Tools(tools, ciphertext) {
+		return false
+	}
+	var msgs []sealedMessage
+	if json.Unmarshal(set["messages"], &msgs) != nil {
+		return false
+	}
+	for _, m := range msgs {
+		switch {
+		case m.ToolCalls != nil && !nearseal.Calls(m.ToolCalls, ciphertext):
+			return false
+		case m.Content == nil && m.ToolCalls == nil:
+			return false
+		case m.Content != nil && !seal.IsCiphertext(jsonString(*m.Content)):
+			return false
+		}
+	}
+	return true
 }
 
 type opener struct {
@@ -273,6 +378,10 @@ func (o *opener) openPart(raw json.RawMessage, id string, choice int, part strin
 	if err := json.Unmarshal(raw, &fields); err != nil || fields == nil {
 		return json.RawMessage("null"), err
 	}
+	// why: NEAR writes "role":null on every streamed delta of a chat that carries tools, which names no role.
+	if string(fields["role"]) == "null" {
+		delete(fields, "role")
+	}
 	opened, err := kept(fields, openedPartFields)
 	if err != nil {
 		return nil, err
@@ -283,6 +392,10 @@ func (o *opener) openPart(raw json.RawMessage, id string, choice int, part strin
 		case !ok:
 		case isEmpty(value):
 			opened[name] = value
+		case name == "tool_calls":
+			if opened[name], err = o.openCalls(value, id, choice, part); err != nil {
+				return nil, err
+			}
 		default:
 			var sealed string
 			json.Unmarshal(value, &sealed)
@@ -293,6 +406,44 @@ func (o *opener) openPart(raw json.RawMessage, id string, choice int, part strin
 			}
 			opened[name], _ = json.Marshal(string(plain))
 		}
+	}
+	return json.Marshal(opened)
+}
+
+// why: NEAR sends a call's index, id, and type in the clear and seals its name and each fragment of its arguments.
+func (o *opener) openCalls(raw json.RawMessage, id string, choice int, part string) (json.RawMessage, error) {
+	var calls []map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &calls); err != nil {
+		return nil, brokenSeal("tool_calls is not a list of calls")
+	}
+	opened := make([]map[string]json.RawMessage, len(calls))
+	for i, call := range calls {
+		opened[i] = map[string]json.RawMessage{}
+		for _, key := range [...]string{"index", "id", "type"} {
+			if value, ok := call[key]; ok {
+				opened[i][key] = value
+			}
+		}
+		var fn map[string]json.RawMessage
+		if json.Unmarshal(call["function"], &fn) != nil || fn == nil {
+			continue
+		}
+		openedFn := map[string]json.RawMessage{}
+		for key, value := range fn {
+			if isEmpty(value) {
+				openedFn[key] = value
+				continue
+			}
+			var sealed string
+			json.Unmarshal(value, &sealed)
+			f := e2ee.ResponseField{Choice: choice, Part: part, Name: "tool_calls.function." + key}
+			plain, err := o.seal.Open(id, f, sealed)
+			if err != nil {
+				return nil, brokenSeal(fmt.Sprintf("%s did not open: %v", f, err))
+			}
+			openedFn[key], _ = json.Marshal(string(plain))
+		}
+		opened[i]["function"], _ = json.Marshal(openedFn)
 	}
 	return json.Marshal(opened)
 }

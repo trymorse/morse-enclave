@@ -123,6 +123,9 @@ func (r *Route) SealPrompt(sealed chat.E2EE, prompt string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if params, ok := sealed.(wire.Params); ok {
+		return params.Seal(wire.LabelContent, []byte(prompt))
+	}
 	return wire.Seal(key[:], []byte(prompt))
 }
 
@@ -151,8 +154,19 @@ type sealing struct {
 	client ed25519.PrivateKey
 }
 
+var _ openaicompat.ToolSealing = sealing{}
+
 func (s sealing) SealContent(_ int, plaintext string) (string, error) {
-	return wire.Seal(s.Model, []byte(plaintext))
+	return s.Params.Seal(wire.LabelContent, []byte(plaintext))
+}
+
+func (s sealing) WithTools() openaicompat.ToolSealing {
+	s.V3 = true
+	return s
+}
+
+func (s sealing) SealField(label string, plaintext []byte) (string, error) {
+	return s.Params.Seal(label, plaintext)
 }
 
 func (s sealing) Open(_ string, _ e2ee.ResponseField, sealed string) ([]byte, error) {

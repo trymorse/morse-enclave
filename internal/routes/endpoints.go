@@ -26,7 +26,7 @@ var EndpointModelFields = []string{"app_only", "input_modalities", "reasoning_ef
 
 // FallbackFields are the fields in which a later e2ee endpoint of a model may differ from the first, whose fallback it
 // is.
-var FallbackFields = []string{"attester", "base_url", "api_key_env", "provider_name", "quantization"}
+var FallbackFields = []string{"attester", "base_url", "api_key_env", "provider_name", "quantization", "native_tools"}
 
 // RelayFields are the keys that live in relay.json, which routes.json refuses.
 var RelayFields = []string{"cost", "role", "spread_bps"}

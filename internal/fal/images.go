@@ -47,6 +47,15 @@ var seedreamSizes = media.SizeTable(map[string][2]int{
 	"21:9 2k": {2016, 864}, "4:5 2k": {1632, 2048}, "5:4 2k": {2048, 1632},
 })
 
+var maiSizes = media.SizeTable(map[string][2]int{
+	"1:1 1k": {1024, 1024}, "16:9 1k": {1376, 768}, "9:16 1k": {768, 1376}, "4:3 1k": {1152, 864},
+	"3:4 1k": {864, 1152}, "3:2 1k": {1248, 832}, "2:3 1k": {832, 1248},
+	"21:9 1k": {1792, 768}, "4:5 1k": {896, 1120}, "5:4 1k": {1120, 896},
+	"1:1 2k": {2048, 2048}, "16:9 2k": {2048, 1152}, "9:16 2k": {1152, 2048}, "4:3 2k": {2048, 1536},
+	"3:4 2k": {1536, 2048}, "3:2 2k": {1920, 1280}, "2:3 2k": {1280, 1920},
+	"21:9 2k": {2016, 864}, "4:5 2k": {1632, 2048}, "5:4 2k": {2048, 1632},
+})
+
 // why: each unit is fal's price for one of its billable units, from each model page's endpointBilling on 2026-10-15.
 var imageModels = map[string]imageModel{
 	"fal-ai/flux-2-max": {
@@ -63,6 +72,9 @@ var imageModels = map[string]imageModel{
 	},
 	"alibaba/qwen-image-3/text-to-image": {
 		edit: "alibaba/qwen-image-3/edit", ImageSpec: media.QwenImage3, dims: media.ImageDims{Base: media.StandardSizes}, unit: 10_000, numImages: true, format: "jpeg",
+	},
+	"microsoft/mai-image-2.7/text-to-image": {
+		edit: "microsoft/mai-image-2.7/edit", ImageSpec: media.MAIImage27, dims: media.ImageDims{Base: maiSizes}, unit: 1_000_000, format: "jpeg",
 	},
 	"fal-ai/z-image/turbo": {
 		ImageSpec: media.ZImageTurbo, dims: media.ImageDims{Base: fluxSizes}, unit: 5_000, numImages: true, format: "jpeg",

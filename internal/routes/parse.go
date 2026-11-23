@@ -391,30 +391,42 @@ func samePromiseAtATier(served []Route) error {
 		id   catalog.ModelID
 		tier catalog.Tier
 	}
-	first := map[at]Route{}
+	first, promised := map[at]Route{}, map[at]Route{}
+	for _, rt := range served {
+		if _, chats := ChatOf(rt.Serves); !chats || rt.Tier.Sealed() {
+			continue
+		}
+		k := at{rt.ID, rt.Tier}
+		if _, seen := first[k]; !seen {
+			first[k] = rt
+		}
+		if p, seen := promised[k]; !seen || p.OnBehalfOf != "" && rt.OnBehalfOf == "" {
+			promised[k] = rt
+		}
+	}
 	for _, rt := range served {
 		c, chats := ChatOf(rt.Serves)
 		if !chats || rt.Tier.Sealed() {
 			continue
 		}
-		f, seen := first[at{rt.ID, rt.Tier}]
-		if !seen {
-			first[at{rt.ID, rt.Tier}] = rt
-			continue
-		}
+		k := at{rt.ID, rt.Tier}
+		f, p := first[k], promised[k]
 		fc, _ := ChatOf(f.Serves)
-		var differs string
+		pc, _ := ChatOf(p.Serves)
+		against, differs := f.Endpoint, ""
 		switch {
-		case rt.Retention != f.Retention:
+		case rt.Endpoint != f.Endpoint && rt.Retention != f.Retention:
 			differs = "retention, which GET /v1/models shows"
-		case c.DefaultReasoningEffort != fc.DefaultReasoningEffort:
+		case rt.Endpoint != f.Endpoint && c.DefaultReasoningEffort != fc.DefaultReasoningEffort:
 			differs = "default_reasoning_effort, the effort a request that names none reasons at"
-		case c.DefaultMaxTokens != fc.DefaultMaxTokens:
-			differs = "default_max_tokens, the output limit a request that names none is held for and sent"
+		case rt.OnBehalfOf != "" && c.DefaultMaxTokens != min(pc.DefaultMaxTokens, c.MaxOutputTokens):
+			return fmt.Errorf("endpoint %q serves model %q at tier %s on behalf of endpoint %q with default_max_tokens %d; give it %d, endpoint %q's %d cut to its max_output_tokens %d", rt.Endpoint, rt.ID, rt.Tier, rt.OnBehalfOf, c.DefaultMaxTokens, min(pc.DefaultMaxTokens, c.MaxOutputTokens), p.Endpoint, pc.DefaultMaxTokens, c.MaxOutputTokens)
+		case rt.OnBehalfOf == "" && c.DefaultMaxTokens != pc.DefaultMaxTokens:
+			against, differs = p.Endpoint, "default_max_tokens, the output limit a request that names none is held for and sent"
 		default:
 			continue
 		}
-		return fmt.Errorf("endpoints %q and %q serve model %q at tier %s and differ in %s; a chat fails over between them, so give them the same value", f.Endpoint, rt.Endpoint, rt.ID, rt.Tier, differs)
+		return fmt.Errorf("endpoints %q and %q serve model %q at tier %s and differ in %s; a chat fails over between them, so give them the same value", against, rt.Endpoint, rt.ID, rt.Tier, differs)
 	}
 	return nil
 }

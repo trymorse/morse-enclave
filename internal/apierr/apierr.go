@@ -156,6 +156,7 @@ var vendorCodes = map[string]Error{
 	"bio_policy":                     ErrContentFilter,
 	"misalignment_policy_violation":  ErrContentFilter,
 	"image_content_policy_violation": ErrContentFilter,
+	"moderation_blocked":             ErrContentFilter,
 	"rate_limit_exceeded":            ErrUpstreamBusy,
 	"rate_limit_error":               ErrUpstreamBusy,
 	"server_is_overloaded":           ErrUpstreamBusy,

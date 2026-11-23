@@ -18,7 +18,9 @@ const (
 	HeaderVersion     = "X-Encryption-Version"
 	HeaderAllFields   = "X-Encrypt-All-Fields"
 	Version           = "2"
+	VersionV3         = "3"
 	Protocol          = "near-ed25519-v2"
+	ProtocolV3        = "near-ed25519-v3"
 )
 
 var RequestHeaders = [...]string{HeaderSigningAlgo, HeaderClientKey, HeaderModelKey, HeaderVersion, HeaderAllFields}
@@ -26,13 +28,14 @@ var RequestHeaders = [...]string{HeaderSigningAlgo, HeaderClientKey, HeaderModel
 type Params struct {
 	Client ed25519.PublicKey
 	Model  ed25519.PublicKey
+	V3     bool
 }
 
 var (
 	ErrHeaderMissing  = &e2ee.Error{Type: "e2ee_header_missing", Message: "NEAR E2EE needs X-Signing-Algo, X-Client-Pub-Key, X-Model-Pub-Key, X-Encryption-Version, and X-Encrypt-All-Fields."}
 	ErrInvalidAlgo    = &e2ee.Error{Type: "e2ee_invalid_algo", Message: "X-Signing-Algo must be ed25519. This proxy does not serve NEAR's ecdsa encryption."}
-	ErrInvalidVersion = &e2ee.Error{Type: "e2ee_invalid_version", Message: "X-Encryption-Version must be 2. Without it NEAR selects version 1, which this proxy does not serve."}
-	ErrPartialFields  = &e2ee.Error{Type: "e2ee_all_fields_required", Message: "X-Encrypt-All-Fields must be true, or NEAR leaves tool calls, refusals, and logprobs in plaintext."}
+	ErrInvalidVersion = &e2ee.Error{Type: "e2ee_invalid_version", Message: "X-Encryption-Version must be 2 or 3. Without it NEAR selects version 1, which this proxy does not serve."}
+	ErrPartialFields  = &e2ee.Error{Type: "e2ee_all_fields_required", Message: "X-Encrypt-All-Fields must be true, or on version 2 NEAR leaves tool calls, refusals, and logprobs in plaintext. Version 3 may leave it out."}
 	ErrInvalidKey     = &e2ee.Error{Type: "e2ee_invalid_public_key", Message: "X-Client-Pub-Key and X-Model-Pub-Key must each be an ed25519 public key in 64 hexadecimal characters."}
 )
 
@@ -41,7 +44,7 @@ var (
 // bytes forwarded.
 func PromptComment(sealed string) []byte { return []byte(": wm-prompt " + sealed + "\n") }
 
-var Scheme = &chat.Scheme{Name: Protocol, Version: Version, Headers: []string{HeaderSigningAlgo, HeaderClientKey, HeaderModelKey, HeaderVersion, HeaderAllFields}, Parse: parse, ErrHeaderMissing: ErrHeaderMissing, Vendor: "NEAR", ProviderRule: "is forwarded verbatim and may carry no provider field"}
+var Scheme = &chat.Scheme{Name: Protocol, Version: Version, Protocols: []string{Protocol, ProtocolV3}, Headers: []string{HeaderSigningAlgo, HeaderClientKey, HeaderModelKey, HeaderVersion, HeaderAllFields}, Parse: parse, ErrHeaderMissing: ErrHeaderMissing, Vendor: "NEAR", ProviderRule: "is forwarded verbatim and may carry no provider field"}
 
 func parse(get func(name string) string) (chat.E2EE, bool, error) {
 	params, sealed, err := ParseHeaders(get)
@@ -55,10 +58,11 @@ func ParseHeaders(get func(name string) string) (params Params, sealed bool, err
 	if !strings.EqualFold(get(HeaderSigningAlgo), "ed25519") {
 		return Params{}, true, ErrInvalidAlgo
 	}
-	if get(HeaderVersion) != Version {
+	v3 := get(HeaderVersion) == VersionV3
+	if !v3 && get(HeaderVersion) != Version {
 		return Params{}, true, ErrInvalidVersion
 	}
-	if !strings.EqualFold(get(HeaderAllFields), "true") {
+	if all := get(HeaderAllFields); !strings.EqualFold(all, "true") && !(v3 && all == "") {
 		return Params{}, true, ErrPartialFields
 	}
 	if get(HeaderClientKey) == "" || get(HeaderModelKey) == "" {
@@ -69,14 +73,37 @@ func ParseHeaders(get func(name string) string) (params Params, sealed bool, err
 	if !clientOK || !modelOK {
 		return Params{}, true, ErrInvalidKey
 	}
-	return Params{Client: client, Model: model}, true, nil
+	return Params{Client: client, Model: model, V3: v3}, true, nil
 }
+
+func (p Params) version() string {
+	if p.V3 {
+		return VersionV3
+	}
+	return Version
+}
+
+func (p Params) Seal(label string, plaintext []byte) (string, error) {
+	if !p.V3 {
+		return seal(p.Model, plaintext, nil)
+	}
+	return seal(p.Model, plaintext, requestAAD(p.Client, label))
+}
+
+func (p Params) Open(recipient ed25519.PrivateKey, label, sealed string) ([]byte, error) {
+	if !p.V3 {
+		return open(recipient, sealed, nil)
+	}
+	return open(recipient, sealed, requestAAD(p.Client, label))
+}
+
+func (p Params) SealsTools() bool { return p.V3 }
 
 func (p Params) Forward(set func(name, value string)) {
 	set(HeaderSigningAlgo, "ed25519")
 	set(HeaderClientKey, hex.EncodeToString(p.Client))
 	set(HeaderModelKey, hex.EncodeToString(p.Model))
-	set(HeaderVersion, Version)
+	set(HeaderVersion, p.version())
 	set(HeaderAllFields, "true")
 }
 

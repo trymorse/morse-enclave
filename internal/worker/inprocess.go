@@ -38,6 +38,7 @@ type InProcess struct {
 	unpinned       func() []attested.UnpinnedRelease
 	vendorPins     func() *VendorPinsLag
 	vendorPinsMode string
+	routesData     func() *RoutesData
 	now            func() time.Time
 	keepaliveEvery time.Duration
 	videoSubmit    time.Duration
@@ -87,6 +88,7 @@ type Config struct {
 	Unpinned       func() []attested.UnpinnedRelease
 	VendorPins     func() *VendorPinsLag
 	VendorPinsMode string
+	RoutesData     func() *RoutesData
 	PrivacyVeil    *PrivacyVeil
 	Clips          *SealedClips
 }
@@ -102,7 +104,7 @@ func NewInProcess(cfg Config) (*InProcess, error) {
 		searches: map[string]web.Searcher{}, fetches: map[string]web.Fetcher{}, researchers: map[string]research.Researcher{}, transcribers: map[string]transcriber{},
 		speakers:  map[string]speech.Speaker{},
 		endpoints: map[string]catalog.EndpointID{},
-		lookup:    cfg.Lookup, plugins: cfg.Plugins, reports: cfg.Reports, unpinned: cfg.Unpinned, vendorPins: cfg.VendorPins, vendorPinsMode: cfg.VendorPinsMode, privacyVeil: cfg.PrivacyVeil, clips: cfg.Clips,
+		lookup:    cfg.Lookup, plugins: cfg.Plugins, reports: cfg.Reports, unpinned: cfg.Unpinned, vendorPins: cfg.VendorPins, vendorPinsMode: cfg.VendorPinsMode, routesData: cfg.RoutesData, privacyVeil: cfg.PrivacyVeil, clips: cfg.Clips,
 		now: cfg.Now, keepaliveEvery: cmp.Or(cfg.Keepalive, keepalive), videoSubmit: cmp.Or(cfg.VideoSubmit, videoSubmitTimeout), proofBudget: cmp.Or(cfg.ProofBudget, proofBudget), opened: map[Handle]*entry{},
 		tiers: map[string]catalog.Tier{}, runs: map[Handle]*taskRun{}, taskLife: taskrun.RunLife,
 	}
@@ -179,6 +181,9 @@ func (w *InProcess) Unpinned(context.Context) (Unpinned, error) {
 	}
 	if w.vendorPins != nil {
 		u.VendorPins = w.vendorPins()
+	}
+	if w.routesData != nil {
+		u.RoutesData = w.routesData()
 	}
 	return u, nil
 }

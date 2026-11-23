@@ -67,6 +67,7 @@ type chatRoute struct {
 	HidesReasoning         bool        `json:"hides_reasoning"`
 	SummarizesReasoning    bool        `json:"summarizes_reasoning"`
 	Tools                  *bool       `json:"tools"`
+	NativeTools            bool        `json:"native_tools"`
 	Characters             *bool       `json:"characters"`
 	ResponseFormats        []string    `json:"response_formats"`
 	HiddenReasoningTPS     int         `json:"hidden_reasoning_tps"`
@@ -107,7 +108,8 @@ type imagePrice struct {
 }
 
 type videoPrice struct {
-	HoldMicrosPerSecond *money.Micros `json:"hold_micros_per_second"`
+	HoldMicrosPerSecond             *money.Micros           `json:"hold_micros_per_second"`
+	HoldMicrosPerSecondByResolution map[string]money.Micros `json:"hold_micros_per_second_by_resolution"`
 }
 
 type callPrice struct {

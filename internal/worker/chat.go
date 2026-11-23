@@ -209,7 +209,7 @@ func (w *InProcess) openChat(o Opening, d dialect.Dialect, compaction bool) (Adm
 		err = route.Upstream.admit(oc, o.Cast)
 	}
 	if err == nil && route.onBehalf {
-		err = unsealableRefusal(openaicompat.Unsealable(oc.call.Request))
+		err = unsealableRefusal(openaicompat.Unsealable(oc.call.Request, route.NativeTools), route.NativeTools)
 	}
 	if err == nil && veilAsk != nil {
 		oc.veil, err = w.planVeil(o, *veilAsk, req)
@@ -588,16 +588,27 @@ var (
 // withoutUnsealable drops the on-behalf endpoints from a request they cannot carry through their seal, and refuses it only
 // when no endpoint is left.
 func withoutUnsealable(req *chat.Request) narrowing {
-	err := openaicompat.Unsealable(req)
-	return keeping(err != nil, func(r chatRoute) bool { return !r.seals }, func([]chatRoute) error { return unsealableRefusal(err) })
+	plain, tools := openaicompat.Unsealable(req, false), openaicompat.Unsealable(req, true)
+	sealing := func(r chatRoute) bool { return r.seals || r.onBehalf }
+	carries := func(r chatRoute) bool { return !sealing(r) || r.NativeTools && tools == nil }
+	return keeping(plain != nil, carries, func(routes []chatRoute) error {
+		if tools != nil && slices.ContainsFunc(routes, func(r chatRoute) bool { return sealing(r) && r.NativeTools }) {
+			return unsealableRefusal(tools, true)
+		}
+		return unsealableRefusal(plain, false)
+	})
 }
 
-func unsealableRefusal(err error) error {
+func unsealableRefusal(err error, tools bool) error {
 	unsealable, ok := errors.AsType[*openaicompat.UnsealableField](err)
 	if !ok {
 		return err
 	}
-	return apierr.Invalid(http.StatusBadRequest, "unsealable_request", "Field "+unsealable.Name+" is refused in a plaintext request to an e2ee model, whose vendor's encryption would carry it in the clear. Send only system, user, and assistant messages with string content, or seal the request yourself.")
+	advice := "Send only system, user, and assistant messages with string content, or seal the request yourself."
+	if tools {
+		advice = "Send messages with string content, tools with only a name, a description, and parameters, tool_choice auto, none, or required, and tool call ids of letters, digits, _ and -, or seal the request yourself."
+	}
+	return apierr.Invalid(http.StatusBadRequest, "unsealable_request", "Field "+unsealable.Name+" is refused in a plaintext request to an e2ee model, whose vendor's encryption would carry it in the clear. "+advice)
 }
 
 func (Plain) admit(o *openedChat, cast chat.Cast) error {

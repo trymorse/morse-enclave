@@ -218,6 +218,8 @@ func (p Params) IsCiphertext(rawJSON []byte) bool { return p.suite.IsCiphertext(
 
 func (Params) ConfirmsEncryption() bool { return true }
 
+func (Params) SealsTools() bool { return false }
+
 func decodeKey(value string) ([]byte, error) {
 	value = strings.TrimPrefix(value, "0x")
 	return hex.DecodeString(value)

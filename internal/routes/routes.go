@@ -23,7 +23,6 @@ const (
 	ProviderFal
 	ProviderParallel
 	ProviderGemini
-	ProviderVenice
 	ProviderIsoquant
 	ProviderWafer
 	ProviderNovita
@@ -34,6 +33,7 @@ const (
 	ProviderHeabsy
 	ProviderSilk
 	ProviderAbliteration
+	ProviderOpenAIImages
 )
 
 var providerNames = enum.Names[Provider]{
@@ -45,7 +45,6 @@ var providerNames = enum.Names[Provider]{
 	ProviderFal:             "fal",
 	ProviderParallel:        "parallel",
 	ProviderGemini:          "gemini",
-	ProviderVenice:          "venice",
 	ProviderIsoquant:        "isoquant",
 	ProviderWafer:           "wafer",
 	ProviderNovita:          "novita",
@@ -56,6 +55,7 @@ var providerNames = enum.Names[Provider]{
 	ProviderHeabsy:          "heabsy",
 	ProviderSilk:            "silk",
 	ProviderAbliteration:    "abliteration",
+	ProviderOpenAIImages:    "openai-images",
 }
 
 func (p Provider) String() string { return providerNames.String(p) }

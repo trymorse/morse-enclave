@@ -113,6 +113,8 @@ type VideoSpec struct {
 	LastFrame    bool
 }
 
+func (s VideoSpec) Spec() VideoSpec { return s }
+
 func (s VideoSpec) Ratios() []string {
 	if len(s.AspectRatios) > 0 {
 		return s.AspectRatios

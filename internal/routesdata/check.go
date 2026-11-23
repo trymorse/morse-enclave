@@ -7,7 +7,11 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"morse/backend/internal/pinsig"
 )
+
+var ErrNoTime = errors.New("routesdata: no trusted time")
 
 type Kind uint8
 
@@ -52,6 +56,49 @@ func (c Checker) Check(ctx context.Context) {
 	c.Observe(event)
 }
 
+const (
+	RecheckEvery   = 5 * time.Minute
+	RecheckTimeout = 30 * time.Second
+)
+
+type Recheck struct {
+	Every    time.Duration
+	Timeout  time.Duration
+	Panicked func(recovered any)
+}
+
+func (c Checker) Recheck(ctx context.Context, r Recheck) {
+	if c.Mode != Log {
+		return
+	}
+	tick := time.NewTicker(r.Every)
+	defer tick.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+			c.checkWithin(ctx, r)
+		}
+	}
+}
+
+func (c Checker) checkWithin(ctx context.Context, r Recheck) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			r.Panicked(recovered)
+		}
+	}()
+	ctx, cancel := context.WithTimeout(ctx, r.Timeout)
+	defer cancel()
+	c.Check(ctx)
+}
+
+func (e Event) Same(other Event) bool {
+	return e.Kind == other.Kind && e.Refusal() == other.Refusal() && e.SameAsBoot == other.SameAsBoot &&
+		e.Offered.Sequence == other.Offered.Sequence && e.Offered.StatementSHA256 == other.Offered.StatementSHA256 && e.Offered.FileSHA256 == other.Offered.FileSHA256
+}
+
 func (c Checker) admit(ctx context.Context) (Admitted, error) {
 	offer, err := c.Fetch(ctx)
 	if err != nil {
@@ -59,7 +106,63 @@ func (c Checker) admit(ctx context.Context) (Admitted, error) {
 	}
 	now, err := c.Now(ctx)
 	if err != nil {
-		return Admitted{}, fmt.Errorf("routesdata: no trusted time: %w", err)
+		return Admitted{}, fmt.Errorf("%w: %w", ErrNoTime, err)
 	}
 	return c.Image.Admit(offer, now)
+}
+
+const (
+	OutcomeNothingOffered = "nothing_offered"
+	OutcomeRefused        = "refused"
+	OutcomeWouldLoad      = "would_load"
+)
+
+var Outcomes = []string{OutcomeNothingOffered, OutcomeRefused, OutcomeWouldLoad}
+
+func (e Event) Outcome() string {
+	switch e.Kind {
+	case NothingOffered:
+		return OutcomeNothingOffered
+	case WouldLoad:
+		return OutcomeWouldLoad
+	}
+	return OutcomeRefused
+}
+
+var refusals = []struct {
+	name string
+	errs []error
+}{
+	{"not_an_offer", []error{ErrNotOffer}},
+	{"size", []error{ErrSize}},
+	{"no_trusted_time", []error{ErrNoTime}},
+	{"signature", []error{pinsig.ErrBundle, pinsig.ErrLog, pinsig.ErrBody, pinsig.ErrCertificate, pinsig.ErrSignature, pinsig.ErrIdentity}},
+	{"statement", []error{pinsig.ErrStatement}},
+	{"not_for_this_image_or_too_old", []error{pinsig.ErrAdmit}},
+	{"outside_the_images_bounds", []error{ErrBounds}},
+	{"does_not_load", []error{ErrLoad}},
+}
+
+const RefusalUnreadable = "host_unreadable"
+
+func Refusals() []string {
+	names := []string{RefusalUnreadable}
+	for _, r := range refusals {
+		names = append(names, r.name)
+	}
+	return names
+}
+
+func (e Event) Refusal() string {
+	if e.Kind != Refused {
+		return ""
+	}
+	for _, r := range refusals {
+		for _, err := range r.errs {
+			if errors.Is(e.Err, err) {
+				return r.name
+			}
+		}
+	}
+	return RefusalUnreadable
 }

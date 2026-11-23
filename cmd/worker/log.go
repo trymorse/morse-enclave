@@ -51,6 +51,7 @@ const (
 	routesDataNothingOffered
 	routesDataRefused
 	routesDataWouldLoad
+	routesDataRecheckPanicked
 	privacyVeilUnavailable
 	privacyVeilRefused
 	privacyFilterLabelUnknown
@@ -63,32 +64,33 @@ var messages = [...]struct {
 	text  string
 	level slog.Level
 }{
-	configInvalid:            {"config invalid", slog.LevelError},
-	listening:                {"listening", slog.LevelInfo},
-	shuttingDown:             {"shutting down", slog.LevelInfo},
-	serveFailed:              {"serve failed", slog.LevelError},
-	routeFailed:              {"route failed", slog.LevelWarn},
-	lookupVendorBusy:         {"lookup vendor busy", slog.LevelWarn},
-	vendorRefused:            {"vendor refused", slog.LevelWarn},
-	upstreamErrorChunk:       {"upstream error chunk", slog.LevelWarn},
-	unknownReplyField:        {"e2ee reply carried a field the gate does not know", slog.LevelWarn},
-	vendorUsageMissing:       {"sealed reply ended with no vendor usage, billed on its frames", slog.LevelWarn},
-	researchUnwrapped:        {"parallel research report unwrapped from its answer object", slog.LevelWarn},
-	upstreamAttested:         {"upstream attested", slog.LevelInfo},
-	upstreamDrifted:          {"upstream attested with drift", slog.LevelWarn},
-	upstreamRefused:          {"upstream refused", slog.LevelWarn},
-	upstreamUnpinned:         {"upstream unpinned", slog.LevelWarn},
-	upstreamRefreshFailed:    {"upstream attestation refresh failed", slog.LevelWarn},
-	doorListening:            {"door listening", slog.LevelInfo},
-	doorServeFailed:          {"door serve failed", slog.LevelError},
-	doorConnectionRefused:    {"door connection refused", slog.LevelWarn},
-	doorRelayFailed:          {"door relay failed", slog.LevelWarn},
-	vendorPinsFailed:         {"vendor pins release refused, active set kept", slog.LevelWarn},
-	vendorPinsWouldSwap:      {"vendor pins would swap (log mode, nothing swapped)", slog.LevelInfo},
-	vendorPinsSwapped:        {"vendor pins swapped", slog.LevelInfo},
-	routesDataNothingOffered: {"routes data: the host offered no routes file (log mode), serving the image's own", slog.LevelInfo},
-	routesDataRefused:        {"routes file refused (log mode), serving the image's own", slog.LevelWarn},
-	routesDataWouldLoad:      {"routes would load (log mode, nothing loaded)", slog.LevelInfo},
+	configInvalid:             {"config invalid", slog.LevelError},
+	listening:                 {"listening", slog.LevelInfo},
+	shuttingDown:              {"shutting down", slog.LevelInfo},
+	serveFailed:               {"serve failed", slog.LevelError},
+	routeFailed:               {"route failed", slog.LevelWarn},
+	lookupVendorBusy:          {"lookup vendor busy", slog.LevelWarn},
+	vendorRefused:             {"vendor refused", slog.LevelWarn},
+	upstreamErrorChunk:        {"upstream error chunk", slog.LevelWarn},
+	unknownReplyField:         {"e2ee reply carried a field the gate does not know", slog.LevelWarn},
+	vendorUsageMissing:        {"sealed reply ended with no vendor usage, billed on its frames", slog.LevelWarn},
+	researchUnwrapped:         {"parallel research report unwrapped from its answer object", slog.LevelWarn},
+	upstreamAttested:          {"upstream attested", slog.LevelInfo},
+	upstreamDrifted:           {"upstream attested with drift", slog.LevelWarn},
+	upstreamRefused:           {"upstream refused", slog.LevelWarn},
+	upstreamUnpinned:          {"upstream unpinned", slog.LevelWarn},
+	upstreamRefreshFailed:     {"upstream attestation refresh failed", slog.LevelWarn},
+	doorListening:             {"door listening", slog.LevelInfo},
+	doorServeFailed:           {"door serve failed", slog.LevelError},
+	doorConnectionRefused:     {"door connection refused", slog.LevelWarn},
+	doorRelayFailed:           {"door relay failed", slog.LevelWarn},
+	vendorPinsFailed:          {"vendor pins release refused, active set kept", slog.LevelWarn},
+	vendorPinsWouldSwap:       {"vendor pins would swap (log mode, nothing swapped)", slog.LevelInfo},
+	vendorPinsSwapped:         {"vendor pins swapped", slog.LevelInfo},
+	routesDataNothingOffered:  {"routes data: the host offered no routes file (log mode), serving the image's own", slog.LevelInfo},
+	routesDataRefused:         {"routes file refused (log mode), serving the image's own", slog.LevelWarn},
+	routesDataWouldLoad:       {"routes would load (log mode, nothing loaded)", slog.LevelInfo},
+	routesDataRecheckPanicked: {"routes re-check panicked (log mode), serving the image's own", slog.LevelError},
 	// Once a minute, never per request: a line timed to one request would tell the host it held a detail.
 	privacyVeilUnavailable:    {"privacy veil unavailable", slog.LevelWarn},
 	privacyVeilRefused:        {"privacy veil refused", slog.LevelInfo},

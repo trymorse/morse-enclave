@@ -90,21 +90,6 @@ var capabilities = map[Provider]capability{
 		reasonsUnasked: true,
 		sendsSettings:  true,
 	},
-	// Venice keeps nothing only for the models it serves in its Private mode, under contract with their hosts. Venice
-	// documents 402 INSUFFICIENT_BALANCE and the two spend-limit codes for a dry account, and its chat path takes
-	// apierr.SanitizedUpstreamError's default mapping of a 402 to upstream_unavailable. No dry account has answered a
-	// request yet.
-	ProviderVenice: {
-		kinds:             servedAt{catalog.KindChat: privateOnly},
-		zdrAt:             privateOnly,
-		zdrWhy:            "because Venice keeps no prompt or reply only for the models it serves in its Private mode",
-		zdrLink:           "https://docs.venice.ai/overview/privacy",
-		zdrLinkChecked:    "2026-11-17",
-		zdrHeld:           HeldPublishedTerms,
-		needsKey:          true,
-		refusesDryAccount: true,
-		sendsSettings:     true,
-	},
 	// Isoquant answers 402 when the balance cannot cover a request's max_tokens (the scout's report of 2026-11-05, not a
 	// captured reply), and its chat path takes apierr.SanitizedUpstreamError's default mapping of a 402 to
 	// upstream_unavailable. A model the key may not use answers 403 model_forbidden (captured 2026-11-05), which apierr
@@ -243,7 +228,8 @@ var capabilities = map[Provider]capability{
 	ProviderFal:     {kinds: servedAt{catalog.KindImage: anonOnly, catalog.KindVideo: anonOnly}, needsKey: true},
 	// why: spicyapi.ai keeps prompts and outputs for a window and names no model host (spicyapi.ai/legal/privacy), and
 	// answers a dry balance or spend cap 402 (40201, 40202), which maps to upstream_unavailable (docs.spicyapi.ai/docs/errors).
-	ProviderSpicyAPI: {kinds: servedAt{catalog.KindImage: anonOnly, catalog.KindVideo: anonOnly}, needsKey: true, refusesDryAccount: true},
+	ProviderOpenAIImages: {kinds: servedAt{catalog.KindImage: anonOnly}, makes: map[string]string{"api.openai.com": "OpenAI", "api.meta.ai": "Meta"}, needsKey: true},
+	ProviderSpicyAPI:     {kinds: servedAt{catalog.KindImage: anonOnly, catalog.KindVideo: anonOnly}, needsKey: true, refusesDryAccount: true},
 	// A private Parallel route stands on our zero data retention agreement with Parallel, which covers the account
 	// that owns the route's key: it sends the same request as an anon route, and no reply is checked for it, unlike xAI's.
 	ProviderParallel: {
@@ -338,7 +324,19 @@ func (v Vendor) check(rt Route) error {
 	if rt.OnBehalfOf != "" {
 		return fmt.Errorf("is on behalf of endpoint %q and uses %s; only an attested endpoint is sealed to", rt.OnBehalfOf, v)
 	}
+	if c, chats := ChatOf(rt.Serves); chats {
+		if err := c.checkNativeTools(rt.Tier); err != nil {
+			return err
+		}
+	}
 	return capabilities[v.Provider].check(v, rt)
+}
+
+func (c Chat) checkNativeTools(tier catalog.Tier) error {
+	if c.NativeTools {
+		return fmt.Errorf("sets native_tools at tier %s; only an e2ee endpoint whose attester seals each tool field takes it", tier)
+	}
+	return nil
 }
 
 func (c capability) check(up Upstream, rt Route) error {
@@ -448,9 +446,11 @@ func (a Attested) check(rt Route) error {
 		return fmt.Errorf("names a tokenizer, but %s relays its stream verbatim and the proxy counts only what it parses", a)
 	}
 	if !rt.Tier.Sealed() {
-		return nil
+		return c.checkNativeTools(rt.Tier)
 	}
 	switch {
+	case c.NativeTools && !a.Attester.SealsTools():
+		return fmt.Errorf("sets native_tools, but a request sealed to %s carries no tool field the proxy can check is sealed", a)
 	case c.DefaultMaxTokens != c.MaxOutputTokens:
 		return fmt.Errorf("is tier %s, so default_max_tokens must equal max_output_tokens %d: the body is forwarded verbatim, so the proxy cannot add a limit", rt.Tier, c.MaxOutputTokens)
 	case c.DefaultReasoningEffort != "":

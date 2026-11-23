@@ -36,7 +36,7 @@ var (
 	ErrQuoteReportData = errors.New("attestation: the verified quote carries a different report_data")
 	ErrEventLog        = errors.New("attestation: event_log is not the runtime log the quote measured")
 	ErrComposeHash     = errors.New("attestation: app_compose is not the measured compose-hash")
-	ErrConfigID        = errors.New("attestation: the quote's MRCONFIGID is not 01 || sha256(app_compose) || zeros")
+	ErrConfigID        = errors.New("attestation: the quote's MRCONFIGID does not bind app_compose")
 	ErrProvenance      = errors.New("attestation: the release provenance is not corroborated by the measured app_compose")
 	ErrUnreadable      = errors.New("attestation: the report declares a format version this build cannot read")
 )

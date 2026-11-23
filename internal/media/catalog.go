@@ -67,6 +67,7 @@ var (
 	Ideogram46   = ImageSpec{AspectRatios: AspectRatios, Resolutions: UpTo2K, MaxReferences: 5, Qualities: []string{"low", "medium", "high"}, Seed: true}
 	NanoBanana21 = ImageSpec{AspectRatios: AspectRatios, Resolutions: upTo4K, MaxReferences: 14}
 	GrokImagine1 = ImageSpec{AspectRatios: without(AspectRatios, "4:5", "5:4"), Resolutions: UpTo2K, MaxReferences: 5}
+	MAIImage27   = ImageSpec{AspectRatios: AspectRatios, Resolutions: UpTo2K, MaxReferences: 5}
 )
 
 var (

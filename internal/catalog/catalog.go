@@ -201,6 +201,7 @@ type ChatTerms struct {
 	ReasoningView          ReasoningView
 	Quantization           Quantization
 	NoCharacters           bool
+	NativeTools            bool
 	ResponseFormats        ResponseFormats
 	Fixes
 }

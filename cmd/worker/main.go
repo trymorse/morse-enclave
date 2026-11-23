@@ -175,6 +175,7 @@ func build(getenv func(string) string, log *logger) (built, error) {
 		veil = &worker.PrivacyVeil{Filter: filter, Cache: privacyveil.NewCache(privacyVeilCacheBytes, privacyVeilCacheTTL, time.Now), FilterCalls: calls}
 	}
 	instance := rand.Text()
+	seen := &routesSeen{worker: instance, mode: routesMode, boot: digest}
 	inner, err := worker.NewInProcess(worker.Config{
 		Models:   models,
 		Retired:  file.Retired,
@@ -191,6 +192,7 @@ func build(getenv func(string) string, log *logger) (built, error) {
 			return &worker.VendorPinsLag{Worker: instance, Newest: lag.Newest, Taken: lag.Taken, Behind: lag.Behind}
 		},
 		VendorPinsMode: string(mode),
+		RoutesData:     seen.report,
 		PrivacyVeil:    veil,
 		Clips:          clips,
 	})
@@ -211,7 +213,11 @@ func build(getenv func(string) string, log *logger) (built, error) {
 	mux.Handle("/", worker.NewServer(inner, digest))
 	gate.Register(mux)
 	srv := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: readHeaderTimeout, ErrorLog: discarded()}
-	checker := routesDataChecker(routesMode, bootRoutes{environment: environment, file: boot, floor: floor}, trust, trustedTime, getenv, log)
+	checker := routesDataChecker(routesMode, bootRoutes{environment: environment, file: boot, floor: floor}, trust, trustedTime, getenv, func(e routesdata.Event) {
+		if seen.see(e) {
+			log.routesData(e)
+		}
+	})
 	return built{server: srv, inner: inner, gates: gates, pins: pins, routes: len(models), routesData: checker, door: front, filter: filter, veil: veil}, nil
 }
 
@@ -299,6 +305,7 @@ func main() {
 	defer stopGates()
 	w.gates.Run(gatesCtx)
 	go w.pins.Run(gatesCtx)
+	go w.routesData.Recheck(gatesCtx, routesdata.Recheck{Every: routesdata.RecheckEvery, Timeout: routesdata.RecheckTimeout, Panicked: func(any) { log.log(routesDataRecheckPanicked, fields{}) }})
 	if w.filter != nil {
 		go w.filter.Run(gatesCtx)
 		go logVeilFailures(gatesCtx, w.veil, log)

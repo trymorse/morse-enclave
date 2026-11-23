@@ -19,7 +19,7 @@ var noon = time.Date(2026, 11, 17, 12, 0, 0, 0, time.UTC)
 
 const deepinfra catalog.EndpointID = "deepinfra"
 
-var cacheKeyVendors = []catalog.EndpointID{deepinfra, "morph", "xai", "venice"}
+var cacheKeyVendors = []catalog.EndpointID{deepinfra, "morph", "xai", "novita"}
 
 func openingDigest(s string) affinity.Digest { return affinity.DigestOfSum(sha256.Sum256([]byte(s))) }
 

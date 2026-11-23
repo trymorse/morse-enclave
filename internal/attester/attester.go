@@ -24,11 +24,12 @@ type Vendor struct {
 	sealedChatOnly bool
 	transcribes    bool
 	sealsBody      bool
+	sealsTools     bool
 }
 
 var Phala = &Vendor{Name: "phala", Gateway: "https://inference.phala.com", KeyEnv: "PHALA_API_KEY"}
 
-var Near = &Vendor{Name: "near", Gateway: "https://cloud-api.near.ai", KeyEnv: "NEAR_API_KEY", sealedChatOnly: true, transcribes: true}
+var Near = &Vendor{Name: "near", Gateway: "https://cloud-api.near.ai", KeyEnv: "NEAR_API_KEY", sealedChatOnly: true, transcribes: true, sealsTools: true}
 
 // Tinfoil's router seals whole request and reply bodies (EHBP), so it carries native tool calls; it
 // serves only sealed chats.
@@ -55,6 +56,8 @@ func (v *Vendor) SealedChatOnly() bool { return v.sealedChatOnly }
 // SealsBody is whether a client seals the whole request body to the gateway's key, rather than each message's
 // content, so the request can carry tools.
 func (v *Vendor) SealsBody() bool { return v.sealsBody }
+
+func (v *Vendor) SealsTools() bool { return v.sealsTools }
 
 // Transcribes is whether the gateway serves an attested transcription model, which it reads in the clear.
 func (v *Vendor) Transcribes() bool { return v.transcribes }

@@ -7,7 +7,7 @@ import (
 	"morse/backend/internal/catalog"
 )
 
-func (a Attestation) Reply(public string, tier catalog.Tier, speaks *Scheme, instances []string) []byte {
+func (a Attestation) Reply(public string, tier catalog.Tier, speaks *Scheme, protocols, instances []string) []byte {
 	var out bytes.Buffer
 	out.WriteString(`{"object":"attestation","model":`)
 	out.Write(jsonString(public))
@@ -20,6 +20,11 @@ func (a Attestation) Reply(public string, tier catalog.Tier, speaks *Scheme, ins
 		out.Write(jsonString(speaks.Version))
 		out.WriteString(`,"e2ee_protocol":`)
 		out.Write(jsonString(speaks.Name))
+		if len(protocols) > 0 {
+			out.WriteString(`,"e2ee_protocols":`)
+			list, _ := json.Marshal(protocols)
+			out.Write(list)
+		}
 	}
 	out.WriteString(`,"report":`)
 	out.Write(a.Report)

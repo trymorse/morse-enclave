@@ -36,6 +36,7 @@ type E2EE interface {
 	WriteApplied(set func(name, value string))
 	IsCiphertext(rawJSON []byte) bool
 	ConfirmsEncryption() bool
+	SealsTools() bool
 	ModelKey() []byte // the key the request is sealed to, as the wire names it
 }
 
@@ -44,6 +45,7 @@ type E2EE interface {
 // route that speaks this scheme. Routes and requests compare schemes by identity.
 type Scheme struct {
 	Name, Version    string
+	Protocols        []string
 	Headers          []string
 	Parse            func(get func(name string) string) (params E2EE, sealed bool, err error)
 	ErrHeaderMissing error

@@ -47,7 +47,7 @@ func (w *InProcess) openVideo(o Opening) (Admission, error) {
 		return nil, apierr.InvalidParameter(err.Error())
 	}
 	ov := &openedVideo{cuts: newCuts(), endpoint: w.endpoints[req.Model], route: req.Model, generator: generator, req: &resolved}
-	return MediaAdmission{admitted: admitted{w.keep(o, ov)}, Route: req.Model, Units: resolved.Seconds, Frames: resolved.FrameDigests()}, nil
+	return MediaAdmission{admitted: admitted{w.keep(o, ov)}, Route: req.Model, Units: resolved.Seconds, Resolution: resolved.Resolution, Frames: resolved.FrameDigests()}, nil
 }
 
 func (o *openedVideo) cut(reason measure.Cut) { o.cuts.cut(reason, false) }

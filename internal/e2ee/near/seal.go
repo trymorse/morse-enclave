@@ -21,11 +21,35 @@ const (
 	tagLen           = chacha20poly1305.Overhead
 	MinCiphertextHex = 2 * (ephemeralLen + nonceLen + tagLen)
 	kdfInfo          = "ed25519_encryption"
+	requestDomain    = "nearai-e2ee-request-v3"
+	ed25519Suite     = 0x02
+)
+
+const (
+	LabelContent         = "messages[].content"
+	LabelCallName        = "messages[].tool_calls[].function.name"
+	LabelCallArguments   = "messages[].tool_calls[].function.arguments"
+	LabelToolName        = "tools[].function.name"
+	LabelToolDescription = "tools[].function.description"
+	LabelToolParameters  = "tools[].function.parameters"
 )
 
 var errSealedTooShort = errors.New("near: sealed value is shorter than ephemeral key, nonce, and tag")
 
+func requestAAD(client ed25519.PublicKey, label string) []byte {
+	aad := make([]byte, 0, len(requestDomain)+1+len(client)+1+len(label))
+	aad = append(aad, requestDomain...)
+	aad = append(aad, ed25519Suite)
+	aad = append(aad, client...)
+	aad = append(aad, 0)
+	return append(aad, label...)
+}
+
 func Seal(recipient ed25519.PublicKey, plaintext []byte) (string, error) {
+	return seal(recipient, plaintext, nil)
+}
+
+func seal(recipient ed25519.PublicKey, plaintext, aad []byte) (string, error) {
 	point, err := new(edwards25519.Point).SetBytes(recipient)
 	if err != nil {
 		return "", err
@@ -45,10 +69,14 @@ func Seal(recipient ed25519.PublicKey, plaintext []byte) (string, error) {
 	sealed := append(ephemeral.PublicKey().Bytes(), make([]byte, nonceLen)...)
 	nonce := sealed[ephemeralLen:]
 	rand.Read(nonce)
-	return hex.EncodeToString(aead.Seal(sealed, nonce, plaintext, nil)), nil
+	return hex.EncodeToString(aead.Seal(sealed, nonce, plaintext, aad)), nil
 }
 
 func Open(recipient ed25519.PrivateKey, sealed string) ([]byte, error) {
+	return open(recipient, sealed, nil)
+}
+
+func open(recipient ed25519.PrivateKey, sealed string, aad []byte) ([]byte, error) {
 	raw, err := hex.DecodeString(sealed)
 	if err != nil {
 		return nil, err
@@ -69,7 +97,7 @@ func Open(recipient ed25519.PrivateKey, sealed string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return aead.Open(nil, raw[ephemeralLen:ephemeralLen+nonceLen], raw[ephemeralLen+nonceLen:], nil)
+	return aead.Open(nil, raw[ephemeralLen:ephemeralLen+nonceLen], raw[ephemeralLen+nonceLen:], aad)
 }
 
 func fieldCipher(private *ecdh.PrivateKey, public *ecdh.PublicKey) (cipher.AEAD, error) {

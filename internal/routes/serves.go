@@ -85,6 +85,7 @@ func (r chatRoute) chat(defaultMarkup money.Markup) (Chat, error) {
 			AlwaysReasons: r.AlwaysReasons,
 			Inputs:        inputs, ContextTokens: r.ContextTokens, CompactAtTokens: compactAt, ReasoningView: view,
 			Quantization: quantization, Fixes: r.withTools(), NoCharacters: r.Characters != nil && !*r.Characters,
+			NativeTools:     r.NativeTools,
 			ResponseFormats: formats,
 		},
 		Price: price, Markup: markup, DecodeMaxTPS: r.DecodeMaxTPS,
@@ -226,7 +227,14 @@ func (r videoRoute) serves(defaultMarkup money.Markup) (Serves, error) {
 		perSecond = r.Price.HoldMicrosPerSecond
 	}
 	price, err := r.common.mediaPrice(r.marked, defaultMarkup, perSecond, "hold_micros_per_second", nil)
-	return Video{Price: price}, err
+	if err != nil || r.Price.HoldMicrosPerSecondByResolution == nil {
+		return Video{Price: price}, err
+	}
+	price.PerUnitAt = r.Price.HoldMicrosPerSecondByResolution
+	if err := price.Validate(); err != nil {
+		return nil, fmt.Errorf("has an invalid price: %w", err)
+	}
+	return Video{Price: price}, nil
 }
 
 func (c common) mediaPrice(m marked, defaultMarkup money.Markup, perUnit *money.Micros, perUnitField string, perReference *money.Micros) (money.MediaPrice, error) {

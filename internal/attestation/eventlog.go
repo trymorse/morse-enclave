@@ -20,6 +20,7 @@ const (
 	eventInstanceID               = "instance-id"
 	eventOSImageHash              = "os-image-hash"
 	eventKeyProvider              = "key-provider"
+	eventGPUPolicyHash            = "gpu-policy-hash"
 	eventSystemReady              = "system-ready"
 	eventLogV1                    = 1
 	eventLogV2                    = 2
@@ -166,11 +167,12 @@ func replayRuntime(events []event) [sha512.Size384]byte {
 }
 
 type measurements struct {
-	composeHash []byte
-	appID       []byte
-	instanceID  []byte
-	osImageHash []byte
-	keyProvider []byte
+	composeHash   []byte
+	appID         []byte
+	instanceID    []byte
+	osImageHash   []byte
+	keyProvider   []byte
+	gpuPolicyHash []byte
 }
 
 func runtimeMeasurements(events []event) (measurements, error) {
@@ -179,12 +181,14 @@ func runtimeMeasurements(events []event) (measurements, error) {
 		name     string
 		payload  *[]byte
 		sentinel error
+		optional bool
 	}{
-		{eventComposeHash, &m.composeHash, ErrComposeHash},
-		{eventAppID, &m.appID, ErrEventLog},
-		{eventInstanceID, &m.instanceID, ErrEventLog},
-		{eventOSImageHash, &m.osImageHash, ErrEventLog},
-		{eventKeyProvider, &m.keyProvider, ErrEventLog},
+		{eventComposeHash, &m.composeHash, ErrComposeHash, false},
+		{eventAppID, &m.appID, ErrEventLog, false},
+		{eventInstanceID, &m.instanceID, ErrEventLog, false},
+		{eventOSImageHash, &m.osImageHash, ErrEventLog, false},
+		{eventKeyProvider, &m.keyProvider, ErrEventLog, false},
+		{eventGPUPolicyHash, &m.gpuPolicyHash, ErrEventLog, true},
 	}
 	seen := map[string]bool{}
 	ready := false
@@ -211,7 +215,7 @@ func runtimeMeasurements(events []event) (measurements, error) {
 		return measurements{}, fmt.Errorf("%w: no %s event is measured", ErrEventLog, eventSystemReady)
 	}
 	for _, r := range required {
-		if len(*r.payload) == 0 {
+		if !r.optional && len(*r.payload) == 0 {
 			return measurements{}, fmt.Errorf("%w: no %s is measured before %s", r.sentinel, r.name, eventSystemReady)
 		}
 	}

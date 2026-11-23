@@ -23,7 +23,8 @@ var stopTokenFields = map[string]bool{"matched_stop": true, "stop_reason": true}
 
 var loggableFieldName = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
 
-func unknownFieldsOf(data []byte, isCiphertext func([]byte) bool) (unknown []string, sealed bool) {
+func unknownFieldsOf(data []byte, params chat.E2EE) (unknown []string, sealed bool) {
+	isCiphertext := params.IsCiphertext
 	var reply map[string]json.RawMessage
 	if strictjson.UniqueKeys(data) != nil || json.Unmarshal(data, &reply) != nil {
 		return nil, false
@@ -50,6 +51,7 @@ func unknownFieldsOf(data []byte, isCiphertext func([]byte) bool) (unknown []str
 			for key, value := range fields {
 				switch {
 				case key == "role" && string(value) == `"assistant"`, isEmpty(value), textFields[key] && isCiphertext(value):
+				case key == "tool_calls" && params.SealsTools() && sealedCalls(value, isCiphertext):
 				case key == "role" || textFields[key] || !loggableFieldName.MatchString(key) || value[0] == '"':
 					return nil, false
 				default:
@@ -80,13 +82,47 @@ type gate struct {
 }
 
 func (g *gate) passes(data []byte) bool {
-	unknown, sealed := unknownFieldsOf(data, g.sealed.IsCiphertext)
+	unknown, sealed := unknownFieldsOf(data, g.sealed)
 	if !sealed || len(unknown) > 0 && !g.sealed.ConfirmsEncryption() {
 		return false
 	}
 	for _, key := range unknown {
 		if i, seen := slices.BinarySearch(g.unknown, key); !seen {
 			g.unknown = slices.Insert(g.unknown, i, key)
+		}
+	}
+	return true
+}
+
+var sealedCallID = regexp.MustCompile(`^"[A-Za-z0-9_-]{1,64}"$`)
+
+func sealedCalls(raw json.RawMessage, isCiphertext func([]byte) bool) bool {
+	var calls []map[string]json.RawMessage
+	if json.Unmarshal(raw, &calls) != nil {
+		return false
+	}
+	for _, call := range calls {
+		for key, value := range call {
+			switch {
+			case isEmpty(value):
+			case key == "index" && isTokenID(value), key == "id" && sealedCallID.Match(value), key == "type" && string(value) == `"function"`:
+			case key == "function" && sealedFunction(value, isCiphertext):
+			default:
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func sealedFunction(raw json.RawMessage, isCiphertext func([]byte) bool) bool {
+	var fn map[string]json.RawMessage
+	if json.Unmarshal(raw, &fn) != nil {
+		return false
+	}
+	for key, value := range fn {
+		if key != "name" && key != "arguments" || !isEmpty(value) && !isCiphertext(value) {
+			return false
 		}
 	}
 	return true

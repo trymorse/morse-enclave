@@ -11,9 +11,19 @@ import (
 	"morse/backend/internal/apierr"
 )
 
-const Version = "2026-11-18"
+const Version = "2026-11-23"
 
 var Statement = []string{
+	"I have the right to use each picture I upload.",
+	"Everyone shown in them is 18 or older.",
+	"Everyone shown in them agreed that I may use their likeness this way, or the only person shown is me.",
+	"I will not use them to make sexual content of a real person who has not agreed to it.",
+	"Breaking these promises breaks the Terms and can close my account, and a person shown can report it to Morse.",
+}
+
+const ImageVersion = "2026-11-18"
+
+var ImageStatement = []string{
 	"I have the right to use this picture.",
 	"Everyone shown in it is 18 or older.",
 	"Everyone shown in it agreed that I may use their likeness this way, or the only person shown is me.",
@@ -56,6 +66,13 @@ func Parse(s string) (Digest, error) {
 	return d, nil
 }
 
+type Day struct {
+	Day       time.Time
+	Agreed    int64
+	Frames    int64
+	Uploaders int64
+}
+
 type Record struct {
 	Digest  Digest
 	Version string
@@ -63,7 +80,7 @@ type Record struct {
 }
 
 var ErrRequired = apierr.Invalid(http.StatusForbidden, "frame_consent_required",
-	"This model makes a clip from an uploaded frame only once the account's owner has accepted the frame consent statement for that exact file. "+
+	"This model makes a clip from an uploaded frame only once the account's owner has accepted the account's frame agreement, once for every file the account uploads. "+
 		"Read it with GET /v1/account/frame-consents, accept it with POST /v1/account/frame-consents, then send the clip again.")
 
 func Required(frame int) error {
@@ -75,7 +92,7 @@ func Required(frame int) error {
 
 var errImageRequired = apierr.Invalid(http.StatusForbidden, "frame_consent_required",
 	"This model takes an uploaded image only once the account's owner has accepted the frame consent statement for that exact file. "+
-		"Read it with GET /v1/account/frame-consents, accept it with POST /v1/account/frame-consents, then send the request again.").Naming("images")
+		"Read it with GET /v1/account/frame-consents?for=image, accept it with POST /v1/account/frame-consents, then send the request again.").Naming("images")
 
 func RequiredImage(int) error { return errImageRequired }
 

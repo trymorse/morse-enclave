@@ -96,6 +96,8 @@ func (Params) IsCiphertext([]byte) bool { return false }
 
 func (Params) ConfirmsEncryption() bool { return true }
 
+func (Params) SealsTools() bool { return false }
+
 // ModelKey is nil: the request is sealed to the key the enclave's report binds, not one a header names.
 func (Params) ModelKey() []byte { return nil }
 

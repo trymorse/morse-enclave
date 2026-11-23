@@ -16,6 +16,7 @@ import (
 	"morse/backend/internal/media"
 	"morse/backend/internal/openaicompat"
 	"morse/backend/internal/openaihosts"
+	"morse/backend/internal/openaiimages"
 	"morse/backend/internal/openairesponses"
 	"morse/backend/internal/parallel"
 	"morse/backend/internal/phala"
@@ -26,7 +27,6 @@ import (
 	"morse/backend/internal/tee"
 	"morse/backend/internal/tokenizer"
 	"morse/backend/internal/upstream"
-	"morse/backend/internal/venice"
 	"morse/backend/internal/worker"
 	"morse/backend/internal/xai"
 )
@@ -72,7 +72,6 @@ var chatProviders = withOpenAIHosts(map[routes.Provider]newChatProvider{
 	routes.ProviderAnthropic:       translating(anthropic.New),
 	routes.ProviderGemini:          translating(gemini.NewChat),
 	routes.ProviderXAI:             xaiProvider,
-	routes.ProviderVenice:          veniceProvider,
 })
 
 var openAIHosts = func() map[routes.Provider]openaihosts.Host {
@@ -95,13 +94,14 @@ func withOpenAIHosts(m map[routes.Provider]newChatProvider) map[routes.Provider]
 }
 
 var builders = withChat(map[routes.Provider]map[catalog.Kind]build{
-	routes.ProviderOpenAI:    {catalog.KindTranscription: erase(openAITranscription)},
-	routes.ProviderDeepInfra: {catalog.KindSpeech: erase(openAISpeech)},
-	routes.ProviderGemini:    {catalog.KindImage: erase(imagesBy(gemini.NewImages))},
-	routes.ProviderXAI:       {catalog.KindImage: erase(imagesBy(xai.NewImages)), catalog.KindVideo: erase(videosBy(xai.NewVideos))},
-	routes.ProviderRunware:   {catalog.KindImage: erase(imagesBy(runware.NewImages)), catalog.KindVideo: erase(videosBy(runware.NewVideos))},
-	routes.ProviderFal:       {catalog.KindImage: erase(imagesBy(fal.NewImages)), catalog.KindVideo: erase(videosBy(fal.NewVideos))},
-	routes.ProviderSpicyAPI:  {catalog.KindImage: erase(imagesBy(spicyapi.NewImages)), catalog.KindVideo: erase(videosBy(spicyapi.NewVideos))},
+	routes.ProviderOpenAI:       {catalog.KindTranscription: erase(openAITranscription)},
+	routes.ProviderDeepInfra:    {catalog.KindSpeech: erase(openAISpeech)},
+	routes.ProviderGemini:       {catalog.KindImage: erase(imagesBy(gemini.NewImages))},
+	routes.ProviderXAI:          {catalog.KindImage: erase(imagesBy(xai.NewImages)), catalog.KindVideo: erase(videosBy(xai.NewVideos))},
+	routes.ProviderRunware:      {catalog.KindImage: erase(imagesBy(runware.NewImages)), catalog.KindVideo: erase(videosBy(runware.NewVideos))},
+	routes.ProviderFal:          {catalog.KindImage: erase(imagesBy(fal.NewImages)), catalog.KindVideo: erase(videosBy(fal.NewVideos))},
+	routes.ProviderOpenAIImages: {catalog.KindImage: erase(imagesBy(openaiimages.NewImages))},
+	routes.ProviderSpicyAPI:     {catalog.KindImage: erase(imagesBy(spicyapi.NewImages)), catalog.KindVideo: erase(videosBy(spicyapi.NewVideos))},
 	routes.ProviderParallel: {
 		catalog.KindSearch:   erase(parallelSearch),
 		catalog.KindFetch:    erase(parallelFetch),
@@ -162,6 +162,22 @@ func ImageSpec(rt routes.Route) (media.ImageSpec, error) {
 		return media.ImageSpec{}, fmt.Errorf("route %q serves %T, not images", rt.Model, serving)
 	}
 	return images.Spec(), nil
+}
+
+func VideoSpec(rt routes.Route) (media.VideoSpec, error) {
+	serving, err := Build(rt, "", Deps{})
+	if err != nil {
+		return media.VideoSpec{}, err
+	}
+	videos, ok := serving.(worker.Videos)
+	if !ok {
+		return media.VideoSpec{}, fmt.Errorf("route %q serves %T, not videos", rt.Model, serving)
+	}
+	specced, ok := videos.VideoGenerator.(interface{ Spec() media.VideoSpec })
+	if !ok {
+		return media.VideoSpec{}, fmt.Errorf("route %q makes videos on %T, which names no spec", rt.Model, videos.VideoGenerator)
+	}
+	return specced.Spec(), nil
 }
 
 func Attester(rt routes.Route) string {
@@ -265,10 +281,6 @@ func translating(newProvider func(baseURL, key, model string, client *http.Clien
 
 func xaiProvider(rt routes.Route, _ routes.Chat, key string, d Deps) chat.Provider {
 	return xai.NewChat(rt.BaseURL, key, rt.UpstreamModel, rt.Retention, d.Client)
-}
-
-func veniceProvider(rt routes.Route, _ routes.Chat, key string, d Deps) chat.Provider {
-	return venice.NewChat(rt.BaseURL, key, rt.UpstreamModel, d.Client)
 }
 
 func openAIHostProvider(rt routes.Route, c routes.Chat, key string, d Deps) chat.Provider {

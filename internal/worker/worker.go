@@ -56,6 +56,20 @@ type Unpinned struct {
 	Releases       []attested.UnpinnedRelease `json:"releases"`
 	VendorPins     *VendorPinsLag             `json:"vendor_pins,omitempty"`
 	VendorPinsMode string                     `json:"vendor_pins_mode,omitempty"`
+	RoutesData     *RoutesData                `json:"routes_data,omitempty"`
+}
+
+type RoutesData struct {
+	Worker          string `json:"worker"`
+	Mode            string `json:"mode"`
+	BootSHA256      string `json:"boot_sha256"`
+	Outcome         string `json:"outcome,omitempty"`
+	Refusal         string `json:"refusal,omitempty"`
+	Reason          string `json:"reason,omitempty"`
+	Sequence        uint64 `json:"sequence,omitempty"`
+	StatementSHA256 string `json:"statement_sha256,omitempty"`
+	FileSHA256      string `json:"file_sha256,omitempty"`
+	SameAsBoot      bool   `json:"same_as_boot,omitempty"`
 }
 
 type VendorPinsLag struct {

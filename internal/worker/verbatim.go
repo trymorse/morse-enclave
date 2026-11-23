@@ -169,7 +169,7 @@ func admitVerbatim(rel chat.Relayer, maxOutputTokens int, params chat.E2EE, req 
 		return 0, errFloorSealed
 	}
 	for _, field := range req.FieldNames() {
-		checkedHere, ok := verbatimFields[field]
+		checkedHere, ok := verbatimField(field, params)
 		if raw, _ := req.Field(field); !ok || checkedHere != nil && !checkedHere(raw) {
 			return 0, fieldRefused(field)
 		}
@@ -189,16 +189,8 @@ func admitVerbatim(rel chat.Relayer, maxOutputTokens int, params chat.E2EE, req 
 		return 0, errE2EEContentNotEncrypted
 	}
 	for _, message := range messages {
-		for _, key := range message.Keys() {
-			if !verbatimMessageKeys[key] {
-				return 0, fieldRefused("messages." + key)
-			}
-		}
-		if !verbatimRoles[message.Role] {
-			return 0, fieldRefused("messages.role")
-		}
-		if !params.IsCiphertext(message.Raw("content")) {
-			return 0, errE2EEContentNotEncrypted
+		if err := admitMessage(message, params); err != nil {
+			return 0, err
 		}
 	}
 	if err := rel.Check(req); err != nil {

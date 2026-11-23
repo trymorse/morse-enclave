@@ -177,7 +177,7 @@ func (p Policy) measure(ctx context.Context, ev dstackEvidence, want [quoteRepor
 	if !bytes.Equal(composeHash[:], runtime.composeHash) {
 		return Workload{}, fmt.Errorf("%w: sha256(app_compose) %x, measured %x", ErrComposeHash, composeHash, runtime.composeHash)
 	}
-	if err := checkConfigID(body.GetMrConfigId(), composeHash); err != nil {
+	if err := checkConfigID(body.GetMrConfigId(), configBinding{composeHash: composeHash, appID: runtime.appID, instanceID: runtime.instanceID, gpuPolicyHash: runtime.gpuPolicyHash, appCompose: ev.AppCompose}); err != nil {
 		return Workload{}, err
 	}
 	keyProvider, err := keyProviderID(runtime.keyProvider)
@@ -194,16 +194,6 @@ func (p Policy) measure(ctx context.Context, ev dstackEvidence, want [quoteRepor
 		TCB:            standing,
 		VMConfig:       declaredVMConfig(ev.VMConfig),
 	}, nil
-}
-
-func checkConfigID(mrConfigID []byte, composeHash [sha256.Size]byte) error {
-	var want [configIDLen]byte
-	want[0] = configIDComposeHash
-	copy(want[1:], composeHash[:])
-	if !bytes.Equal(mrConfigID, want[:]) {
-		return fmt.Errorf("%w: mrconfigid %x, want %x", ErrConfigID, mrConfigID, want)
-	}
-	return nil
 }
 
 // checkProvenance reads the source the measured compose's launcher builds and requires the report to
