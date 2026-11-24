@@ -149,7 +149,7 @@ def compose(alert, run, restored, run_url):
             title = f"The inference door's watcher has not enforced {checks}"
             what = f"left {checks} unenforced on three runs in a row, as its NOT ENFORCED lines say"
             if 6 in run.unenforced:
-                what += ". Check 6 unenforced means runs are more than 7 minutes apart and a boot listed only between two of them without a record cannot show. Check that EventBridge's DoorWatchEvery5Minutes dispatches this workflow"
+                what += ". Check 6 unenforced means runs are more than 7 minutes apart and a boot listed only between two of them without a record cannot show. Check that EventBridge's ClockEvery5Minutes starts the clock workflow, which dispatches this one"
         case "lost":
             title, what = "The inference door's watcher lost its kept state", LOST
     return Alert(label, title, hours, f"check-door.py exited {run.code} and {what}, in {run_url}\n\n```\n{run.output}```\n")

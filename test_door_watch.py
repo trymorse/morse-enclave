@@ -197,7 +197,7 @@ class WatchTest(unittest.TestCase):
                 self.assertEqual([(w.code, w.alert) for w in runs], [(0, ""), (0, ""), (0, "unenforced")])
                 self.assertEqual((runs[2].label, runs[2].hours, runs[2].title), ("door-watch", "1", f"The inference door's watcher has not enforced {named}"))
                 self.assertIn(f"exited 2 and left {named} unenforced on three runs in a row, as its NOT ENFORCED lines say", runs[2].body)
-                self.assertEqual("EventBridge's DoorWatchEvery5Minutes" in runs[2].body, event_bridge)
+                self.assertEqual("EventBridge's ClockEvery5Minutes" in runs[2].body, event_bridge)
                 self.assertIn(output, runs[2].body)
 
     def test_a_passing_run_restarts_the_streak(self):
@@ -330,7 +330,7 @@ class VerdictTest(Fixture):
         self.assertEqual(found["checks"][5]["messages"][-1]["level"], "NOT ENFORCED")
         alert = door_watch.compose("unenforced", run, "door-watch-1-1", RUN_URL)
         self.assertEqual(alert.title, "The inference door's watcher has not enforced check 6")
-        self.assertIn("EventBridge's DoorWatchEvery5Minutes", alert.body)
+        self.assertIn("EventBridge's ClockEvery5Minutes", alert.body)
 
     def test_evidence_that_could_not_be_read_may_be_tried_again(self):
         found, run = self.verdict("--attestation", str(self.door.root / "missing.json"))
