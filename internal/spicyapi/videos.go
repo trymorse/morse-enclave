@@ -25,7 +25,6 @@ type videoModel struct {
 	sendsExpansion bool
 	sendsThinking  bool
 	fromFrames     string
-	framesOnly     bool
 }
 
 // why: GET https://api.spicyapi.ai/api/v1/models/{model} (2026-11-17) lists the only fields each takes, and H3 bills
@@ -62,25 +61,20 @@ var videoModels = map[string]videoModel{
 	// why: the adult fine-tunes are image-to-video only, each at most 15 s here though some take 30, and their schemas
 	// (GET https://api.spicyapi.ai/api/v1/models/{model}, 2026-11-22) list prompt expansion only on Wan 3.0 Spicy.
 	"alibaba/wan-3.0-spicy/image-to-video": {
-		VideoSpec:      media.VideoSpec{MinSeconds: 2, MaxSeconds: 15, Resolutions: []string{"720p", "480p"}, Audio: true, LastFrame: true},
+		VideoSpec:      media.VideoSpec{MinSeconds: 2, MaxSeconds: 15, Resolutions: []string{"720p", "480p"}, Audio: true, LastFrame: true, FirstFrameRequired: true},
 		sendsExpansion: true,
-		framesOnly:     true,
 	},
 	"bytedance/seedance-2.5-spicy/image-to-video": {
-		VideoSpec:  media.VideoSpec{MinSeconds: 4, MaxSeconds: 15, Resolutions: []string{"720p", "480p"}, Audio: true, LastFrame: true},
-		framesOnly: true,
+		VideoSpec: media.VideoSpec{MinSeconds: 4, MaxSeconds: 15, Resolutions: []string{"720p", "480p"}, Audio: true, LastFrame: true, FirstFrameRequired: true},
 	},
 	"minimax/h3-spicy/image-to-video": {
-		VideoSpec:  media.VideoSpec{MinSeconds: 3, MaxSeconds: 15, Resolutions: []string{"768p", "480p"}, LastFrame: true},
-		framesOnly: true,
+		VideoSpec: media.VideoSpec{MinSeconds: 3, MaxSeconds: 15, Resolutions: []string{"768p", "480p"}, LastFrame: true, FirstFrameRequired: true},
 	},
 	"lightricks/ltx-2.3-spicy/image-to-video": {
-		VideoSpec:  media.VideoSpec{MinSeconds: 3, MaxSeconds: 15, Resolutions: []string{"720p", "480p"}},
-		framesOnly: true,
+		VideoSpec: media.VideoSpec{MinSeconds: 3, MaxSeconds: 15, Resolutions: []string{"720p", "480p"}, FirstFrameRequired: true},
 	},
 	"vidu/q3-spicy/image-to-video": {
-		VideoSpec:  media.VideoSpec{MinSeconds: 1, MaxSeconds: 15, Resolutions: []string{"720p", "540p"}, Audio: true},
-		framesOnly: true,
+		VideoSpec: media.VideoSpec{MinSeconds: 1, MaxSeconds: 15, Resolutions: []string{"720p", "540p"}, Audio: true, FirstFrameRequired: true},
 	},
 }
 
@@ -110,7 +104,7 @@ func (p *Videos) ResolveVideo(req media.VideoRequest) (media.VideoRequest, error
 	if err != nil {
 		return media.VideoRequest{}, err
 	}
-	if p.framesOnly && req.FirstFrame() == "" {
+	if p.FirstFrameRequired && req.FirstFrame() == "" {
 		return media.VideoRequest{}, strictjson.Invalid("This model makes a clip only from a first frame; send image.")
 	}
 	for _, frame := range frames {

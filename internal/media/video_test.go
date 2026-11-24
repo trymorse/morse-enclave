@@ -157,3 +157,18 @@ func TestAVideoSpecWithItsOwnRatiosRefusesAnotherOnlyWithoutAFrame(t *testing.T)
 		t.Errorf("a spec that names no ratios takes %v, want every video ratio", media.Seedance20Fast.Ratios())
 	}
 }
+
+func TestAClipWithALastFrameOnOmniFlash12RunsThreeToTenSeconds(t *testing.T) {
+	first, last := "data:image/png;base64,"+pngBase64, "data:image/png;base64,"+pngBase64
+	spec := media.GeminiOmniFlash12
+	for seconds, ok := range map[int]bool{3: true, 5: true, 10: true, 11: false, 15: false} {
+		body := fmt.Sprintf(`{"model":"m","prompt":"p","seconds":%d,"image":"%s","last_image":"%s"}`, seconds, first, last)
+		_, err := spec.ResolveVideo(*parseVideo(t, body))
+		if (err == nil) != ok {
+			t.Errorf("%d s with a last frame: err %v, want ok %v", seconds, err, ok)
+		}
+		if _, err := spec.ResolveVideo(*parseVideo(t, fmt.Sprintf(`{"model":"m","prompt":"p","seconds":%d,"image":"%s"}`, seconds, first))); err != nil {
+			t.Errorf("%d s with a first frame only: %v", seconds, err)
+		}
+	}
+}

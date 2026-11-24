@@ -105,12 +105,14 @@ func ParseVideoRequest(body io.Reader) (*VideoRequest, error) {
 }
 
 type VideoSpec struct {
-	MinSeconds   int
-	MaxSeconds   int
-	Resolutions  []string
-	AspectRatios []string
-	Audio        bool
-	LastFrame    bool
+	MinSeconds          int
+	MaxSeconds          int
+	Resolutions         []string
+	AspectRatios        []string
+	Audio               bool
+	LastFrame           bool
+	LastFrameMaxSeconds int
+	FirstFrameRequired  bool
 }
 
 func (s VideoSpec) Spec() VideoSpec { return s }
@@ -135,6 +137,8 @@ func (s VideoSpec) ResolveVideo(r VideoRequest) (VideoRequest, error) {
 		return VideoRequest{}, strictjson.Invalid("This model has no audio setting.")
 	case r.last != "" && !s.LastFrame:
 		return VideoRequest{}, strictjson.Invalid("This model takes no last_image.")
+	case r.last != "" && s.LastFrameMaxSeconds > 0 && r.Seconds > s.LastFrameMaxSeconds:
+		return VideoRequest{}, strictjson.Invalid(fmt.Sprintf("seconds must be at most %d with a last_image for this model.", s.LastFrameMaxSeconds))
 	}
 	return r, nil
 }
