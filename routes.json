@@ -578,6 +578,9 @@
     {"id": "minimax/h3-max", "app_only": true, "kind": "video", "lab": "MiniMax", "label": "MiniMax H3 Max", "uncensored": false, "endpoints": [
       {"id": "runware", "api_key_env": "RUNWARE_API_KEY", "base_url": "https://api.runware.ai", "owned_by": "MiniMax", "price": {"hold_micros_per_second":80000,"hold_micros_per_second_by_resolution":{"480p":50000,"768p":80000}}, "provider": "runware", "provider_name": "runware", "requires_plan": "pro", "tier": "anon", "upstream_model": "minimax:h3@max"}
     ]},
+    {"id": "x-ai/grok-imagine-video-1.5", "app_only": true, "kind": "video", "lab": "xAI", "label": "Grok Imagine Video 1.5", "uncensored": false, "endpoints": [
+      {"id": "xai", "api_key_env": "XAI_API_KEY", "base_url": "https://api.x.ai", "owned_by": "xAI", "price": {"hold_micros_per_second":80000,"hold_micros_per_second_by_resolution":{"480p":80000,"720p":80000,"1080p":80000}}, "provider": "xai", "provider_name": "xai", "requires_plan": "pro", "retention": "zdr", "tier": "private", "upstream_model": "grok-imagine-video-1.5"}
+    ]},
     {"id": "minimax/h3-uncensored", "app_only": true, "kind": "video", "lab": "MiniMax", "label": "MiniMax H3 Uncensored", "uncensored": true, "endpoints": [
       {"id": "spicyapi", "api_key_env": "SPICYAPI_API_KEY", "base_url": "https://api.spicyapi.ai", "owned_by": "MiniMax", "price": {"hold_micros_per_second":37000,"hold_micros_per_second_by_resolution":{"480p":25000,"768p":37000}}, "provider": "spicyapi", "provider_name": "spicyapi", "requires_plan": "pro", "tier": "anon", "upstream_model": "minimax/h3/text-to-video"}
     ]},
@@ -850,6 +853,7 @@
     {"name": "kling-video-3-pro", "model": "klingai/kling-video-3.0-pro", "endpoint": "fal"},
     {"name": "wan-3.0", "model": "alibaba/wan-3.0", "endpoint": "runware"},
     {"name": "minimax-h3-max", "model": "minimax/h3-max", "endpoint": "runware"},
+    {"name": "grok-imagine-video-1.5", "model": "x-ai/grok-imagine-video-1.5", "endpoint": "xai"},
     {"name": "minimax-h3-uncensored", "model": "minimax/h3-uncensored", "endpoint": "spicyapi"},
     {"name": "wan-3.0-uncensored", "model": "alibaba/wan-3.0-uncensored", "endpoint": "spicyapi"},
     {"name": "muse-image", "model": "meta/muse-image", "endpoint": "meta"},
