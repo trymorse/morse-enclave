@@ -168,6 +168,36 @@ func TestExtractAsksForTheFullPageOfOneURLAndCapsIt(t *testing.T) {
 	}
 }
 
+func TestExtractWithAPurposeAsksForOnlyTheExcerptsThatAnswerIt(t *testing.T) {
+	s := &standIn{reply: replying(200, `{"extract_id":"e","session_id":"s","errors":[],"results":[{"url":"https://example.com/p","title":"P","publish_date":null,"excerpts":["first passage","second passage"],"full_content":null}]}`)}
+	srv := s.serve(t)
+	req, err := web.ParseFetchRequest(strings.NewReader(`{"model":"m","url":"https://example.com/p","objective":"  when was it built  "}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, err := mustExtract(t, srv.URL, srv.Client()).Fetch(context.Background(), req)
+	if err != nil || page.Truncated() {
+		t.Fatalf("page %v err %v", page, err)
+	}
+	c := s.only(t)
+	if string(c.body["objective"]) != `"when was it built"` || string(c.body["advanced_settings"]) != `{"excerpt_settings":{"max_chars_per_result":6000},"fetch_policy":{"timeout_seconds":30}}` {
+		t.Errorf("objective %s settings %s", c.body["objective"], c.body["advanced_settings"])
+	}
+	var out strings.Builder
+	if err := web.WritePage(&out, page); err != nil || !strings.Contains(out.String(), `first passage\n\nsecond passage`) {
+		t.Errorf("page written %q err %v", out.String(), err)
+	}
+}
+
+func TestExtractWithAPurposeAndNoExcerptsIsFetchFailedSoTheClientReadsFromTheStart(t *testing.T) {
+	s := &standIn{reply: replying(200, `{"extract_id":"e","session_id":"s","errors":[],"results":[{"url":"https://example.com/p","excerpts":[],"full_content":null}]}`)}
+	srv := s.serve(t)
+	req, _ := web.ParseFetchRequest(strings.NewReader(`{"model":"m","url":"https://example.com/p","objective":"x"}`))
+	if _, err := mustExtract(t, srv.URL, srv.Client()).Fetch(context.Background(), req); !errors.Is(err, web.ErrFetchFailed) {
+		t.Errorf("err %v, want fetch_failed", err)
+	}
+}
+
 func TestUnreadablePagesAreFetchFailedAndMalformedRepliesAreUpstreamErrors(t *testing.T) {
 	for name, c := range map[string]struct {
 		reply string

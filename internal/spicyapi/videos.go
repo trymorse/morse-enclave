@@ -29,7 +29,7 @@ type videoModel struct {
 }
 
 // why: GET https://api.spicyapi.ai/api/v1/models/{model} (2026-11-17) lists the only fields each takes, and H3 bills
-// double past 15 s; a route holds at its first resolution's price, so the cheaper 480p follows it. Each image-to-video
+// double past 15 s; a route holds each resolution at its own price, so the first is the default. Each image-to-video
 // endpoint costs what its text-to-video one does (catalog, 2026-11-18), and H3's takes no aspect_ratio.
 var videoModels = map[string]videoModel{
 	"minimax/h3/text-to-video": {

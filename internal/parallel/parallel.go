@@ -130,13 +130,20 @@ type fetchPolicy struct {
 	TimeoutSeconds int `json:"timeout_seconds"`
 }
 
+type excerptSettings struct {
+	MaxCharsPerResult int `json:"max_chars_per_result"`
+}
+
+// why: Parallel returns excerpts by default and full content only when it is asked for.
 type extractSettings struct {
-	FullContent fullContent `json:"full_content"`
-	FetchPolicy fetchPolicy `json:"fetch_policy"`
+	FullContent     *fullContent     `json:"full_content,omitempty"`
+	ExcerptSettings *excerptSettings `json:"excerpt_settings,omitempty"`
+	FetchPolicy     fetchPolicy      `json:"fetch_policy"`
 }
 
 type extractRequest struct {
 	URLs             []string        `json:"urls"`
+	Objective        string          `json:"objective,omitempty"`
 	AdvancedSettings extractSettings `json:"advanced_settings"`
 }
 
@@ -144,12 +151,15 @@ func (e *Extract) Fetch(ctx context.Context, req *web.FetchRequest) (web.Page, e
 	ctx, cancel := context.WithTimeout(ctx, e.Timeout)
 	defer cancel()
 	body := extractRequest{
-		URLs: []string{req.UpstreamURL()},
-		AdvancedSettings: extractSettings{
-			FullContent: fullContent{MaxCharsPerResult: web.MaxContentChars + 1},
-			FetchPolicy: fetchPolicy{TimeoutSeconds: liveFetchSeconds},
-		},
+		URLs:             []string{req.UpstreamURL()},
+		AdvancedSettings: extractSettings{FetchPolicy: fetchPolicy{TimeoutSeconds: liveFetchSeconds}},
 	}
+	if req.Objective() != "" {
+		body.Objective = req.Objective()
+		body.AdvancedSettings.ExcerptSettings = &excerptSettings{MaxCharsPerResult: web.MaxPurposeChars}
+		return e.fetchExcerpts(ctx, req, body)
+	}
+	body.AdvancedSettings.FullContent = &fullContent{MaxCharsPerResult: web.MaxContentChars + 1}
 	var got reply
 	if err := e.call(ctx, upstream.Request{Method: http.MethodPost, Path: extractPath, Body: jsonx.Encode(body)}, &got); err != nil {
 		return web.Page{}, err
@@ -162,4 +172,24 @@ func (e *Extract) Fetch(ctx context.Context, req *web.FetchRequest) (web.Page, e
 	}
 	r := got.Results[0]
 	return web.NewPage(req, r.URL, r.Title, r.PublishDate, *r.FullContent), nil
+}
+
+func (e *Extract) fetchExcerpts(ctx context.Context, req *web.FetchRequest, body extractRequest) (web.Page, error) {
+	var got reply
+	if err := e.call(ctx, upstream.Request{Method: http.MethodPost, Path: extractPath, Body: jsonx.Encode(body)}, &got); err != nil {
+		return web.Page{}, err
+	}
+	if got.Results == nil {
+		return web.Page{}, web.ErrUpstream
+	}
+	if len(got.Results) == 0 {
+		return web.Page{}, web.ErrFetchFailed
+	}
+	r := got.Results[0]
+	text := strings.TrimSpace(strings.Join(r.Excerpts, "\n\n"))
+	if text == "" {
+		return web.Page{}, web.ErrFetchFailed
+	}
+	text, _ = web.Clip(text, web.MaxPurposeChars)
+	return web.NewPage(req, r.URL, r.Title, r.PublishDate, text), nil
 }

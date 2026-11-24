@@ -141,10 +141,11 @@ func TestFetchRequestTakesOnlyAnHTTPURLWithoutCredentialsAndSendsItWithoutTheFra
 		}
 	}
 	for name, body := range map[string]string{
-		"session_id": `{"model":"m","url":"https://a.example","session_id":"s"}`,
-		"objective":  `{"model":"m","url":"https://a.example","objective":"o"}`,
-		"urls":       `{"model":"m","urls":["https://a.example"]}`,
-		"no model":   `{"url":"https://a.example"}`,
+		"session_id":     `{"model":"m","url":"https://a.example","session_id":"s"}`,
+		"objective":      `{"model":"m","url":"https://a.example","objective":7}`,
+		"long objective": `{"model":"m","url":"https://a.example","objective":"` + strings.Repeat("x", web.MaxObjectiveChars+1) + `"}`,
+		"urls":           `{"model":"m","urls":["https://a.example"]}`,
+		"no model":       `{"url":"https://a.example"}`,
 	} {
 		var refusal strictjson.Invalid
 		if _, err := web.ParseFetchRequest(strings.NewReader(body)); !errors.As(err, &refusal) {

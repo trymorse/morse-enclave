@@ -82,3 +82,17 @@ func TestThePublishedInstructionIsTheTextItsVersionNames(t *testing.T) {
 		t.Errorf("the published instruction hashes to %s, not the text Version %s names; when the instruction changes on purpose, bump Version and update the pin", got, Version)
 	}
 }
+
+func TestAnIncludedChatKeepsRoomFreeForARepliesWebResearch(t *testing.T) {
+	t.Parallel()
+	for name, c := range map[string]struct{ limit, model, want int }{
+		"free on a model with a larger window":                   {100_000, 1_000_000, 49_000},
+		"paid on a model with a larger window":                   {200_000, 1_000_000, 49_000},
+		"a model whose window ends at the plan":                  {100_000, 100_000, WebReplyReserveTokens + MaxOutputReserve},
+		"a window too small to hold the reserve and half a chat": {32_000, 1_000_000, 0},
+	} {
+		if got := ReplyReserve(c.limit, c.model); got != c.want {
+			t.Errorf("%s: reserve %d, want %d", name, got, c.want)
+		}
+	}
+}

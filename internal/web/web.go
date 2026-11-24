@@ -69,9 +69,14 @@ func (r SearchRequest) String() string {
 func (r SearchRequest) GoString() string { return r.String() }
 
 type FetchRequest struct {
-	Model string
-	url   string
+	Model     string
+	url       string
+	objective string
 }
+
+const MaxPurposeChars = 6000
+
+func (r FetchRequest) Objective() string { return r.objective }
 
 func (r FetchRequest) ModelName() string { return r.Model }
 
@@ -113,7 +118,7 @@ func ParseSearchRequest(body io.Reader) (*SearchRequest, error) {
 }
 
 func ParseFetchRequest(body io.Reader) (*FetchRequest, error) {
-	fields, err := strictjson.Object(body, "model", "url")
+	fields, err := strictjson.Object(body, "model", "url", "objective")
 	if err != nil {
 		return nil, err
 	}
@@ -129,7 +134,14 @@ func ParseFetchRequest(body io.Reader) (*FetchRequest, error) {
 	if !ok || !fetchable(page) {
 		return nil, ErrInvalidURL
 	}
-	return &FetchRequest{Model: model, url: page}, nil
+	var objective string
+	if raw, ok := fields["objective"]; ok && json.Unmarshal(raw, &objective) != nil {
+		return nil, strictjson.Invalid("objective must be a string.")
+	}
+	if objective = strings.TrimSpace(objective); utf8.RuneCountInString(objective) > MaxObjectiveChars {
+		return nil, strictjson.Invalid(fmt.Sprintf("objective must be at most %d characters.", MaxObjectiveChars))
+	}
+	return &FetchRequest{Model: model, url: page, objective: objective}, nil
 }
 
 func fetchable(page string) bool {

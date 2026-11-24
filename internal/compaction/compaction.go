@@ -62,3 +62,16 @@ func Threshold(contextTokens, defaultMaxTokens int) int {
 	room := contextTokens - min(defaultMaxTokens, MaxOutputReserve) - SummaryReserve
 	return min(contextTokens*ThresholdPercent/100, room)
 }
+
+const WebReplyReserveTokens = 49_000
+
+func ReplyReserve(limit, modelTokens int) int {
+	reserve := WebReplyReserveTokens
+	if limit >= modelTokens {
+		reserve += MaxOutputReserve
+	}
+	if limit-reserve < limit/3 {
+		return 0
+	}
+	return reserve
+}
