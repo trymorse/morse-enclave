@@ -201,7 +201,7 @@ func (w *InProcess) openChat(o Opening, d dialect.Dialect, compaction bool) (Adm
 		}
 	}
 	route := routes[0]
-	oc := &openedChat{cuts: newCuts(), routes: routes, first: route, protocol: p, call: chat.Call{Request: req, RouteEffort: route.DefaultReasoningEffort, Efforts: route.ReasoningEfforts, Settings: settings}, launch: o.Launch, own: o.Own, writing: o.Writing, dialect: d, reply: reply,
+	oc := &openedChat{cuts: newCuts(), routes: routes, first: route, protocol: p, call: chat.Call{Request: req, RouteEffort: route.DefaultReasoningEffort, Efforts: route.ReasoningEfforts, Settings: settings, CarryReasoning: !o.KeyCaller && p.scheme == nil && req.CarriesReasoning()}, launch: o.Launch, own: o.Own, writing: o.Writing, dialect: d, reply: reply,
 		relayNamed: o.inTheClear(ask), ownCacheKey: w.ownCacheKey(o, ask, name.model, req)}
 	if compaction {
 		err = oc.compact(o.Cast)

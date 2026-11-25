@@ -3,6 +3,7 @@ package worker
 import (
 	"cmp"
 	"context"
+	"crypto/rand"
 	"fmt"
 	"sync"
 	"time"
@@ -46,6 +47,9 @@ type InProcess struct {
 	counters       counters
 	sealing        sealedState
 	privacyVeil    *PrivacyVeil
+	promptCheck    *PromptCheck
+	screened       map[string]Screened
+	instance       string
 	clips          *SealedClips
 	mu             sync.Mutex
 	last           uint64
@@ -90,6 +94,7 @@ type Config struct {
 	VendorPinsMode string
 	RoutesData     func() *RoutesData
 	PrivacyVeil    *PrivacyVeil
+	PromptCheck    *PromptCheck
 	Clips          *SealedClips
 }
 
@@ -104,7 +109,7 @@ func NewInProcess(cfg Config) (*InProcess, error) {
 		searches: map[string]web.Searcher{}, fetches: map[string]web.Fetcher{}, researchers: map[string]research.Researcher{}, transcribers: map[string]transcriber{},
 		speakers:  map[string]speech.Speaker{},
 		endpoints: map[string]catalog.EndpointID{},
-		lookup:    cfg.Lookup, plugins: cfg.Plugins, reports: cfg.Reports, unpinned: cfg.Unpinned, vendorPins: cfg.VendorPins, vendorPinsMode: cfg.VendorPinsMode, routesData: cfg.RoutesData, privacyVeil: cfg.PrivacyVeil, clips: cfg.Clips,
+		lookup:    cfg.Lookup, plugins: cfg.Plugins, reports: cfg.Reports, unpinned: cfg.Unpinned, vendorPins: cfg.VendorPins, vendorPinsMode: cfg.VendorPinsMode, routesData: cfg.RoutesData, privacyVeil: cfg.PrivacyVeil, promptCheck: cfg.PromptCheck, screened: map[string]Screened{}, instance: rand.Text(), clips: cfg.Clips,
 		now: cfg.Now, keepaliveEvery: cmp.Or(cfg.Keepalive, keepalive), videoSubmit: cmp.Or(cfg.VideoSubmit, videoSubmitTimeout), proofBudget: cmp.Or(cfg.ProofBudget, proofBudget), opened: map[Handle]*entry{},
 		tiers: map[string]catalog.Tier{}, runs: map[Handle]*taskRun{}, taskLife: taskrun.RunLife,
 	}
@@ -153,8 +158,10 @@ func (w *InProcess) indexNonChat(name string, m Model) {
 		switch s := vendor.Serves.(type) {
 		case Images:
 			w.images[name] = s.ImageGenerator
+			w.screened[name] = s.Screened
 		case Videos:
 			w.videos[name] = s.VideoGenerator
+			w.screened[name] = s.Screened
 			w.uploadsVideo[name] = s.UploadsOutput
 		case Search:
 			w.searches[name] = s.Searcher
@@ -184,6 +191,9 @@ func (w *InProcess) Unpinned(context.Context) (Unpinned, error) {
 	}
 	if w.routesData != nil {
 		u.RoutesData = w.routesData()
+	}
+	if totals := w.promptChecks(); len(totals) > 0 {
+		u.PromptChecks = &PromptChecks{Worker: w.instance, Totals: totals}
 	}
 	return u, nil
 }

@@ -2,11 +2,15 @@ package anthropic
 
 import (
 	"encoding/json"
+	"maps"
 	"net/http"
+	"slices"
+	"unicode/utf8"
 
 	"morse/backend/internal/apierr"
 	"morse/backend/internal/chat"
 	"morse/backend/internal/completions"
+	"morse/backend/internal/jsonx"
 	"morse/backend/internal/upstream"
 )
 
@@ -18,6 +22,15 @@ const (
 	blockText     = "text"
 	blockToolUse  = "tool_use"
 	blockThinking = "thinking"
+	blockRedacted = "redacted_thinking"
+
+	bindingBeta   = "thinking-binding-controls-2026-08-01"
+	dropMismatch  = "drop_block"
+	adaptive      = "adaptive"
+	summarized    = "summarized"
+	layoutThought = 't'
+	layoutText    = 'x'
+	layoutCall    = 'u'
 )
 
 var roles = map[bool]string{false: roleUser, true: roleAssistant}
@@ -51,8 +64,22 @@ type request struct {
 }
 
 type thinking struct {
-	Type    string `json:"type"`
-	Display string `json:"display"`
+	Type         string        `json:"type"`
+	Display      string        `json:"display,omitempty"`
+	BlockBinding *blockBinding `json:"block_binding,omitempty"`
+}
+
+type blockBinding struct {
+	PrefixMismatchBehavior string `json:"prefix_mismatch_behavior"`
+}
+
+// why: block_binding is accepted only under this beta header, and with it a replayed thinking block whose prefix
+// changed is dropped, not refused (https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting).
+func (r request) Header() http.Header {
+	if r.Thinking == nil || r.Thinking.BlockBinding == nil {
+		return nil
+	}
+	return http.Header{"Anthropic-Beta": {bindingBeta}}
 }
 
 type outputConfig struct {
@@ -92,6 +119,24 @@ func (textBlock) block()       {}
 func (imageBlock) block()      {}
 func (toolUseBlock) block()    {}
 func (toolResultBlock) block() {}
+func (thoughtBlock) block()    {}
+
+type thoughtBlock struct {
+	Type      string  `json:"type"`
+	Thinking  *string `json:"thinking,omitempty"`
+	Signature string  `json:"signature,omitempty"`
+	Data      string  `json:"data,omitempty"`
+}
+
+func (b thoughtBlock) replayable() bool {
+	switch b.Type {
+	case blockThinking:
+		return b.Thinking != nil && b.Signature != "" && b.Data == ""
+	case blockRedacted:
+		return b.Data != "" && b.Thinking == nil && b.Signature == ""
+	}
+	return false
+}
 
 type textBlock struct {
 	Type         string        `json:"type"`
@@ -148,6 +193,7 @@ type blockStart struct {
 		Type string `json:"type"`
 		ID   string `json:"id"`
 		Name string `json:"name"`
+		Data string `json:"data"`
 	} `json:"content_block"`
 }
 
@@ -157,6 +203,7 @@ type blockDelta struct {
 		Type        string `json:"type"`
 		Text        string `json:"text"`
 		Thinking    string `json:"thinking"`
+		Signature   string `json:"signature"`
 		PartialJSON string `json:"partial_json"`
 	} `json:"delta"`
 }
@@ -193,14 +240,73 @@ func (t translator) Request(conv completions.Conversation) (string, string, any)
 	return messagesPath, "application/json", t.request(conv)
 }
 
-func (translator) Events(w *completions.Writer) func([]byte) (bool, error) {
-	return (&translation{w: w}).events().ByType
+func (t translator) Events(w *completions.Writer) func([]byte) (bool, error) {
+	return (&translation{w: w, model: t.model, heard: map[int]*heardBlock{}}).events().ByType
 }
 
 type translation struct {
 	w        *completions.Writer
+	model    string
 	tokens   chat.Usage
 	detailed bool
+	heard    map[int]*heardBlock
+}
+
+type heardBlock struct {
+	kind    rune
+	thought thoughtBlock
+	text    int
+}
+
+func (s *translation) hear(e blockStart) {
+	if !s.w.CarriesReasoning() {
+		return
+	}
+	switch e.ContentBlock.Type {
+	case blockThinking:
+		s.heard[e.Index] = &heardBlock{kind: layoutThought, thought: thoughtBlock{Type: blockThinking, Thinking: new(string)}}
+	case blockRedacted:
+		s.heard[e.Index] = &heardBlock{kind: layoutThought, thought: thoughtBlock{Type: blockRedacted, Data: e.ContentBlock.Data}}
+	case blockText:
+		s.heard[e.Index] = &heardBlock{kind: layoutText}
+	case blockToolUse:
+		s.heard[e.Index] = &heardBlock{kind: layoutCall}
+	}
+}
+
+func (s *translation) hearDelta(e blockDelta) {
+	b := s.heard[e.Index]
+	if b == nil {
+		return
+	}
+	switch {
+	case b.kind == layoutText:
+		b.text += len(e.Delta.Text)
+	case b.thought.Type == blockThinking:
+		*b.thought.Thinking += e.Delta.Thinking
+		b.thought.Signature += e.Delta.Signature
+	}
+}
+
+func (s *translation) reasoningState() completions.ReasoningState {
+	var state completions.ReasoningState
+	var layout []rune
+	for _, index := range slices.Sorted(maps.Keys(s.heard)) {
+		b := s.heard[index]
+		switch {
+		case b.kind == layoutText && b.text == 0:
+			continue
+		case b.kind == layoutText:
+			state.Texts = append(state.Texts, b.text)
+		case b.kind == layoutThought && !b.thought.replayable():
+			return completions.ReasoningState{}
+		case b.kind == layoutThought:
+			state.Items = append(state.Items, jsonx.Encode(b.thought))
+		}
+		layout = append(layout, b.kind)
+	}
+	state.Layout = string(layout)
+	return state
 }
 
 func (s *translation) events() completions.Events {
@@ -210,6 +316,7 @@ func (s *translation) events() completions.Events {
 			return false, s.w.Start()
 		}),
 		"content_block_start": completions.On(func(e blockStart) (bool, error) {
+			s.hear(e)
 			switch e.ContentBlock.Type {
 			case blockToolUse:
 				return false, s.w.ToolStart(e.Index, e.ContentBlock.ID, e.ContentBlock.Name)
@@ -219,6 +326,7 @@ func (s *translation) events() completions.Events {
 			return false, nil
 		}),
 		"content_block_delta": completions.On(func(e blockDelta) (bool, error) {
+			s.hearDelta(e)
 			switch e.Delta.Type {
 			case "text_delta":
 				return false, s.w.Text(e.Delta.Text)
@@ -251,6 +359,11 @@ func (s *translation) messageDelta(e messageDelta) (bool, error) {
 	if finish == "" {
 		finish = completions.FinishStop
 	}
+	if finish == completions.FinishToolCalls {
+		if err := s.w.ReasoningState(s.model, s.reasoningState()); err != nil {
+			return false, err
+		}
+	}
 	return false, s.w.Finish(finish)
 }
 
@@ -267,21 +380,80 @@ func (t translator) request(conv completions.Conversation) request {
 		out.OutputConfig = &outputConfig{Effort: conv.ForwardedEffort}
 	}
 	if conv.ReasoningView.Summarizes() {
-		out.Thinking = &thinking{Type: "adaptive", Display: "summarized"}
+		out.Thinking = &thinking{Type: adaptive, Display: summarized}
 	}
 	system, exchanges := conv.Alternating()
 	for _, text := range system {
 		out.System = append(out.System, textBlock{Type: blockText, Text: text})
 	}
+	replays := false
 	for _, x := range exchanges {
 		message := turn{Role: roles[x.FromModel]}
-		for _, t := range x.Turns {
-			message.Content = append(message.Content, blocks(t)...)
+		for _, said := range x.Turns {
+			if replayed, ok := t.replayed(conv, said); ok {
+				replays = true
+				message.Content = append(message.Content, replayed...)
+				continue
+			}
+			message.Content = append(message.Content, blocks(said)...)
 		}
 		out.Messages = append(out.Messages, message)
 	}
+	if replays {
+		if out.Thinking == nil {
+			out.Thinking = &thinking{Type: adaptive}
+		}
+		out.Thinking.BlockBinding = &blockBinding{PrefixMismatchBehavior: dropMismatch}
+	}
 	out.cacheRepeatedPrefix(conv.RequestBytes)
 	return out
+}
+
+// why: Anthropic refuses a turn whose thinking blocks are reordered, edited, or partly dropped, so a turn goes back
+// with its thinking only when every block of it can be put where it was
+// (https://platform.claude.com/docs/en/build-with-claude/thinking#preserving-thinking-blocks).
+func (t translator) replayed(conv completions.Conversation, said completions.Turn) ([]block, bool) {
+	state, ok := conv.StateOf(said, t.model)
+	if !ok {
+		return nil, false
+	}
+	texts, ok := splitText(said.Text, state.Texts)
+	if !ok {
+		return nil, false
+	}
+	thoughts, calls := state.Items, toolUseBlocks(said.Calls)
+	var out []block
+	for _, kind := range state.Layout {
+		switch {
+		case kind == layoutThought && len(thoughts) > 0:
+			var thought thoughtBlock
+			if json.Unmarshal(thoughts[0], &thought) != nil || !thought.replayable() {
+				return nil, false
+			}
+			out, thoughts = append(out, thought), thoughts[1:]
+		case kind == layoutText && len(texts) > 0:
+			out, texts = append(out, textBlock{Type: blockText, Text: texts[0]}), texts[1:]
+		case kind == layoutCall && len(calls) > 0:
+			out, calls = append(out, calls[0]), calls[1:]
+		default:
+			return nil, false
+		}
+	}
+	return out, len(thoughts)+len(texts)+len(calls) == 0
+}
+
+func splitText(text string, lengths []int) ([]string, bool) {
+	var parts []string
+	at := 0
+	for _, n := range lengths {
+		end := at + n
+		if n <= 0 || end > len(text) || end < len(text) && !utf8.RuneStart(text[end]) {
+			return nil, false
+		}
+		parts = append(parts, text[at:end])
+		at = end
+	}
+	return parts, at == len(text)
 }
 
 func blocks(t completions.Turn) []block {

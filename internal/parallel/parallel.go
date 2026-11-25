@@ -17,15 +17,21 @@ import (
 )
 
 const (
-	ExtractModel     = "extract"
-	searchPath       = "/v1/search"
-	extractPath      = "/v1/extract"
-	maxReplyBytes    = 8 << 20
-	searchTimeout    = 20 * time.Second
-	extractTimeout   = 40 * time.Second
-	liveFetchSeconds = 30
-	sharedRPM        = 500
+	ExtractModel      = "extract"
+	searchPath        = "/v1/search"
+	extractPath       = "/v1/extract"
+	maxReplyBytes     = 8 << 20
+	searchTimeout     = 20 * time.Second
+	extractTimeout    = 40 * time.Second
+	liveFetchSeconds  = 10
+	retryFetchSeconds = 20
+	fetchTimedOut     = "timeout"
+	sharedRPM         = 500
 )
+
+// why: Parallel answers a read from its cache however old the copy unless the request sets max_age_seconds, and gave
+// a read with an objective a copy nine months old (https://docs.parallel.ai/extract/advanced-extract-settings).
+const maxPageAgeSeconds = 24 * 60 * 60
 
 var (
 	SearchLimit  = limits.SharedLimit{Subject: "parallel/search", RPM: sharedRPM}
@@ -57,10 +63,16 @@ type result struct {
 	PublishDate *string  `json:"publish_date"`
 	Excerpts    []string `json:"excerpts"`
 	FullContent *string  `json:"full_content"`
+	AcquiredAt  *string  `json:"acquired_at"`
+}
+
+type failure struct {
+	Type string `json:"error_type"`
 }
 
 type reply struct {
-	Results []result `json:"results"`
+	Results []result  `json:"results"`
+	Errors  []failure `json:"errors"`
 }
 
 type Search struct {
@@ -76,8 +88,13 @@ func NewSearch(baseURL, apiKey, mode string, httpClient *http.Client) (*Search, 
 	return &Search{client: newClient(baseURL, apiKey, httpClient, webErrors), mode: mode, Timeout: searchTimeout}, nil
 }
 
+type sourcePolicy struct {
+	IncludeDomains []string `json:"include_domains"`
+}
+
 type searchSettings struct {
-	MaxResults int `json:"max_results"`
+	MaxResults   int           `json:"max_results"`
+	SourcePolicy *sourcePolicy `json:"source_policy,omitempty"`
 }
 
 // Parallel bills an omitted mode as advanced, five times the price of fast.
@@ -95,6 +112,9 @@ func (s *Search) Search(ctx context.Context, req *web.SearchRequest) (web.Result
 	body := searchRequest{
 		Mode: s.mode, SearchQueries: req.Queries(), Objective: req.Objective(),
 		MaxCharsTotal: web.MaxExcerptChars, AdvancedSettings: searchSettings{MaxResults: web.MaxResults},
+	}
+	if domains := req.Domains(); len(domains) > 0 {
+		body.AdvancedSettings.SourcePolicy = &sourcePolicy{IncludeDomains: domains}
 	}
 	var got reply
 	if err := s.call(ctx, upstream.Request{Method: http.MethodPost, Path: searchPath, Body: jsonx.Encode(body)}, &got); err != nil {
@@ -128,6 +148,7 @@ type fullContent struct {
 
 type fetchPolicy struct {
 	TimeoutSeconds int `json:"timeout_seconds"`
+	MaxAgeSeconds  int `json:"max_age_seconds"`
 }
 
 type excerptSettings struct {
@@ -152,7 +173,7 @@ func (e *Extract) Fetch(ctx context.Context, req *web.FetchRequest) (web.Page, e
 	defer cancel()
 	body := extractRequest{
 		URLs:             []string{req.UpstreamURL()},
-		AdvancedSettings: extractSettings{FetchPolicy: fetchPolicy{TimeoutSeconds: liveFetchSeconds}},
+		AdvancedSettings: extractSettings{FetchPolicy: fetchPolicy{TimeoutSeconds: liveFetchSeconds, MaxAgeSeconds: maxPageAgeSeconds}},
 	}
 	if req.Objective() != "" {
 		body.Objective = req.Objective()
@@ -160,8 +181,8 @@ func (e *Extract) Fetch(ctx context.Context, req *web.FetchRequest) (web.Page, e
 		return e.fetchExcerpts(ctx, req, body)
 	}
 	body.AdvancedSettings.FullContent = &fullContent{MaxCharsPerResult: web.MaxContentChars + 1}
-	var got reply
-	if err := e.call(ctx, upstream.Request{Method: http.MethodPost, Path: extractPath, Body: jsonx.Encode(body)}, &got); err != nil {
+	got, err := e.extract(ctx, body)
+	if err != nil {
 		return web.Page{}, err
 	}
 	switch {
@@ -171,12 +192,29 @@ func (e *Extract) Fetch(ctx context.Context, req *web.FetchRequest) (web.Page, e
 		return web.Page{}, web.ErrFetchFailed
 	}
 	r := got.Results[0]
-	return web.NewPage(req, r.URL, r.Title, r.PublishDate, *r.FullContent), nil
+	return web.NewPage(req, r.URL, r.Title, r.PublishDate, *r.FullContent).FetchedAt(r.AcquiredAt), nil
+}
+
+// why: Parallel answers a live fetch that outruns timeout_seconds with its older copy, and with a timeout error
+// when it has none (https://docs.parallel.ai/extract/advanced-extract-settings), so only that error waits longer.
+func (e *Extract) extract(ctx context.Context, body extractRequest) (reply, error) {
+	got, err := e.post(ctx, body)
+	if err != nil || got.Results == nil || len(got.Results) > 0 || !slices.ContainsFunc(got.Errors, func(f failure) bool { return f.Type == fetchTimedOut }) {
+		return got, err
+	}
+	body.AdvancedSettings.FetchPolicy.TimeoutSeconds = retryFetchSeconds
+	return e.post(ctx, body)
+}
+
+func (e *Extract) post(ctx context.Context, body extractRequest) (reply, error) {
+	var got reply
+	err := e.call(ctx, upstream.Request{Method: http.MethodPost, Path: extractPath, Body: jsonx.Encode(body)}, &got)
+	return got, err
 }
 
 func (e *Extract) fetchExcerpts(ctx context.Context, req *web.FetchRequest, body extractRequest) (web.Page, error) {
-	var got reply
-	if err := e.call(ctx, upstream.Request{Method: http.MethodPost, Path: extractPath, Body: jsonx.Encode(body)}, &got); err != nil {
+	got, err := e.extract(ctx, body)
+	if err != nil {
 		return web.Page{}, err
 	}
 	if got.Results == nil {
@@ -191,5 +229,5 @@ func (e *Extract) fetchExcerpts(ctx context.Context, req *web.FetchRequest, body
 		return web.Page{}, web.ErrFetchFailed
 	}
 	text, _ = web.Clip(text, web.MaxPurposeChars)
-	return web.NewPage(req, r.URL, r.Title, r.PublishDate, text), nil
+	return web.NewPage(req, r.URL, r.Title, r.PublishDate, text).FetchedAt(r.AcquiredAt), nil
 }

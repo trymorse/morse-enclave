@@ -194,3 +194,66 @@ func TestAToolsSchemaIsAlwaysAnObjectSchema(t *testing.T) {
 		}
 	}
 }
+
+func TestAnAssistantTurnKeepsItsReasoningStateOnlyForACallThatCarriesReasoning(t *testing.T) {
+	const body = `{"model":"m","messages":[{"role":"user","content":"hi","reasoning_state":"from-a-user"},` +
+		`{"role":"assistant","content":"Checking.","reasoning_state":"c3RhdGU","tool_calls":[{"id":"c1","type":"function","function":{"name":"f","arguments":"{}"}}]},` +
+		`{"role":"tool","tool_call_id":"c1","content":"ok","reasoning_state":"from-a-tool"},` +
+		`{"role":"assistant","content":"Done.","reasoning_state":7}]}`
+	call := parse(t, body)
+	plain, err := parseConversation(call)
+	if err != nil || plain.CarryReasoning {
+		t.Fatalf("conv %+v err %v", plain, err)
+	}
+	for i, turn := range plain.Turns {
+		if turn.ReasoningState != "" {
+			t.Errorf("turn %d of a call that carries no reasoning kept state %q", i, turn.ReasoningState)
+		}
+	}
+	call.CarryReasoning = true
+	carried, err := parseConversation(call)
+	if err != nil || !carried.CarryReasoning || len(carried.Turns) != 4 {
+		t.Fatalf("conv %+v err %v", carried, err)
+	}
+	var states []string
+	for _, turn := range carried.Turns {
+		states = append(states, turn.ReasoningState)
+	}
+	if !slices.Equal(states, []string{"", "c3RhdGU", "", ""}) {
+		t.Errorf("states %q, want only the assistant turn's own string", states)
+	}
+	bare := carried.withoutReasoningStates()
+	if bare.Turns[1].ReasoningState != "" || carried.Turns[1].ReasoningState != "c3RhdGU" || bare.Turns[1].Text != "Checking." {
+		t.Errorf("without its states the conversation is %+v, and the one it came from %+v", bare.Turns[1], carried.Turns[1])
+	}
+}
+
+func TestAStateIsReadOnlyByTheEndpointAndModelItWasWrittenFor(t *testing.T) {
+	wrote := ReasoningState{Layout: "rf", Items: []json.RawMessage{json.RawMessage(`{"type":"reasoning"}`)}, Texts: []int{3}}
+	state := encodeState("https://api.vendor.test", "model-a", wrote)
+	turn := Turn{Role: Assistant, ReasoningState: state}
+	conv := Conversation{CarryReasoning: true, Endpoint: "https://api.vendor.test"}
+	got, ok := conv.StateOf(turn, "model-a")
+	if !ok || got.Layout != "rf" || len(got.Items) != 1 || string(got.Items[0]) != `{"type":"reasoning"}` || !slices.Equal(got.Texts, []int{3}) {
+		t.Fatalf("state %+v ok %t", got, ok)
+	}
+	for name, c := range map[string]struct {
+		conv  Conversation
+		turn  Turn
+		model string
+	}{
+		"another model":                    {conv, turn, "model-b"},
+		"another endpoint":                 {Conversation{CarryReasoning: true, Endpoint: "https://other.vendor.test"}, turn, "model-a"},
+		"a call that carries no reasoning": {Conversation{Endpoint: "https://api.vendor.test"}, turn, "model-a"},
+		"a user's turn":                    {conv, Turn{Role: User, ReasoningState: state}, "model-a"},
+		"a state with no items":            {conv, Turn{Role: Assistant, ReasoningState: encodeState("https://api.vendor.test", "model-a", ReasoningState{Layout: "f"})}, "model-a"},
+		"an empty state":                   {conv, Turn{Role: Assistant}, "model-a"},
+	} {
+		if got, ok := c.conv.StateOf(c.turn, c.model); ok {
+			t.Errorf("%s read the state: %+v", name, got)
+		}
+	}
+	if strings.Contains(state, "vendor") || strings.Contains(state, "model-a") {
+		t.Errorf("the state names its endpoint or model: %s", state)
+	}
+}

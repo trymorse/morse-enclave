@@ -1,10 +1,12 @@
 package completions
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 
 	"morse/backend/internal/apierr"
@@ -25,6 +27,8 @@ type Translator interface {
 	Request(conv Conversation) (path, accept string, body any)
 	Events(w *Writer) func(data []byte) (done bool, err error)
 }
+
+type headered interface{ Header() http.Header }
 
 type Events map[string]func(data []byte) (done bool, err error)
 
@@ -95,8 +99,15 @@ func (p *Provider) Complete(ctx context.Context, c chat.Call) (chat.Chunk, chat.
 
 func (p *Provider) run(ctx context.Context, conv Conversation, w *Writer) (chat.Usage, bool, error) {
 	conv.ReasoningView, w.view = p.ReasoningView, p.ReasoningView
-	path, accept, body := p.Translator.Request(conv)
-	resp, err := p.Open(ctx, upstream.Request{Method: http.MethodPost, Path: path, Header: http.Header{"Accept": {accept}}, Body: jsonx.Encode(body)})
+	conv.Endpoint, w.endpoint, w.carries = p.BaseURL, p.BaseURL, conv.CarryReasoning
+	asked := p.request(conv)
+	resp, err := p.Open(ctx, asked)
+	if refusedAsInvalid(err) {
+		if plain := p.request(conv.withoutReasoningStates()); !bytes.Equal(plain.Body, asked.Body) {
+			resp, err = p.Open(ctx, plain)
+			w.carries, w.forgets = false, true
+		}
+	}
 	if err != nil {
 		return chat.Usage{}, false, err
 	}
@@ -106,6 +117,20 @@ func (p *Provider) run(ctx context.Context, conv Conversation, w *Writer) (chat.
 		err = nil
 	}
 	return w.usage.Normalized(), w.detailed, err
+}
+
+func (p *Provider) request(conv Conversation) upstream.Request {
+	path, accept, body := p.Translator.Request(conv)
+	header := http.Header{"Accept": {accept}}
+	if h, ok := body.(headered); ok {
+		maps.Copy(header, h.Header())
+	}
+	return upstream.Request{Method: http.MethodPost, Path: path, Header: header, Body: jsonx.Encode(body)}
+}
+
+func refusedAsInvalid(err error) bool {
+	var refused upstream.Refused
+	return errors.As(err, &refused) && refused.Status == http.StatusBadRequest
 }
 
 type toolCall struct {
@@ -123,6 +148,9 @@ type Writer struct {
 	calls    map[int]*toolCall
 	usage    chat.Usage
 	detailed bool
+	endpoint string
+	carries  bool
+	forgets  bool
 }
 
 func (w *Writer) Count(u chat.Usage, detailed bool) { w.usage, w.detailed = u, detailed }
@@ -215,11 +243,29 @@ func (w *Writer) ToolEnd(key int, final string) error {
 	return w.emit(toolDelta(call.index, ToolCall{Function: FunctionCall{Arguments: final}}), nil)
 }
 
+func (w *Writer) CarriesReasoning() bool { return w.carries }
+
+func (w *Writer) ReasoningState(model string, s ReasoningState) error {
+	if !w.carries || len(s.Items) == 0 {
+		return nil
+	}
+	if err := w.Start(); err != nil {
+		return err
+	}
+	state := encodeState(w.endpoint, model, s)
+	return w.emit(delta{ReasoningState: &state}, nil)
+}
+
 func (w *Writer) Finished() bool { return w.finished }
 
 func (w *Writer) Finish(reason Finish) error {
 	if err := w.Start(); err != nil {
 		return err
+	}
+	if w.forgets {
+		if err := w.emit(delta{ReasoningState: new(string)}, nil); err != nil {
+			return err
+		}
 	}
 	w.finished = true
 	return w.emit(delta{}, &reason)

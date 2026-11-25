@@ -17,10 +17,29 @@ devel_aarch64=aws-nitro-enclaves-cli-devel-1.5.0-0.amzn2023.aarch64.rpm
 devel_aarch64_sha256=028013b5832dfef516ae25786a99465401ec7ad5e0a316f7bad0a792d6512284
 arch=$(docker version --format '{{.Server.Arch}}')
 [ "$arch" != amd64 ] || amazonlinux=$amazonlinux_amd64
+# Resolves a base image to a reference that is present locally, pulling it at most once per host: the mirror, then the
+# public registry with retries, then Docker Hub's identical copy (same digest). A rate limit on one registry must not fail
+# the build, and the rootfs and eif builds run at the same time, so a local copy is used without asking any registry again.
+pull_once() {
+  local ref=$1 try
+  docker image inspect "$ref" >/dev/null 2>&1 || {
+    for try in 1 2 3; do docker pull -q "$ref" >/dev/null 2>&1 && return 0; sleep $((try * 5)); done
+    return 1
+  }
+}
 mirrored() {
   local name=${1##*/}
   local copy=${IMAGE_MIRROR:-}/${name%%[:@]*}@${1#*@}
-  if [ -n "${IMAGE_MIRROR:-}" ] && docker pull -q "$copy" >/dev/null; then echo "$copy"; else echo "$1"; fi
+  # Docker Hub serves only the docker/library images under ECR Public's digests; amazonlinux has no such twin.
+  local hub=; [[ $1 != public.ecr.aws/docker/library/* ]] || hub=docker.io/library/${name}
+  if [ -n "${IMAGE_MIRROR:-}" ] && docker image inspect "$copy" >/dev/null 2>&1; then echo "$copy"
+  elif docker image inspect "$1" >/dev/null 2>&1; then echo "$1"
+  elif [ -n "$hub" ] && docker image inspect "$hub" >/dev/null 2>&1; then echo "$hub"
+  elif [ -n "${IMAGE_MIRROR:-}" ] && docker pull -q "$copy" >/dev/null 2>&1; then echo "$copy"
+  elif pull_once "$1"; then echo "$1"
+  elif [ -n "$hub" ] && pull_once "$hub"; then echo "$hub"
+  else echo "could not pull $1 from the mirror, ECR Public or Docker Hub" >&2; return 1
+  fi
 }
 golang=$(mirrored "$golang") amazonlinux=$(mirrored "$amazonlinux")
 veil_commit=$(cat "$(dirname "$0")/veil-commit")

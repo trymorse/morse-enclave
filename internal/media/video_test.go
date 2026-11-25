@@ -172,3 +172,76 @@ func TestAClipWithALastFrameOnOmniFlash12RunsThreeToTenSeconds(t *testing.T) {
 		}
 	}
 }
+
+func TestAClipTakesReferencePicturesUpToTheModelsLimitAndNeverBesideFrames(t *testing.T) {
+	pic := "data:image/png;base64," + pngBase64
+	refs := func(n int) string {
+		return strings.TrimSuffix(strings.Repeat(`"`+pic+`",`, n), ",")
+	}
+	body := func(seconds, n int) string {
+		return fmt.Sprintf(`{"model":"m","prompt":"p","seconds":%d,"reference_images":[%s]}`, seconds, refs(n))
+	}
+	seedance := media.Seedance25
+	seedance.MaxReferenceImages = media.MostReferencePictures
+	two := media.VideoSpec{MinSeconds: 1, MaxSeconds: 15, Resolutions: []string{"720p"}, MaxReferenceImages: 2}
+	for _, c := range []struct {
+		spec    media.VideoSpec
+		seconds int
+		n       int
+		refused string
+	}{
+		{two, 5, 2, ""},
+		{two, 5, 3, "at most 2 pictures"},
+		{media.VideoSpec{MinSeconds: 1, MaxSeconds: 15, Resolutions: []string{"720p"}}, 5, 1, "no reference_images"},
+		{media.GeminiOmniFlash12, 10, 10, ""},
+		{media.GeminiOmniFlash12, 11, 1, "at most 10 with reference_images"},
+		{media.GeminiOmniFlash12, 5, 11, "at most 10 pictures"},
+		{seedance, 30, 30, ""},
+		{media.HeyGenVideo1, 15, 1, ""},
+		{media.HeyGenVideo1, 16, 1, "at most 15 with reference_images"},
+		{media.HeyGenVideo1, 30, 0, ""},
+	} {
+		_, err := c.spec.ResolveVideo(*parseVideo(t, body(c.seconds, c.n)))
+		if (err == nil) != (c.refused == "") || (err != nil && !strings.Contains(err.Error(), c.refused)) {
+			t.Errorf("%d s with %d pictures: err %v, want %q", c.seconds, c.n, err, c.refused)
+		}
+	}
+	req, err := two.ResolveVideo(*parseVideo(t, body(5, 2)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := req.ReferenceImages(); len(got) != 2 || got[0] != pic {
+		t.Errorf("reference images %d", len(got))
+	}
+	if got := req.FrameDigests(); len(got) != 2 || got[0] != frameconsent.Of(mustDecode(t, pngBase64)) {
+		t.Errorf("a reference picture is an uploaded file for consent: %v", got)
+	}
+	var invalid strictjson.Invalid
+	// why: a model's own count is checked before any picture is read, so these unreadable entries are refused for their number, not as pictures.
+	_, err = two.ResolveVideo(*parseVideo(t, `{"model":"m","prompt":"p","seconds":5,"reference_images":["x","x","x"]}`))
+	if !errors.As(err, &invalid) || !strings.Contains(err.Error(), "at most 2 pictures") {
+		t.Errorf("three unreadable entries on a model taking two: %v", err)
+	}
+	_, err = two.ResolveVideo(*parseVideo(t, `{"model":"m","prompt":"p","seconds":5,"reference_images":["data:image/gif;base64,AAAA"]}`))
+	if !errors.As(err, &invalid) || !strings.Contains(err.Error(), "must be base64 data URLs") {
+		t.Errorf("one unreadable entry: %v", err)
+	}
+	// why: past the most any model takes, the count is refused before a picture is read, so these unreadable entries never reach the decoder.
+	_, err = media.ParseVideoRequest(strings.NewReader(`{"model":"m","prompt":"p","seconds":5,"reference_images":[` + strings.TrimSuffix(strings.Repeat(`"x",`, media.MostReferencePictures+1), ",") + `]}`))
+	if !errors.As(err, &invalid) || !strings.Contains(err.Error(), "at most 30 pictures") {
+		t.Errorf("31 pictures: %v", err)
+	}
+	_, err = media.ParseVideoRequest(strings.NewReader(`{"model":"m","prompt":"p","seconds":5,"image":"` + pic + `","reference_images":["` + pic + `"]}`))
+	if !errors.As(err, &invalid) || !strings.Contains(err.Error(), "not both") {
+		t.Errorf("a first frame beside reference pictures: %v", err)
+	}
+}
+
+func mustDecode(t *testing.T, b64 string) []byte {
+	t.Helper()
+	data, err := base64.StdEncoding.DecodeString(b64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
+}

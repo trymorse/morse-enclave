@@ -39,7 +39,7 @@ type openedCalls map[[2]int]bool
 // client still sees the id, type, and name it would from any host. A continuation that
 // carries no arguments is dropped, because it says nothing a client reads. In a whole message a call drops its index
 // and always carries id, type, and function.name and arguments.
-func uniformToolCalls(raw json.RawMessage, message bool, replyID string, choice int, opened openedCalls) (json.RawMessage, error) {
+func uniformToolCalls(raw json.RawMessage, message bool, replyID string, choice int, opened openedCalls, oneCall bool) (json.RawMessage, error) {
 	var calls []map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &calls); err != nil {
 		return nil, err
@@ -51,6 +51,9 @@ func uniformToolCalls(raw json.RawMessage, message bool, replyID string, choice 
 		index := position
 		if v, ok := c["index"]; ok && !message {
 			json.Unmarshal(v, &index)
+		}
+		if oneCall && index > 0 {
+			continue
 		}
 		key := [2]int{choice, index}
 		opens := message || !isNull(c["id"])

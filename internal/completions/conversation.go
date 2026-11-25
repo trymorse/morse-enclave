@@ -50,11 +50,12 @@ type Part struct {
 }
 
 type Turn struct {
-	Role   Role
-	Text   string
-	Parts  []Part
-	Calls  []ToolCall
-	CallID string
+	Role           Role
+	Text           string
+	Parts          []Part
+	Calls          []ToolCall
+	CallID         string
+	ReasoningState string
 }
 
 type Tool struct {
@@ -95,6 +96,8 @@ type Conversation struct {
 	ForwardedEffort string
 	RequestBytes    int
 	ReasoningView   catalog.ReasoningView
+	CarryReasoning  bool
+	Endpoint        string
 }
 
 // Exchange is one side's consecutive turns, which a vendor whose roles must alternate takes as one message.
@@ -138,7 +141,7 @@ func parseConversation(c chat.Call) (Conversation, error) {
 	if err != nil {
 		return Conversation{}, err
 	}
-	conv := Conversation{Parallel: parallel, OutputLimit: c.OutputLimit, Effort: c.Effort(), RequestBytes: c.Size()}
+	conv := Conversation{Parallel: parallel, OutputLimit: c.OutputLimit, Effort: c.Effort(), RequestBytes: c.Size(), CarryReasoning: c.CarryReasoning}
 	conv.ForwardedEffort, _ = c.ForwardedEffort()
 	if conv.Tools, err = tools(defs); err != nil {
 		return Conversation{}, err
@@ -150,6 +153,9 @@ func parseConversation(c chat.Call) (Conversation, error) {
 		turn, err := parseTurn(m)
 		if err != nil {
 			return Conversation{}, err
+		}
+		if !conv.CarryReasoning {
+			turn.ReasoningState = ""
 		}
 		if turn.Role == ToolResult || turn.Text != "" || len(turn.Parts) > 0 || len(turn.Calls) > 0 {
 			conv.Turns = append(conv.Turns, turn)
@@ -172,7 +178,7 @@ func parseTurn(m chat.Message) (Turn, error) {
 		return Turn{Role: System, Text: text}, nil
 	case "assistant":
 		calls, err := toolCalls(m.ToolCalls())
-		return Turn{Role: Assistant, Text: text, Calls: calls}, err
+		return Turn{Role: Assistant, Text: text, Calls: calls, ReasoningState: m.ReasoningState()}, err
 	case "tool":
 		var id string
 		if json.Unmarshal(m.ToolCallID(), &id) != nil || id == "" {

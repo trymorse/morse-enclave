@@ -122,6 +122,12 @@ func TestFieldsMapOntoTheirChatFields(t *testing.T) {
 		{`"input":"hi","tools":[{"type":"namespace","name":"agents","description":"subagents","tools":[{"type":"function","name":"close","parameters":{"type":"object"}}]}]`, "tools", `[{"function":{"name":"agents__close","parameters":{"type":"object"}},"type":"function"}]`},
 		{`"input":[{"type":"function_call","namespace":"agents","name":"close","arguments":"{}","call_id":"c"},{"type":"function_call_output","call_id":"c","output":"ok"}]`, "messages", `[{"content":null,"role":"assistant","tool_calls":[{"function":{"arguments":"{}","name":"agents__close"},"id":"c","type":"function"}]},{"content":"ok","role":"tool","tool_call_id":"c"}]`},
 		{`"input":"hi","store":false,"background":false,"previous_response_id":null,"truncation":"disabled","text":{"format":{"type":"text"}}`, "stream", `false`},
+		{`"input":"hi","text":{"format":{"type":"text"}}`, "response_format", `null`},
+		{`"input":"hi","text":{"verbosity":"low"}`, "response_format", `null`},
+		{`"input":"hi","text":{"format":{"type":"json_object"}}`, "response_format", `{"type":"json_object"}`},
+		{`"input":"hi","text":{"format":{"type":"json_schema","name":"city","description":"A city.","strict":true,"schema":{"type":"object","properties":{"name":{"type":"string"}},"required":["name"],"additionalProperties":false}}}`, "response_format",
+			`{"json_schema":{"description":"A city.","name":"city","schema":{"additionalProperties":false,"properties":{"name":{"type":"string"}},"required":["name"],"type":"object"},"strict":true},"type":"json_schema"}`},
+		{`"input":"hi","text":{"format":{"type":"json_schema","name":"city","schema":{"type":"object"}}}`, "response_format", `{"json_schema":{"name":"city","schema":{"type":"object"}},"type":"json_schema"}`},
 	} {
 		out := decoded(t, `{"model":"glm-5.3",`+c.extra+`}`)
 		if got := asJSON(out[c.field]); got != c.want {
@@ -146,7 +152,10 @@ func TestWhatMorseCannotServeIsRefusedNamingIt(t *testing.T) {
 		{`"tools":[{"type":"image_generation"}]`, "unsupported_parameter", "tools[0].type", "image_generation"},
 		{`"tools":[{"type":"namespace","name":"n","tools":[{"type":"web_search"}]}]`, "unsupported_parameter", "tools[0].tools[0].type", "in a namespace"},
 		{`"tool_choice":{"type":"allowed_tools","mode":"auto","tools":[]}`, "unsupported_parameter", "tool_choice", "allowed_tools"},
-		{`"text":{"format":{"type":"json_schema","name":"x","schema":{}}}`, "unsupported_parameter", "text.format", "structured outputs"},
+		{`"text":{"format":{"type":"grammar","definition":"start: x"}}`, "unsupported_parameter", "text.format", "text, json_object, and json_schema"},
+		{`"text":{"format":{"type":"json_schema","schema":{}}}`, "invalid_parameter", "text.format.name", "text.format.name"},
+		{`"text":{"format":{"type":"json_schema","name":"x"}}`, "invalid_parameter", "text.format.schema", "text.format.schema"},
+		{`"text":{"format":"json"}`, "invalid_parameter", "text.format", "an object with a type"},
 		{`"reasoning":{"effort":"huge"}`, "invalid_parameter", "reasoning.effort", "must be one of"},
 		{`"max_output_tokens":0`, "invalid_parameter", "max_output_tokens", "positive"},
 	} {
@@ -157,7 +166,7 @@ func TestWhatMorseCannotServeIsRefusedNamingIt(t *testing.T) {
 		}
 	}
 	for _, c := range []struct{ input, param, says string }{
-		{`[{"type":"item_reference","id":"msg_1"}]`, "input[0]", "item_reference"},
+		{`[{"type":"item_reference","id":"msg_1"}]`, "input[0]", "sets store: false"},
 		{`[{"type":"web_search_call","id":"ws_1"}]`, "input[0].type", "web_search_call"},
 		{`[{"role":"user","content":[{"type":"input_image","image_url":"https://example.com/a.png"}]}]`, "input[0].content[0].image_url", "linked by URL"},
 		{`[{"role":"user","content":[{"type":"input_image","file_id":"file_1"}]}]`, "input[0].content[0].file_id", "file_id"},

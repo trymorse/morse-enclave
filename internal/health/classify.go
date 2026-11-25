@@ -40,6 +40,8 @@ var byCode = map[string]Outcome{
 	apierr.ErrModelNotFound.Code:         ClientError,
 	apierr.ErrInvalidBody.Code:           ClientError,
 	apierr.ErrUnavailable.Code:           Shutdown,
+	// why: the check stopped the request before its vendor saw it, so its outage is not the vendor's.
+	apierr.ErrPromptCheckDown.Code: ClientError,
 }
 
 var breaksMidstream = map[Outcome]bool{UpstreamBusy: true, UpstreamError: true, UpstreamUnavailable: true}

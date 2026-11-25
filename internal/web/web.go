@@ -22,9 +22,11 @@ import (
 
 const (
 	MaxRequestBody    = 64 << 10
-	MaxQueries        = 3
+	MaxQueries        = 5
 	MaxQueryChars     = 200
 	MaxObjectiveChars = 500
+	MaxDomains        = 5
+	MaxDomainChars    = 253
 	MaxURLLength      = 2048
 	MaxResults        = 10
 	MaxExcerptChars   = 8000
@@ -58,11 +60,13 @@ type SearchRequest struct {
 	Model     string
 	queries   []string
 	objective string
+	domains   []string
 }
 
 func (r SearchRequest) ModelName() string { return r.Model }
 func (r SearchRequest) Queries() []string { return slices.Clone(r.queries) }
 func (r SearchRequest) Objective() string { return r.objective }
+func (r SearchRequest) Domains() []string { return slices.Clone(r.domains) }
 func (r SearchRequest) String() string {
 	return fmt.Sprintf("web.SearchRequest(%s, %d queries, objective %t)", r.Model, len(r.queries), r.objective != "")
 }
@@ -89,11 +93,15 @@ func (r FetchRequest) String() string   { return fmt.Sprintf("web.FetchRequest(%
 func (r FetchRequest) GoString() string { return r.String() }
 
 func ParseSearchRequest(body io.Reader) (*SearchRequest, error) {
-	fields, err := strictjson.Object(body, "model", "queries", "objective")
+	fields, err := strictjson.Object(body, "model", "queries", "objective", "domains")
 	if err != nil {
 		return nil, err
 	}
 	model, err := modelOf(fields)
+	if err != nil {
+		return nil, err
+	}
+	domains, err := domainsOf(fields)
 	if err != nil {
 		return nil, err
 	}
@@ -114,7 +122,40 @@ func ParseSearchRequest(body io.Reader) (*SearchRequest, error) {
 	if objective = strings.TrimSpace(objective); utf8.RuneCountInString(objective) > MaxObjectiveChars {
 		return nil, strictjson.Invalid(fmt.Sprintf("objective must be at most %d characters.", MaxObjectiveChars))
 	}
-	return &SearchRequest{Model: model, queries: queries, objective: objective}, nil
+	return &SearchRequest{Model: model, queries: queries, objective: objective, domains: domains}, nil
+}
+
+func domainsOf(fields map[string]json.RawMessage) ([]string, error) {
+	raw, ok := fields["domains"]
+	if !ok || string(raw) == "null" {
+		return nil, nil
+	}
+	var domains []string
+	if json.Unmarshal(raw, &domains) != nil || len(domains) > MaxDomains {
+		return nil, strictjson.Invalid(fmt.Sprintf("domains must be a list of at most %d domain names.", MaxDomains))
+	}
+	for i, d := range domains {
+		domains[i] = strings.ToLower(strings.TrimSpace(d))
+		if !domainName(domains[i]) {
+			return nil, strictjson.Invalid("Each domain must be a public domain name, such as example.com.")
+		}
+	}
+	return domains, nil
+}
+
+func domainName(host string) bool {
+	if host == "" || len(host) > MaxDomainChars || strings.Trim(host, "abcdefghijklmnopqrstuvwxyz0123456789.-") != "" {
+		return false
+	}
+	if _, err := netip.ParseAddr(host); err == nil {
+		return false
+	}
+	for label := range strings.SplitSeq(host, ".") {
+		if strings.HasPrefix(label, "-") || strings.HasSuffix(label, "-") {
+			return false
+		}
+	}
+	return publicHost(host)
 }
 
 func ParseFetchRequest(body io.Reader) (*FetchRequest, error) {
@@ -252,6 +293,7 @@ type Page struct {
 	url       string
 	title     string
 	published string
+	fetched   string
 	content   string
 	truncated bool
 }
@@ -263,6 +305,16 @@ func NewPage(req *FetchRequest, reported string, title, published *string, conte
 	}
 	body, truncated := Clip(content, MaxContentChars)
 	return Page{url: link, title: TitleOf(title), published: dateOf(published), content: body, truncated: truncated}
+}
+
+func (p Page) FetchedAt(acquired *string) Page {
+	if acquired == nil {
+		return p
+	}
+	if at, err := time.Parse(time.RFC3339, *acquired); err == nil {
+		p.fetched = at.UTC().Format(dateLayout)
+	}
+	return p
 }
 
 func (p Page) Truncated() bool { return p.truncated }
@@ -327,6 +379,7 @@ type wirePage struct {
 	URL       string  `json:"url"`
 	Title     *string `json:"title"`
 	Published *string `json:"published"`
+	Fetched   *string `json:"fetched"`
 	Content   string  `json:"content"`
 	Truncated bool    `json:"truncated"`
 }
@@ -341,7 +394,7 @@ func WriteResults(w io.Writer, rs Results) error {
 
 func WritePage(w io.Writer, p Page) error {
 	return encode(w, wirePage{
-		Object: "fetch.result", URL: p.url, Title: nullable(p.title), Published: nullable(p.published),
+		Object: "fetch.result", URL: p.url, Title: nullable(p.title), Published: nullable(p.published), Fetched: nullable(p.fetched),
 		Content: p.content, Truncated: p.truncated,
 	})
 }

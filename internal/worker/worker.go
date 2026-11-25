@@ -19,6 +19,7 @@ import (
 	"morse/backend/internal/jobs"
 	"morse/backend/internal/media"
 	"morse/backend/internal/plans/limits"
+	"morse/backend/internal/promptcheck"
 	"morse/backend/internal/upstream"
 )
 
@@ -57,6 +58,12 @@ type Unpinned struct {
 	VendorPins     *VendorPinsLag             `json:"vendor_pins,omitempty"`
 	VendorPinsMode string                     `json:"vendor_pins_mode,omitempty"`
 	RoutesData     *RoutesData                `json:"routes_data,omitempty"`
+	PromptChecks   *PromptChecks              `json:"prompt_checks,omitempty"`
+}
+
+type PromptChecks struct {
+	Worker string              `json:"worker"`
+	Totals []promptcheck.Total `json:"totals"`
 }
 
 type RoutesData struct {
@@ -227,6 +234,7 @@ func (ChatGrant) kind() grantKind { return grantsChat }
 type MediaGrant struct {
 	Units           int
 	ConsentedFrames []frameconsent.Digest `json:",omitempty"`
+	PromptCheck     bool                  `json:",omitempty"`
 }
 
 func (MediaGrant) kind() grantKind { return grantsMedia }
@@ -241,6 +249,7 @@ type JobGrant struct {
 	Deadline        time.Time
 	UploadURL       string
 	ConsentedFrames []frameconsent.Digest `json:",omitempty"`
+	PromptCheck     bool                  `json:",omitempty"`
 }
 
 type VideoReadGrant struct {

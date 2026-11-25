@@ -34,6 +34,8 @@ var sentinelOutcomes = map[string]struct {
 	"ErrUpstreamRetention":     {apierr.ErrUpstreamRetention, Retention},
 	"ErrModelNotFound":         {apierr.ErrModelNotFound, ClientError},
 	"ErrInvalidBody":           {apierr.ErrInvalidBody, ClientError},
+	"ErrPromptRefused":         {apierr.ErrPromptRefused, ContentFilter},
+	"ErrPromptCheckDown":       {apierr.ErrPromptCheckDown, ClientError},
 	"ErrUnavailable":           {apierr.ErrUnavailable, Shutdown},
 	"ErrShuttingDown":          {apierr.ErrShuttingDown, Shutdown},
 }

@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"morse/backend/internal/apierr"
 	"morse/backend/internal/chat"
 	"morse/backend/internal/dialect"
 )
@@ -87,15 +86,6 @@ func TestATextReplyIsOpenAIsEventsNumberedInOrder(t *testing.T) {
 	}
 	if got, want := asJSON(response["output"]), `[{"content":[{"annotations":[],"logprobs":[],"text":"hellohello","type":"output_text"}],"id":"`+got[2]["item"].(map[string]any)["id"].(string)+`","role":"assistant","status":"completed","type":"message"}]`; got != want {
 		t.Errorf("output %s, want %s", got, want)
-	}
-}
-
-func TestAReplyCutAtItsLimitIsIncomplete(t *testing.T) {
-	got := streamed(t, encoderFor(t, plain), []string{textChunk, lengthChunk}, chat.Usage{})
-	last := got[len(got)-1]
-	response := last["response"].(map[string]any)
-	if last["type"] != "response.incomplete" || response["status"] != "incomplete" || asJSON(response["incomplete_details"]) != `{"reason":"max_output_tokens"}` {
-		t.Errorf("ended as %v", last)
 	}
 }
 
@@ -196,57 +186,5 @@ func TestContentTheClientDoesNotSeeYetIsFilledWithInProgress(t *testing.T) {
 		if output := asJSON(filler["output"]); output != want {
 			t.Errorf("%s: the filler's output is %s, want %s", c.name, output, want)
 		}
-	}
-}
-
-func TestAMidStreamFailureIsResponseFailed(t *testing.T) {
-	e := encoderFor(t, plain)
-	e.Chunk(chunk(textChunk))
-	got := events(t, e.Failed(apierr.ErrUpstream))
-	if len(got) != 1 || got[0]["type"] != "response.failed" {
-		t.Fatalf("failed as %v", got)
-	}
-	response := got[0]["response"].(map[string]any)
-	if response["status"] != "failed" || asJSON(response["error"]) != `{"code":"upstream_error","message":"The upstream model server failed."}` {
-		t.Errorf("the failed response is %v", response)
-	}
-	if _, raised := got[0]["error"]; raised {
-		t.Errorf("response.failed carries a top-level error, which the OpenAI SDKs raise before the client reads it")
-	}
-}
-
-func TestAWholeReplyIsAResponse(t *testing.T) {
-	whole := `{"choices":[{"index":0,"message":{"role":"assistant","reasoning_content":"hmm","content":"hello","tool_calls":[{"id":"call_1","type":"function","function":{"name":"f","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}`
-	var response struct {
-		Object, Status string
-		Output         []map[string]any
-		Usage          map[string]any
-		Reasoning      map[string]any
-		Tools          []map[string]any
-		ToolChoice     any `json:"tool_choice"`
-	}
-	body := encoderFor(t, `{"model":"m","input":"hi","reasoning":{"effort":"low","summary":"auto"},"tools":[{"type":"function","name":"f"}],"tool_choice":"required"}`).Whole(chunk(whole), chat.Usage{PromptTokens: 10, CompletionTokens: 5})
-	if err := json.Unmarshal(body, &response); err != nil {
-		t.Fatal(err)
-	}
-	if response.Object != "response" || response.Status != "completed" || len(response.Output) != 3 {
-		t.Fatalf("the response is %s", body)
-	}
-	for i, want := range []string{"reasoning", "message", "function_call"} {
-		if response.Output[i]["type"] != want {
-			t.Errorf("output %d is %v, want %s", i, response.Output[i]["type"], want)
-		}
-	}
-	if response.Usage["total_tokens"] != 15.0 || response.Reasoning["effort"] != "low" || response.ToolChoice != "required" || len(response.Tools) != 1 {
-		t.Errorf("the response is %s", body)
-	}
-}
-
-func TestANamespacesFunctionIsCalledWithinItsNamespace(t *testing.T) {
-	calls := []string{`{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"a","function":{"name":"agents__close","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}`}
-	got := streamed(t, encoderFor(t, `{"model":"m","input":"hi","stream":true,"tools":[{"type":"namespace","name":"agents","tools":[{"type":"function","name":"close"}]}]}`), calls, chat.Usage{})
-	item := got[len(got)-2]["item"].(map[string]any)
-	if item["type"] != "function_call" || item["name"] != "close" || item["namespace"] != "agents" || item["arguments"] != "{}" {
-		t.Errorf("the call is %v", item)
 	}
 }

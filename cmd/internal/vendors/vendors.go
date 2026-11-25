@@ -341,13 +341,28 @@ func openAISpeech(rt routes.Route, _ routes.PerCall, key string, d Deps) (worker
 
 type newGenerator[G any] func(baseURL, apiKey, model string, client *http.Client) (G, error)
 
+func TinfoilKey(rts []routes.Route, keys Keys) string {
+	for _, rt := range rts {
+		for _, up := range append([]routes.Route{rt}, rt.Beside...) {
+			if served, attested := up.Upstream.(routes.Attested); attested && served.Attester == attester.Tinfoil && keys[up.APIKeyEnv] != "" {
+				return keys[up.APIKeyEnv]
+			}
+		}
+	}
+	return ""
+}
+
+func screened(rt routes.Route) worker.Screened {
+	return worker.Screened{Uncensored: rt.Uncensored, Adult: rt.Adult}
+}
+
 func imagesBy[G media.ImageGenerator](newGen newGenerator[G]) builder[routes.Image] {
 	return func(rt routes.Route, _ routes.Image, key string, d Deps) (worker.Serving, error) {
 		gen, err := newGen(rt.BaseURL, key, rt.UpstreamModel, d.Client)
 		if err != nil {
 			return nil, upstreamModelError(rt, err)
 		}
-		return worker.Images{ImageGenerator: gen}, nil
+		return worker.Images{ImageGenerator: gen, Screened: screened(rt)}, nil
 	}
 }
 
@@ -357,7 +372,7 @@ func videosBy[G media.VideoGenerator](newGen newGenerator[G]) builder[routes.Vid
 		if err != nil {
 			return nil, upstreamModelError(rt, err)
 		}
-		return worker.Videos{VideoGenerator: gen, UploadsOutput: rt.UploadsVideo()}, nil
+		return worker.Videos{VideoGenerator: gen, UploadsOutput: rt.UploadsVideo(), Screened: screened(rt)}, nil
 	}
 }
 

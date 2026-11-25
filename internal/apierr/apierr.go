@@ -66,8 +66,20 @@ func WriteJSON(w http.ResponseWriter, status int, body any) {
 
 func WriteError(w http.ResponseWriter, e Error) { WriteEnvelope(w, e.Status, e.Envelope()) }
 
+const HeaderShouldRetry = "X-Should-Retry"
+
+// why: Claude Code resends a 401 for about 2.5 minutes before it says so (2.1.331, 2026-11-24), unless the reply
+// carries x-should-retry: false, as Anthropic's does. Both vendors' SDKs read the header.
+var resendCannotFix = map[int]bool{
+	http.StatusBadRequest: true, http.StatusUnauthorized: true, http.StatusForbidden: true, http.StatusNotFound: true,
+	http.StatusRequestEntityTooLarge: true, http.StatusUnprocessableEntity: true,
+}
+
 func WriteEnvelope(w http.ResponseWriter, status int, envelope []byte) {
 	w.Header().Set("Content-Type", "application/json")
+	if resendCannotFix[status] {
+		w.Header().Set(HeaderShouldRetry, "false")
+	}
 	w.WriteHeader(status)
 	w.Write(envelope)
 }
@@ -93,6 +105,8 @@ func Limited(code, message string) Error {
 var (
 	ErrContextLengthExceeded = Invalid(400, "context_length_exceeded", "The conversation is too long for this model.")
 	ErrContentFilter         = Invalid(400, "content_filter", "The model provider declined this request.")
+	ErrPromptRefused         = Invalid(400, "content_filter", "Morse's prompt check declined this request. Change the prompt and send it again.")
+	ErrPromptCheckDown       = Error{Status: 503, Type: "server_error", Code: "prompt_check_unavailable", Message: "Morse's prompt check can't run right now, so this model made nothing. Try again in a few minutes."}
 	ErrInvalidRequest        = Invalid(400, "invalid_request", "The model provider rejected the request.")
 	ErrMalformedRequest      = Invalid(400, "invalid_request", "A message, part, or tool has a shape this model does not take. The proxy refused the request before sending it to the model provider.")
 	ErrRemoteMedia           = Invalid(400, "remote_media", "Media must be attached as inline data, not linked by URL.")
@@ -197,15 +211,22 @@ var contextOverflowMessages = []*regexp.Regexp{
 
 var unservedModel = regexp.MustCompile(`^Model '[^']*' is not served by this endpoint`)
 
+// why: Novita answers a model its key may not use with 403 {"code":403,"reason":"ACCESS_DENY","message":"access
+// deny","metadata":{"reason":"model: minimax/minimax-m3 access denied"}} (captured 2026-11-23), which no request causes.
+var deniedModel = regexp.MustCompile(`^model: \S+ access denied$`)
+
 type vendorReply struct {
 	codes   []string
 	message string
+	denial  string
 }
 
 func readVendorReply(body []byte) (vendorReply, bool) {
 	var top struct {
-		Error   json.RawMessage `json:"error"`
-		Message json.RawMessage `json:"message"`
+		Error    json.RawMessage `json:"error"`
+		Message  json.RawMessage `json:"message"`
+		Reason   json.RawMessage `json:"reason"`
+		Metadata json.RawMessage `json:"metadata"`
 	}
 	if json.Unmarshal(body, &top) != nil {
 		return vendorReply{}, false
@@ -218,6 +239,14 @@ func readVendorReply(body []byte) (vendorReply, bool) {
 	}
 	json.Unmarshal(top.Error, &nested)
 	r := vendorReply{codes: []string{text(nested.Code), text(nested.Type)}, message: text(nested.Message)}
+	if text(top.Reason) == "ACCESS_DENY" {
+		// why: another host's metadata is a string or a list; decoding it as an object failed the whole body.
+		var metadata struct {
+			Reason json.RawMessage `json:"reason"`
+		}
+		json.Unmarshal(top.Metadata, &metadata)
+		r.denial = text(metadata.Reason)
+	}
 	if r.message == "" {
 		r.message = text(top.Message)
 	}
@@ -267,6 +296,9 @@ func SanitizedUpstreamError(status int, vendorBody []byte) Error {
 		}
 		if status == 400 && unservedModel.MatchString(reply.message) {
 			return ErrUpstreamRefused
+		}
+		if status == 403 && deniedModel.MatchString(reply.denial) {
+			return ErrUpstreamUnavailable
 		}
 	}
 	switch {

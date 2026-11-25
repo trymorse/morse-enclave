@@ -12,6 +12,11 @@ const (
 	phaseCommentary  = "commentary"
 	phaseFinalAnswer = "final_answer"
 	summaryAuto      = "auto"
+	itemReasoning    = "reasoning"
+	itemMessage      = "message"
+	layoutReasoning  = 'r'
+	layoutMessage    = 'm'
+	layoutCall       = 'f'
 )
 
 type request struct {
@@ -78,7 +83,7 @@ type functionCallOutputItem struct {
 func newRequest(conv completions.Conversation, model string) request {
 	out := request{
 		Model:             model,
-		Input:             inputItems(conv.Turns),
+		Input:             inputItems(conv, model),
 		Tools:             tools(conv.Tools),
 		ToolChoice:        toolChoice(conv.Choice),
 		ParallelToolCalls: conv.Parallel,
@@ -112,30 +117,80 @@ func toolChoice(c *completions.Choice) any {
 	return c.Mode
 }
 
-func inputItems(turns []completions.Turn) []any {
+func inputItems(conv completions.Conversation, model string) []any {
 	items := []any{}
-	for _, t := range turns {
+	for _, t := range conv.Turns {
 		switch t.Role {
 		case completions.System:
 			items = append(items, messageItem{Type: "message", Role: "developer", Content: t.Text})
 		case completions.User:
 			items = append(items, messageItem{Type: "message", Role: "user", Content: inputParts(t.Parts)})
 		case completions.Assistant:
-			if t.Text != "" {
-				phase := phaseFinalAnswer
-				if len(t.Calls) > 0 {
-					phase = phaseCommentary
-				}
-				items = append(items, messageItem{Type: "message", Role: "assistant", Phase: phase, Content: t.Text})
-			}
-			for _, call := range t.Calls {
-				items = append(items, functionCallItem{Type: "function_call", CallID: call.ID, Name: call.Function.Name, Arguments: call.Function.Arguments})
-			}
+			items = append(items, assistantItems(conv, t, model)...)
 		case completions.ToolResult:
 			items = append(items, functionCallOutputItem{Type: "function_call_output", CallID: t.CallID, Output: t.Text})
 		}
 	}
 	return items
+}
+
+func assistantItems(conv completions.Conversation, t completions.Turn, model string) []any {
+	var said []any
+	if t.Text != "" {
+		phase := phaseFinalAnswer
+		if len(t.Calls) > 0 {
+			phase = phaseCommentary
+		}
+		said = append(said, messageItem{Type: "message", Role: "assistant", Phase: phase, Content: t.Text})
+	}
+	for _, call := range t.Calls {
+		said = append(said, functionCallItem{Type: "function_call", CallID: call.ID, Name: call.Function.Name, Arguments: call.Function.Arguments})
+	}
+	state, ok := conv.StateOf(t, model)
+	if !ok {
+		return said
+	}
+	return withReasoning(said, state)
+}
+
+// why: OpenAI takes a response's output items back in their original order
+// (https://developers.openai.com/api/docs/guides/reasoning), so a reasoning item goes ahead of the item it preceded.
+func withReasoning(said []any, state completions.ReasoningState) []any {
+	reasoned := state.Items
+	out := make([]any, 0, len(said)+len(reasoned))
+	var ahead []json.RawMessage
+	for _, kind := range state.Layout {
+		if kind == layoutReasoning {
+			if len(reasoned) > 0 {
+				ahead, reasoned = append(ahead, reasoned[0]), reasoned[1:]
+			}
+			continue
+		}
+		if len(said) == 0 {
+			break
+		}
+		for _, item := range ahead {
+			if replayable(item) {
+				out = append(out, item)
+			}
+		}
+		ahead = nil
+		out, said = append(out, said[0]), said[1:]
+	}
+	return append(out, said...)
+}
+
+func replayable(item json.RawMessage) bool {
+	var read struct {
+		Type             string          `json:"type"`
+		EncryptedContent string          `json:"encrypted_content"`
+		Content          json.RawMessage `json:"content"`
+	}
+	if json.Unmarshal(item, &read) != nil || read.Type != itemReasoning || read.EncryptedContent == "" {
+		return false
+	}
+	var content []json.RawMessage
+	return len(read.Content) == 0 || json.Unmarshal(read.Content, &content) == nil && len(content) == 0
 }
 
 func inputParts(parts []completions.Part) []inputPart {

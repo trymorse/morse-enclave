@@ -16,6 +16,7 @@ import (
 	"morse/backend/internal/frameconsent"
 	"morse/backend/internal/jobs"
 	"morse/backend/internal/media"
+	"morse/backend/internal/promptcheck"
 	"morse/backend/internal/research"
 )
 
@@ -24,6 +25,7 @@ type openedVideo struct {
 	endpoint  catalog.EndpointID
 	route     string
 	generator media.VideoGenerator
+	screened  Screened
 	req       *media.VideoRequest
 }
 
@@ -44,10 +46,10 @@ func (w *InProcess) openVideo(o Opening) (Admission, error) {
 	}
 	resolved, err := generator.ResolveVideo(*req)
 	if err != nil {
-		return nil, apierr.InvalidParameter(err.Error())
+		return nil, contentRefusal(err)
 	}
-	ov := &openedVideo{cuts: newCuts(), endpoint: w.endpoints[req.Model], route: req.Model, generator: generator, req: &resolved}
-	return MediaAdmission{admitted: admitted{w.keep(o, ov)}, Route: req.Model, Units: resolved.Seconds, Resolution: resolved.Resolution, Frames: resolved.FrameDigests()}, nil
+	ov := &openedVideo{cuts: newCuts(), endpoint: w.endpoints[req.Model], route: req.Model, generator: generator, screened: w.screened[req.Model], req: &resolved}
+	return MediaAdmission{admitted: admitted{w.keep(o, ov)}, Route: req.Model, Units: resolved.Seconds, References: len(resolved.ReferenceImages()), Resolution: resolved.Resolution, Frames: resolved.FrameDigests()}, nil
 }
 
 func (o *openedVideo) cut(reason measure.Cut) { o.cuts.cut(reason, false) }
@@ -56,6 +58,9 @@ func (o *openedVideo) submit(w *InProcess, g JobGrant, reply http.ResponseWriter
 	queued := &VideoView{ID: g.ID, Object: "video", Model: o.req.Model, Status: media.Statuses.String(jobs.Queued), CreatedAt: g.CreatedAt.Unix()}
 	return submit(o.cuts, o.endpoint, reply, queued, accepted, func(ctx context.Context) (media.Submitted, error) {
 		if err := o.unconsented(g); err != nil {
+			return media.Submitted{}, err
+		}
+		if err := w.screen(ctx, g.PromptCheck, o.screened, promptcheck.Video, o.req.Prompt()); err != nil {
 			return media.Submitted{}, err
 		}
 		ctx, cancel := context.WithTimeout(ctx, w.videoSubmit)

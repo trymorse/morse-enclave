@@ -179,3 +179,19 @@ func without(usage json.RawMessage, fields []string) (json.RawMessage, error) {
 	}
 	return jsonx.Encode(raw), nil
 }
+
+func (r *reply) finishesToolCalls() bool {
+	raw, _ := r.value("choices")
+	var choices []struct {
+		FinishReason string `json:"finish_reason"`
+	}
+	if json.Unmarshal(raw, &choices) != nil {
+		return false
+	}
+	for _, c := range choices {
+		if c.FinishReason == "tool_calls" {
+			return true
+		}
+	}
+	return false
+}

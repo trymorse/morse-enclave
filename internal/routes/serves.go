@@ -227,8 +227,16 @@ func (r videoRoute) serves(defaultMarkup money.Markup) (Serves, error) {
 		perSecond = r.Price.HoldMicrosPerSecond
 	}
 	price, err := r.common.mediaPrice(r.marked, defaultMarkup, perSecond, "hold_micros_per_second", nil)
-	if err != nil || r.Price.HoldMicrosPerSecondByResolution == nil {
+	if err != nil {
 		return Video{Price: price}, err
+	}
+	price.WithReferencesAt = r.Price.HoldMicrosPerSecondWithReferencesByResolution
+	if r.Price.HoldMicrosPerReferencePicture != nil {
+		price.PerReferencePicture = *r.Price.HoldMicrosPerReferencePicture
+	}
+	price.FreeReferencePictures = r.Price.FreeReferencePictures
+	if r.Price.HoldMicrosPerSecondByResolution == nil {
+		return Video{Price: price}, price.Validate()
 	}
 	price.PerUnitAt = r.Price.HoldMicrosPerSecondByResolution
 	if err := price.Validate(); err != nil {

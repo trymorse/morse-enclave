@@ -57,6 +57,7 @@ type delta struct {
 	ReasoningContent *string         `json:"reasoning_content,omitempty"`
 	Refusal          *string         `json:"refusal,omitempty"`
 	ToolCalls        []toolCallDelta `json:"tool_calls,omitempty"`
+	ReasoningState   *string         `json:"reasoning_state,omitempty"`
 }
 
 func toolDelta(index int, call ToolCall) delta {
@@ -68,6 +69,7 @@ type reply struct {
 	reasoning strings.Builder
 	refusal   strings.Builder
 	calls     []ToolCall
+	state     *string
 	finish    Finish
 }
 
@@ -80,6 +82,9 @@ func (r *reply) add(d delta, finish *Finish) error {
 	}
 	if d.Refusal != nil {
 		r.refusal.WriteString(*d.Refusal)
+	}
+	if d.ReasoningState != nil {
+		r.state = d.ReasoningState
 	}
 	for _, c := range d.ToolCalls {
 		if c.Index == len(r.calls) {
@@ -105,6 +110,7 @@ type message struct {
 	ReasoningContent *string    `json:"reasoning_content,omitempty"`
 	Refusal          *string    `json:"refusal,omitempty"`
 	ToolCalls        []ToolCall `json:"tool_calls,omitempty"`
+	ReasoningState   *string    `json:"reasoning_state,omitempty"`
 }
 
 type completionChoice struct {
@@ -180,7 +186,7 @@ func (e envelope) Usage(u chat.Usage, detailed bool) []byte {
 
 func (e envelope) Completion(r *reply, u chat.Usage, detailed bool) []byte {
 	e.Object = "chat.completion"
-	msg := message{Role: "assistant", ToolCalls: r.calls}
+	msg := message{Role: "assistant", ToolCalls: r.calls, ReasoningState: r.state}
 	if text := r.text.String(); text != "" || (len(r.calls) == 0 && r.refusal.Len() == 0) {
 		msg.Content = &text
 	}

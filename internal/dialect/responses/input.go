@@ -91,7 +91,7 @@ func (c *conversation) item(it item, at string) error {
 	case "function_call_output", "custom_tool_call_output":
 		return c.output(it, at)
 	case "item_reference":
-		return unsupported(at, "item_reference is not supported: Morse keeps no items to refer to. Send the item itself.")
+		return unsupported(at, "item_reference is not supported: Morse keeps no items to refer to. Send the item itself, as a client does when its request sets store: false.")
 	}
 	return unsupported(at+".type", fmt.Sprintf("An input item of type %s is not supported: Morse takes message, function_call, function_call_output, custom_tool_call, custom_tool_call_output, and reasoning items.", it.Type))
 }

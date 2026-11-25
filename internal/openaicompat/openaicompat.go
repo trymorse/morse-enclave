@@ -93,6 +93,14 @@ func (p *Provider) Stream(ctx context.Context, c chat.Call, emit func(chat.Chunk
 	s := &stream{p: p, emit: emit, opened: opening{}, calls: openedCalls{}, fixes: p.replyFixes(c),
 		head: morseHead{id: chat.NewReplyID(), model: c.Model, object: "chat.completion.chunk", created: time.Now().Unix()}}
 	if err := p.Sender.Stream(ctx, body, p.headers(c), s.event); err != nil {
+		// why: a finish held for the usage chunk that never came is the reply's only finish_reason; an error
+		// after it must not take it from the client.
+		if sendErr := s.sendHeldFinish(); sendErr != nil {
+			return s.usage, sendErr
+		}
+		return s.usage, err
+	}
+	if err := s.sendHeldFinish(); err != nil {
 		return s.usage, err
 	}
 	if err := s.sendHeldThinking(); err != nil {
@@ -114,6 +122,7 @@ type stream struct {
 	opened opening
 	calls  openedCalls
 	fixes  replyFixes
+	finish *reply
 }
 
 func (s *stream) event(data []byte) (bool, error) {
@@ -126,9 +135,13 @@ func (s *stream) event(data []byte) (bool, error) {
 	}
 	if r.usage != nil {
 		s.usage, s.final = r.usage.Domain(), slices.Clone(data)
+		s.fixes.spent = s.usage.CompletionTokens
 	}
 	if errEvent, ok := r.value("error"); ok && string(errEvent) != "null" {
 		return false, chat.ErrorChunkOf(errEvent)
+	}
+	if err := s.sendHeldFinish(); err != nil {
+		return false, err
 	}
 	if r.usage != nil {
 		if r.choices == 0 {
@@ -146,7 +159,23 @@ func (s *stream) event(data []byte) (bool, error) {
 			return false, err
 		}
 	}
+	if s.final == nil && !s.p.KeepEnvelope && r.finishesToolCalls() {
+		held, err := s.p.decodeReply(slices.Clone(r.kept()))
+		s.finish = &held
+		return false, err
+	}
 	return false, s.send(r)
+}
+
+// why: a host sends a stream's usage in a chunk after the one that finishes the reply, and only the usage says
+// whether a reply that finished tool_calls was cut at its limit (replyFixes.cutAtLimit).
+func (s *stream) sendHeldFinish() error {
+	if s.finish == nil {
+		return nil
+	}
+	r := *s.finish
+	s.finish = nil
+	return s.send(r)
 }
 
 func (s *stream) send(r reply) error {
@@ -209,14 +238,28 @@ type replyFixes struct {
 	think               *thinkSplit
 	answer              reasoningAnswer
 	toolCallsFinishStop bool
+	limit, spent        int
+	oneCall             bool
 }
 
+// why: vLLM, which DeepInfra and Phala serve GLM 5.3 and GPT-OSS on, finishes a reply cut inside a tool call with
+// tool_calls, its arguments closed early or empty (3 of 3, 2026-11-23); OpenAI's API finishes such a reply length.
+// A cut reply spent its limit exactly (13 of 13); one that spent more is whole, from a host that runs past its limit.
+func (f *replyFixes) cutAtLimit() bool { return f.limit > 0 && f.spent == f.limit }
+
 func (p *Provider) replyFixes(c chat.Call) replyFixes {
-	f := replyFixes{answer: reasoningAnswer{on: p.Fixes.AnswersInReasoning}, toolCallsFinishStop: p.Fixes.ToolCallsFinishStop}
+	f := replyFixes{answer: reasoningAnswer{on: p.Fixes.AnswersInReasoning}, toolCallsFinishStop: p.Fixes.ToolCallsFinishStop, limit: c.OutputLimit, oneCall: asksForOneCall(c)}
 	if p.Fixes.ReasoningInContent && !p.turnsThinkingOff(c) {
 		f.think = &thinkSplit{}
 	}
 	return f
+}
+
+// why: Isoquant, DeepInfra, Novita and Phala send every call a model wrote whatever parallel_tool_calls says (five
+// models, 10 of 10, 2026-11-24). OpenAI's API sends one at most, and a runner that asked for one answers one.
+func asksForOneCall(c chat.Call) bool {
+	asked, ok := c.Field("parallel_tool_calls")
+	return ok && string(asked) == "false"
 }
 
 func (f *replyFixes) edit(r *reply, part answerPart) (string, bool, error) {
@@ -276,6 +319,7 @@ func (p *Provider) Complete(ctx context.Context, c chat.Call) (chat.Chunk, chat.
 	var usage chat.Usage
 	if r.usage != nil {
 		usage = r.usage.Domain()
+		fixes.spent = usage.CompletionTokens
 	}
 	body, err = p.disguise(r, morseHead{id: chat.NewReplyID(), model: c.Model, object: "chat.completion", created: time.Now().Unix()}, nil, &fixes)
 	if err != nil {
@@ -386,8 +430,10 @@ func uniformChoices(raw json.RawMessage, replyID string, calls openedCalls, fixe
 				continue
 			case name == "finish_reason" && fixes.toolCallsFinishStop && string(v) == `"stop"` && calledTool(c, i, calls):
 				v = json.RawMessage(`"tool_calls"`)
+			case name == "finish_reason" && string(v) == `"tool_calls"` && fixes.cutAtLimit():
+				v = json.RawMessage(`"length"`)
 			case name == "delta" || name == "message":
-				answer, err := uniformAnswer(v, name == "message", replyID, i, calls)
+				answer, err := uniformAnswer(v, name == "message", replyID, i, calls, fixes.oneCall)
 				if err != nil {
 					return nil, err
 				}
@@ -401,7 +447,7 @@ func uniformChoices(raw json.RawMessage, replyID string, calls openedCalls, fixe
 	return out.Bytes(), nil
 }
 
-func uniformAnswer(raw json.RawMessage, message bool, replyID string, choice int, opened openedCalls) (json.RawMessage, error) {
+func uniformAnswer(raw json.RawMessage, message bool, replyID string, choice int, opened openedCalls, oneCall bool) (json.RawMessage, error) {
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &fields); err != nil {
 		return nil, err
@@ -420,7 +466,7 @@ func uniformAnswer(raw json.RawMessage, message bool, replyID string, choice int
 		switch v := fields[name]; {
 		case name == "role" && !message:
 		case !isNull(v) && name == "tool_calls":
-			calls, err := uniformToolCalls(v, message, replyID, choice, opened)
+			calls, err := uniformToolCalls(v, message, replyID, choice, opened, oneCall)
 			if err != nil {
 				return nil, err
 			}
@@ -434,7 +480,7 @@ func uniformAnswer(raw json.RawMessage, message bool, replyID string, choice int
 			if !isNull(thought) && string(thought) != `""` {
 				w.field(name, thought)
 			}
-		case string(v) == `""` && emptyDropped[name]:
+		case string(v) == `""` && emptyDropped[name] && !(message && name == "content"):
 		case !isNull(v):
 			w.field(name, v)
 		}
@@ -455,6 +501,8 @@ func calledTool(c map[string]json.RawMessage, i int, calls openedCalls) bool {
 	return json.Unmarshal(c["message"], &message) == nil && len(message.ToolCalls) > 0
 }
 
+// why: a whole message always carries content, as OpenAI's does. Kimi K2.7 Code's reply that thought through a short
+// limit left with no content key (11 of 11, 2026-11-24), which a client that reads the key cannot take.
 var emptyDropped = map[string]bool{"content": true, "refusal": true}
 
 func isNull(v json.RawMessage) bool { return v == nil || string(v) == "null" }
@@ -516,7 +564,7 @@ func (p *Provider) encode(c chat.Call, stream bool) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		set["messages"] = chat.EncodeMessages(msgs, messageKeys)
+		set["messages"] = chat.EncodeMessages(developerAsSystem(msgs), messageKeys)
 	}
 	for _, name := range retentionSwitches {
 		if _, forced := set[name]; forced || slices.Contains(anonymousFields, name) {
@@ -528,6 +576,18 @@ func (p *Provider) encode(c chat.Call, stream bool) ([]byte, error) {
 		keep = slices.DeleteFunc(keep, func(name string) bool { return slices.Contains(toolFields, name) })
 	}
 	return c.EncodeOnly(keep, set), nil
+}
+
+// why: developer is OpenAI's name for system on its reasoning models, which no open model's chat template knows.
+// Novita answers a Kimi K2.6 or K2.7 Code chat that carries it with 400 (5 of 5, 2026-11-23).
+func developerAsSystem(msgs []chat.Message) []chat.Message {
+	out := slices.Clone(msgs)
+	for i := range out {
+		if out[i].Role == "developer" {
+			out[i].Role = "system"
+		}
+	}
+	return out
 }
 
 func (p *Provider) headers(c chat.Call) http.Header {

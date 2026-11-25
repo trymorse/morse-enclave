@@ -148,6 +148,31 @@ func TestSearchWithoutAnObjectiveLeavesTheFieldOut(t *testing.T) {
 	}
 }
 
+func TestSearchWithDomainsKeepsResultsToThoseSitesAndLeavesThePolicyOutWithoutThem(t *testing.T) {
+	s := &standIn{reply: replying(200, searchReply)}
+	srv := s.serve(t)
+	p, _ := NewSearch(srv.URL, apiKey, "fast", srv.Client())
+	if _, err := p.Search(context.Background(), parseSearch(t, `{"model":"m","queries":["q"],"domains":["Example.com","shop.example.org"]}`)); err != nil {
+		t.Fatal(err)
+	}
+	c := s.only(t)
+	if got := slices.Sorted(maps.Keys(c.body)); !slices.Equal(got, []string{"advanced_settings", "max_chars_total", "mode", "search_queries"}) {
+		t.Errorf("body keys %v", got)
+	}
+	if got := string(c.body["advanced_settings"]); got != `{"max_results":10,"source_policy":{"include_domains":["example.com","shop.example.org"]}}` {
+		t.Errorf("advanced_settings = %s", got)
+	}
+	for _, none := range []string{`{"model":"m","queries":["q"]}`, `{"model":"m","queries":["q"],"domains":[]}`, `{"model":"m","queries":["q"],"domains":null}`} {
+		plain := &standIn{reply: replying(200, searchReply)}
+		plainSrv := plain.serve(t)
+		p, _ := NewSearch(plainSrv.URL, apiKey, "fast", plainSrv.Client())
+		p.Search(context.Background(), parseSearch(t, none))
+		if got := string(plain.only(t).body["advanced_settings"]); got != `{"max_results":10}` {
+			t.Errorf("%s: advanced_settings = %s", none, got)
+		}
+	}
+}
+
 func TestExtractAsksForTheFullPageOfOneURLAndCapsIt(t *testing.T) {
 	long := strings.Repeat("x", web.MaxContentChars+1)
 	s := &standIn{reply: replying(200, `{"extract_id":"e","session_id":"`+vendorCanary+`","errors":[],"results":[{"url":"https://example.com/p","title":"P","publish_date":"2025-12-31","excerpts":["`+vendorCanary+`"],"full_content":"`+long+`"}]}`)}
@@ -160,7 +185,7 @@ func TestExtractAsksForTheFullPageOfOneURLAndCapsIt(t *testing.T) {
 	if c.method != http.MethodPost || c.path != "/v1/extract" || !slices.Equal(slices.Sorted(maps.Keys(c.body)), []string{"advanced_settings", "urls"}) {
 		t.Errorf("%s %s body %v", c.method, c.path, c.body)
 	}
-	if string(c.body["urls"]) != `["https://example.com/p?id=1"]` || string(c.body["advanced_settings"]) != `{"full_content":{"max_chars_per_result":100001},"fetch_policy":{"timeout_seconds":30}}` {
+	if string(c.body["urls"]) != `["https://example.com/p?id=1"]` || string(c.body["advanced_settings"]) != `{"full_content":{"max_chars_per_result":100001},"fetch_policy":{"timeout_seconds":10,"max_age_seconds":86400}}` {
 		t.Errorf("urls %s settings %s", c.body["urls"], c.body["advanced_settings"])
 	}
 	if c.header.Get("X-Api-Key") != apiKey || c.header.Get("Authorization") != "" {
@@ -180,12 +205,41 @@ func TestExtractWithAPurposeAsksForOnlyTheExcerptsThatAnswerIt(t *testing.T) {
 		t.Fatalf("page %v err %v", page, err)
 	}
 	c := s.only(t)
-	if string(c.body["objective"]) != `"when was it built"` || string(c.body["advanced_settings"]) != `{"excerpt_settings":{"max_chars_per_result":6000},"fetch_policy":{"timeout_seconds":30}}` {
+	if string(c.body["objective"]) != `"when was it built"` || string(c.body["advanced_settings"]) != `{"excerpt_settings":{"max_chars_per_result":6000},"fetch_policy":{"timeout_seconds":10,"max_age_seconds":86400}}` {
 		t.Errorf("objective %s settings %s", c.body["objective"], c.body["advanced_settings"])
 	}
 	var out strings.Builder
 	if err := web.WritePage(&out, page); err != nil || !strings.Contains(out.String(), `first passage\n\nsecond passage`) {
 		t.Errorf("page written %q err %v", out.String(), err)
+	}
+}
+
+func TestExtractAsksForACopyNoOlderThanADayAndSaysWhenParallelFetchedIt(t *testing.T) {
+	for name, c := range map[string]struct{ request, reply string }{
+		"a whole page":         {`{"model":"m","url":"https://example.com/p"}`, `{"results":[{"url":"https://example.com/p","title":"P","excerpts":[],"full_content":"text","acquired_at":"2026-02-05T00:00:00Z"}]}`},
+		"a page for a purpose": {`{"model":"m","url":"https://example.com/p","objective":"its hours"}`, `{"results":[{"url":"https://example.com/p","title":"P","excerpts":["text"],"full_content":null,"acquired_at":"2026-02-05T00:00:00Z"}]}`},
+	} {
+		s := &standIn{reply: replying(200, c.reply)}
+		srv := s.serve(t)
+		req, err := web.ParseFetchRequest(strings.NewReader(c.request))
+		if err != nil {
+			t.Fatal(err)
+		}
+		page, err := mustExtract(t, srv.URL, srv.Client()).Fetch(context.Background(), req)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		var settings struct {
+			FetchPolicy map[string]int `json:"fetch_policy"`
+		}
+		json.Unmarshal(s.only(t).body["advanced_settings"], &settings)
+		if settings.FetchPolicy["max_age_seconds"] != 86400 || settings.FetchPolicy["timeout_seconds"] != 10 || len(settings.FetchPolicy) != 2 {
+			t.Errorf("%s: fetch policy %v", name, settings.FetchPolicy)
+		}
+		var out strings.Builder
+		if err := web.WritePage(&out, page); err != nil || !strings.Contains(out.String(), `"fetched":"2026-02-05"`) {
+			t.Errorf("%s: page written %q err %v, want the day Parallel fetched its copy", name, out.String(), err)
+		}
 	}
 }
 
@@ -300,8 +354,65 @@ func TestTheProviderDoesNotChangeTheCallersClient(t *testing.T) {
 
 func TestExtractBoundsTheLiveFetchInsideItsTimeout(t *testing.T) {
 	extract := mustExtract(t, "https://api.parallel.ai", &http.Client{})
-	if live := liveFetchSeconds * time.Second; live+10*time.Second > extract.Timeout {
-		t.Errorf("Parallel's live fetch may take %v, leaving under 10s of the %v extract budget for the rest of its work", live, extract.Timeout)
+	if live := (liveFetchSeconds + retryFetchSeconds) * time.Second; live+10*time.Second > extract.Timeout {
+		t.Errorf("Parallel's two tries at a live fetch may take %v, leaving under 10s of the %v extract budget for the rest of its work", live, extract.Timeout)
+	}
+}
+
+func TestExtractWaitsLongerOnceWhenTheLiveFetchTimedOutAndParallelHadNoOlderCopy(t *testing.T) {
+	const timedOut = `{"extract_id":"e","results":[],"errors":[{"url":"https://example.com/p","error_type":"timeout","http_status_code":null,"content":null}]}`
+	const whole = `{"results":[{"url":"https://example.com/p","title":"P","excerpts":[],"full_content":"text","acquired_at":"2026-11-24T00:00:00Z"}],"errors":[]}`
+	const passages = `{"results":[{"url":"https://example.com/p","title":"P","excerpts":["text"],"full_content":null,"acquired_at":"2026-11-24T00:00:00Z"}],"errors":[]}`
+	for name, c := range map[string]struct {
+		request string
+		replies []string
+		waits   []int
+		want    error
+	}{
+		"a whole page read on the second try":      {`{"model":"m","url":"https://example.com/p"}`, []string{timedOut, whole}, []int{10, 20}, nil},
+		"a purpose read on the second try":         {`{"model":"m","url":"https://example.com/p","objective":"its hours"}`, []string{timedOut, passages}, []int{10, 20}, nil},
+		"timed out twice":                          {`{"model":"m","url":"https://example.com/p"}`, []string{timedOut, timedOut, whole}, []int{10, 20}, web.ErrFetchFailed},
+		"read at once":                             {`{"model":"m","url":"https://example.com/p"}`, []string{whole, whole}, []int{10}, nil},
+		"refused by the site, which no wait fixes": {`{"model":"m","url":"https://example.com/p"}`, []string{`{"results":[],"errors":[{"url":"https://example.com/p","error_type":"http_error","http_status_code":403,"content":null}]}`, whole}, []int{10}, web.ErrFetchFailed},
+	} {
+		var served int
+		s := &standIn{}
+		s.reply = func(w http.ResponseWriter, r *http.Request) {
+			s.mu.Lock()
+			body := c.replies[served]
+			served++
+			s.mu.Unlock()
+			replying(200, body)(w, r)
+		}
+		srv := s.serve(t)
+		req, err := web.ParseFetchRequest(strings.NewReader(c.request))
+		if err != nil {
+			t.Fatal(err)
+		}
+		page, err := mustExtract(t, srv.URL, srv.Client()).Fetch(context.Background(), req)
+		if !errors.Is(err, c.want) || (c.want == nil && err != nil) {
+			t.Errorf("%s: err %v, want %v", name, err, c.want)
+		}
+		var waits []int
+		for _, sent := range s.calls {
+			var settings struct {
+				FetchPolicy map[string]int `json:"fetch_policy"`
+			}
+			json.Unmarshal(sent.body["advanced_settings"], &settings)
+			waits = append(waits, settings.FetchPolicy["timeout_seconds"])
+			if settings.FetchPolicy["max_age_seconds"] != 86400 {
+				t.Errorf("%s: fetch policy %v, want the one-day floor on every try", name, settings.FetchPolicy)
+			}
+		}
+		if !slices.Equal(waits, c.waits) {
+			t.Errorf("%s: live fetch waits %v, want %v", name, waits, c.waits)
+		}
+		var out strings.Builder
+		if c.want == nil {
+			if err := web.WritePage(&out, page); err != nil || !strings.Contains(out.String(), `"fetched":"2026-11-24"`) {
+				t.Errorf("%s: page written %q err %v", name, out.String(), err)
+			}
+		}
 	}
 }
 

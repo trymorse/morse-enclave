@@ -421,3 +421,54 @@ func NewPrivacyFilter(apiKey string, d Deps) *PrivacyFilter {
 
 // Scope names the filter's gate in the worker's log.
 func (f *PrivacyFilter) Scope() string { return f.scope }
+
+type PromptChecker struct {
+	*attested.TLSGate
+	*tinfoil.PromptChecker
+	scope string
+	hpke  atomic.Pointer[[32]byte]
+}
+
+func (c *PromptChecker) sealKey() ([32]byte, bool) {
+	if k := c.hpke.Load(); k != nil && c.Ready() {
+		return *k, true
+	}
+	return [32]byte{}, false
+}
+
+func NewPromptChecker(apiKey, model string, d Deps) *PromptChecker {
+	host := attestation.TinfoilPins().Hosts[0]
+	baseURL := "https://" + host
+	gateway := tinfoil.NewGateway(baseURL, host, d.Unpinned)
+	pc := &PromptChecker{scope: attester.Tinfoil.Name + "/" + host + "/" + model}
+	pc.TLSGate = attested.NewTLSGate(attested.Config[aci.SPKI]{
+		Scope:    pc.scope,
+		Verifier: checkerVerifier(d.Policy, host, attestation.TinfoilPins, func(r attestation.TinfoilReport) { pc.hpke.Store(&r.HPKE) }),
+		Fetch: func(ctx context.Context, nonce attestation.Nonce) ([]byte, error) {
+			return gateway.Nonced(ctx, nonce.String())
+		},
+		Observe: d.Observe,
+	}, host, d.Base)
+	pc.PromptChecker = tinfoil.NewPromptChecker(baseURL, apiKey, model, pc.Client(), tinfoilGate{pc.TLSGate}, pc.sealKey)
+	return pc
+}
+
+func (c *PromptChecker) Scope() string { return c.scope }
+
+func checkerVerifier(policy attestation.Policy, host string, active func() attestation.RouterPins, admitted func(attestation.TinfoilReport)) attested.Verifier[aci.SPKI] {
+	return func(ctx context.Context, doc []byte, nonce attestation.Nonce) (attestation.Verdicts[aci.SPKI], error) {
+		r, err := policy.VerifyTinfoilNonced(ctx, doc, nonce, host)
+		if err != nil {
+			return attestation.Verdicts[aci.SPKI]{}, err
+		}
+		v, err := active().Judge(r)
+		if err != nil {
+			return attestation.Verdicts[aci.SPKI]{}, err
+		}
+		if len(v.Endpoints) > 0 {
+			admitted(r)
+		}
+		v.Serve = func(func(string) bool) json.RawMessage { return doc }
+		return v, nil
+	}
+}

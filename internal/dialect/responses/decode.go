@@ -87,7 +87,8 @@ func Decode(body []byte, _ func(string) bool) (dialect.Decoded, error) {
 	if err != nil {
 		return dialect.Decoded{}, err
 	}
-	if err := textOf(req.Text); err != nil {
+	format, err := responseFormatOf(req.Text, out)
+	if err != nil {
 		return dialect.Decoded{}, err
 	}
 	samplingOf(req, out)
@@ -95,7 +96,7 @@ func Decode(body []byte, _ func(string) bool) (dialect.Decoded, error) {
 	if err != nil {
 		return dialect.Decoded{}, err
 	}
-	echo := echoOf(req, t, r)
+	echo := echoOf(req, t, r, format)
 	return dialect.Decoded{Body: chatBody, Reply: func() dialect.Encoder { return newEncoder(echo) }}, nil
 }
 
@@ -317,22 +318,66 @@ func reasoningOf(raw json.RawMessage, out map[string]any) (reasoning, error) {
 	return r, nil
 }
 
-func textOf(raw json.RawMessage) error {
+var textFormat = json.RawMessage(`{"type":"text"}`)
+
+type format struct {
+	Type        string          `json:"type"`
+	Name        string          `json:"name"`
+	Description string          `json:"description"`
+	Schema      json.RawMessage `json:"schema"`
+	Strict      json.RawMessage `json:"strict"`
+}
+
+func (f format) responseFormat() (map[string]any, error) {
+	switch f.Type {
+	case "json_object":
+		return map[string]any{"type": "json_object"}, nil
+	case "json_schema":
+	default:
+		return nil, unsupported("text.format", fmt.Sprintf("A text.format of type %s is not supported: Morse takes text, json_object, and json_schema.", f.Type))
+	}
+	if f.Name == "" {
+		return nil, invalid("text.format.name", "Missing required parameter: 'text.format.name'.")
+	}
+	if null(f.Schema) {
+		return nil, invalid("text.format.schema", "Missing required parameter: 'text.format.schema'.")
+	}
+	schema := map[string]any{"name": f.Name, "schema": f.Schema}
+	if f.Description != "" {
+		schema["description"] = f.Description
+	}
+	if !null(f.Strict) {
+		schema["strict"] = f.Strict
+	}
+	return map[string]any{"type": "json_schema", "json_schema": schema}, nil
+}
+
+func responseFormatOf(raw json.RawMessage, out map[string]any) (json.RawMessage, error) {
 	if null(raw) {
-		return nil
+		return textFormat, nil
 	}
 	var text struct {
-		Format *struct {
-			Type string `json:"type"`
-		} `json:"format"`
+		Format json.RawMessage `json:"format"`
 	}
 	if json.Unmarshal(raw, &text) != nil {
-		return invalid("text", "text must be an object.")
+		return nil, invalid("text", "text must be an object.")
 	}
-	if text.Format != nil && text.Format.Type != "text" {
-		return unsupported("text.format", "text.format is supported only as {\"type\":\"text\"}: Morse serves structured outputs on no model. Send the request without text.format.")
+	if null(text.Format) {
+		return textFormat, nil
 	}
-	return nil
+	var f format
+	if json.Unmarshal(text.Format, &f) != nil || f.Type == "" {
+		return nil, invalid("text.format", "text.format must be an object with a type.")
+	}
+	if f.Type == "text" {
+		return textFormat, nil
+	}
+	responseFormat, err := f.responseFormat()
+	if err != nil {
+		return nil, err
+	}
+	out["response_format"] = responseFormat
+	return text.Format, nil
 }
 
 const openAIDefaultSampling = 1.0

@@ -13,6 +13,7 @@ import (
 	"morse/backend/internal/catalog"
 	"morse/backend/internal/frameconsent"
 	"morse/backend/internal/media"
+	"morse/backend/internal/promptcheck"
 	"morse/backend/internal/strictjson"
 	"morse/backend/internal/web"
 )
@@ -21,6 +22,7 @@ type openedImages struct {
 	cuts
 	endpoint  catalog.EndpointID
 	generator media.ImageGenerator
+	screened  Screened
 	req       *media.ImageRequest
 }
 
@@ -42,7 +44,7 @@ func (w *InProcess) openImages(o Opening) (Admission, error) {
 	if err := generator.CheckImages(req); err != nil {
 		return nil, apierr.InvalidParameter(err.Error())
 	}
-	oi := &openedImages{cuts: newCuts(), endpoint: w.endpoints[req.Model], generator: generator, req: req}
+	oi := &openedImages{cuts: newCuts(), endpoint: w.endpoints[req.Model], generator: generator, screened: w.screened[req.Model], req: req}
 	return MediaAdmission{admitted: admitted{w.keep(o, oi)}, Route: req.Model, Units: req.N, References: len(req.References()), Resolution: req.Size.Resolution, Frames: req.ReferenceDigests()}, nil
 }
 
@@ -76,6 +78,9 @@ func (o *openedImages) run(_ context.Context, w *InProcess, h Handle, g Grant, r
 	opened := time.Now()
 	var imgs media.Images
 	err := o.unconsented(mg)
+	if err == nil {
+		err = w.screen(ctx, mg.PromptCheck, o.screened, promptcheck.Image, o.req.Prompt())
+	}
 	canceller, cancels := o.generator.(media.Canceller)
 	switch {
 	case err != nil:

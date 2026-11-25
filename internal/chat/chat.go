@@ -40,8 +40,9 @@ type Call struct {
 	Efforts []string
 	// Settings are the request fields an API key lets reach the host beside the ones every chat sends, such as
 	// temperature; nil sends none.
-	Settings []string
-	CacheKey string
+	Settings       []string
+	CacheKey       string
+	CarryReasoning bool
 }
 
 var (
@@ -52,6 +53,11 @@ var (
 )
 
 var legacyToolFields = []string{"functions", "function_call"}
+
+const (
+	carryReasoningField = "carry_reasoning"
+	reasoningStateField = "reasoning_state"
+)
 
 func ParseRequest(body io.Reader) (*Request, error) {
 	raw, err := io.ReadAll(body)
@@ -374,6 +380,19 @@ func (r *Request) RenderedPromptTexts() ([]string, int, bool) {
 		}
 	}
 	return texts, len(msgs), true
+}
+
+func (r *Request) CarriesReasoning() bool {
+	var asked bool
+	return unmarshalField(r.fields, carryReasoningField, &asked) == nil && asked
+}
+
+func (m Message) ReasoningState() string {
+	var state string
+	if m.Role != "assistant" || json.Unmarshal(m.raw[reasoningStateField], &state) != nil {
+		return ""
+	}
+	return state
 }
 
 func (m Message) replayedReasoning(key string) string {

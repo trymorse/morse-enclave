@@ -375,7 +375,7 @@ func TestNextRunsJSONIsWhatTheseCasesCompute(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !bytes.Equal(raw, built) {
-		t.Fatalf("%s differs from what the cases in this test compute; if the change is on purpose, rerun with -update and copy the file to the app's src/lib/schedule/testdata", nextRunsFile)
+		t.Fatalf("%s differs from what the cases in this test compute; if the change is on purpose, rerun with -update", nextRunsFile)
 	}
 }
 

@@ -44,6 +44,8 @@ type VideoRequest struct {
 	prompt string
 	first  string
 	last   string
+	refs   []string
+	unread []string
 	frames []frameconsent.Digest
 }
 
@@ -51,6 +53,8 @@ func (r VideoRequest) ModelName() string  { return r.Model }
 func (r VideoRequest) Prompt() string     { return r.prompt }
 func (r VideoRequest) FirstFrame() string { return r.first }
 func (r VideoRequest) LastFrame() string  { return r.last }
+
+func (r VideoRequest) ReferenceImages() []string { return slices.Clone(r.refs) }
 
 func (r VideoRequest) FrameDigests() []frameconsent.Digest { return slices.Clone(r.frames) }
 func (r VideoRequest) String() string {
@@ -63,10 +67,12 @@ func ParseVideoRequest(body io.Reader) (*VideoRequest, error) {
 		Model, Prompt, AspectRatio, Resolution, Image, LastImage string
 		Seconds                                                  json.RawMessage
 		Audio                                                    *bool
+		ReferenceImages                                          []string
 	}
 	if err := strictjson.Decode(body, map[string]any{
 		"model": &wire.Model, "prompt": &wire.Prompt, "seconds": &wire.Seconds, "aspect_ratio": &wire.AspectRatio,
 		"resolution": &wire.Resolution, "image": &wire.Image, "last_image": &wire.LastImage, "audio": &wire.Audio,
+		"reference_images": &wire.ReferenceImages,
 	}); err != nil {
 		return nil, err
 	}
@@ -82,6 +88,8 @@ func ParseVideoRequest(body io.Reader) (*VideoRequest, error) {
 		return nil, strictjson.Invalid("seconds must be a positive whole number.")
 	case req.last != "" && req.first == "":
 		return nil, strictjson.Invalid("last_image needs image as the first frame.")
+	case len(wire.ReferenceImages) > 0 && req.first != "":
+		return nil, strictjson.Invalid("reference_images can't be sent with image or last_image: a clip starts from frames or from reference pictures, not both.")
 	}
 	for i, frame := range []*string{&req.first, &req.last} {
 		if *frame == "" {
@@ -97,6 +105,10 @@ func ParseVideoRequest(body io.Reader) (*VideoRequest, error) {
 			req.AspectRatio = closestOf(VideoAspectRatios, dimsOf(data))
 		}
 	}
+	if len(wire.ReferenceImages) > MostReferencePictures {
+		return nil, strictjson.Invalid(fmt.Sprintf("reference_images takes at most %d pictures.", MostReferencePictures))
+	}
+	req.unread = wire.ReferenceImages
 	req.AspectRatio = cmp.Or(req.AspectRatio, VideoAspectRatios[0])
 	if !slices.Contains(VideoAspectRatios, req.AspectRatio) {
 		return nil, strictjson.Invalid("aspect_ratio must be one of " + strings.Join(VideoAspectRatios, ", ") + ".")
@@ -113,6 +125,8 @@ type VideoSpec struct {
 	LastFrame           bool
 	LastFrameMaxSeconds int
 	FirstFrameRequired  bool
+	MaxReferenceImages  int
+	ReferenceMaxSeconds int
 }
 
 func (s VideoSpec) Spec() VideoSpec { return s }
@@ -139,7 +153,27 @@ func (s VideoSpec) ResolveVideo(r VideoRequest) (VideoRequest, error) {
 		return VideoRequest{}, strictjson.Invalid("This model takes no last_image.")
 	case r.last != "" && s.LastFrameMaxSeconds > 0 && r.Seconds > s.LastFrameMaxSeconds:
 		return VideoRequest{}, strictjson.Invalid(fmt.Sprintf("seconds must be at most %d with a last_image for this model.", s.LastFrameMaxSeconds))
+	case len(r.unread) > 0 && s.MaxReferenceImages == 0:
+		return VideoRequest{}, strictjson.Invalid("This model takes no reference_images.")
+	case len(r.unread) > s.MaxReferenceImages:
+		return VideoRequest{}, strictjson.Invalid(fmt.Sprintf("reference_images takes at most %d pictures for this model.", s.MaxReferenceImages))
+	case len(r.unread) > 0 && s.ReferenceMaxSeconds > 0 && r.Seconds > s.ReferenceMaxSeconds:
+		return VideoRequest{}, strictjson.Invalid(fmt.Sprintf("seconds must be at most %d with reference_images for this model.", s.ReferenceMaxSeconds))
 	}
+	return r.readReferences()
+}
+
+// why: the pictures are decoded and hashed only once the model has accepted how many there are, so a request it would refuse costs no image work.
+func (r VideoRequest) readReferences() (VideoRequest, error) {
+	for _, ref := range r.unread {
+		canonical, data, err := inlineImage(ref)
+		if err != nil {
+			return VideoRequest{}, err
+		}
+		r.refs = append(slices.Clone(r.refs), canonical.String())
+		r.frames = append(slices.Clone(r.frames), frameconsent.Of(data))
+	}
+	r.unread = nil
 	return r, nil
 }
 

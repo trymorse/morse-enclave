@@ -21,16 +21,29 @@ type MediaPrice struct {
 	PerUnitAt    map[string]Micros `json:",omitempty"`
 	PerReference Micros
 	Markup       Markup
+	// why: a clip with reference pictures bills by what the vendor lists for them, which for some models is a
+	// higher rate per second (WithReferencesAt, by resolution, where it differs from PerUnitAt) and a flat charge
+	// for each picture past the first FreeReferencePictures (PerReferencePicture).
+	WithReferencesAt      map[string]Micros `json:",omitempty"`
+	PerReferencePicture   Micros            `json:",omitempty"`
+	FreeReferencePictures int               `json:",omitempty"`
 }
 
 func (p MediaPrice) Validate() error {
-	for _, rate := range append([]Micros{p.PerUnit, p.PerReference}, slices.Collect(maps.Values(p.PerUnitAt))...) {
+	rates := append([]Micros{p.PerUnit, p.PerReference, p.PerReferencePicture}, slices.Collect(maps.Values(p.PerUnitAt))...)
+	for _, rate := range append(rates, slices.Collect(maps.Values(p.WithReferencesAt))...) {
 		if rate < 0 || rate > MaxMicrosPerUnit {
 			return errors.New("media hold prices must be between 0 and 10000000 micros")
 		}
 	}
 	if p.PerUnit == 0 || slices.Contains(slices.Collect(maps.Values(p.PerUnitAt)), 0) {
 		return errors.New("media routes need a positive hold price per unit")
+	}
+	if slices.Contains(slices.Collect(maps.Values(p.WithReferencesAt)), 0) {
+		return errors.New("a rate with reference pictures must be positive, or left out to fall back to the base rate")
+	}
+	if p.FreeReferencePictures < 0 {
+		return errors.New("free reference pictures can't be negative")
 	}
 	return nil
 }
@@ -48,6 +61,15 @@ func (p MediaPrice) At(resolution string) MediaPrice {
 
 func (p MediaPrice) Hold(units, references, outputs int) Micros {
 	return max(p.Markup.Of(Micros(units)*(p.PerUnit+Micros(references)*p.PerReference)), minimumFor(outputs))
+}
+
+func (p MediaPrice) HoldClip(resolution string, seconds, pictures int) Micros {
+	rate := p.At(resolution).PerUnit
+	if rated, ok := p.WithReferencesAt[resolution]; ok && pictures > 0 {
+		rate = rated
+	}
+	extra := Micros(max(pictures-max(p.FreeReferencePictures, 0), 0)) * p.PerReferencePicture
+	return max(p.Markup.Of(Micros(seconds)*rate+extra), minimumFor(1))
 }
 
 func (p MediaPrice) Settle(o measure.Outcome, r Reported, delivered int, hold Micros) Settlement {

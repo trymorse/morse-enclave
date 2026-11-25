@@ -1,6 +1,7 @@
 package openairesponses
 
 import (
+	"encoding/json"
 	"net/http"
 
 	"morse/backend/internal/apierr"
@@ -31,12 +32,13 @@ func (t translator) Request(conv completions.Conversation) (string, string, any)
 	return responsesPath, "text/event-stream", newRequest(conv, t.model)
 }
 
-func (translator) Events(w *completions.Writer) func([]byte) (bool, error) {
-	return (&translation{w: w}).events().ByType
+func (t translator) Events(w *completions.Writer) func([]byte) (bool, error) {
+	return (&translation{w: w, model: t.model}).events().ByType
 }
 
 type translation struct {
 	w       *completions.Writer
+	model   string
 	refused bool
 }
 
@@ -96,6 +98,7 @@ type responseEvent struct {
 		IncompleteDetails *incompleteDetails `json:"incomplete_details"`
 		Error             *vendorError       `json:"error"`
 		Usage             *usageWire         `json:"usage"`
+		Output            []json.RawMessage  `json:"output"`
 	} `json:"response"`
 }
 
@@ -108,6 +111,11 @@ func (s *translation) events() completions.Events {
 	ended := func(completed bool) func([]byte) (bool, error) {
 		return completions.On(func(e responseEvent) (bool, error) {
 			s.w.Count(e.Response.Usage.usage(), true)
+			if completed && s.w.Calls() > 0 {
+				if err := s.w.ReasoningState(s.model, reasoningState(e.Response.Output)); err != nil {
+					return true, err
+				}
+			}
 			return true, s.finish(completed, e.Response.IncompleteDetails)
 		})
 	}
@@ -145,6 +153,28 @@ func (s *translation) events() completions.Events {
 		}),
 		"error": completions.On(func(e errorEvent) (bool, error) { return true, s.failure(e.Error, e.Code) }),
 	}
+}
+
+func reasoningState(output []json.RawMessage) completions.ReasoningState {
+	var state completions.ReasoningState
+	var layout []rune
+	for _, item := range output {
+		var read struct {
+			Type string `json:"type"`
+		}
+		json.Unmarshal(item, &read)
+		switch {
+		case read.Type == itemReasoning && replayable(item):
+			state.Items = append(state.Items, item)
+			layout = append(layout, layoutReasoning)
+		case read.Type == itemMessage:
+			layout = append(layout, layoutMessage)
+		case read.Type == itemFunctionCall:
+			layout = append(layout, layoutCall)
+		}
+	}
+	state.Layout = string(layout)
+	return state
 }
 
 func (s *translation) finish(completed bool, incomplete *incompleteDetails) error {

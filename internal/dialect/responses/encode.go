@@ -24,15 +24,16 @@ type echo struct {
 	temperature     *float64
 	topP            *float64
 	metadata        json.RawMessage
+	format          json.RawMessage
 	custom          map[string]bool
 	namespaced      map[string]qualified
 	summarize       bool
 }
 
-func echoOf(req request, t tools, r reasoning) echo {
+func echoOf(req request, t tools, r reasoning, format json.RawMessage) echo {
 	e := echo{model: req.Model, instructions: req.Instructions, maxOutputTokens: req.MaxOutputTokens, tools: t.echo, toolChoice: t.choice,
 		parallel: req.ParallelToolCalls == nil || *req.ParallelToolCalls, effort: r.Effort, summary: r.Summary, temperature: req.Temperature,
-		topP: req.TopP, metadata: req.Metadata, custom: t.custom, namespaced: t.namespaced, summarize: r.summarized()}
+		topP: req.TopP, metadata: req.Metadata, custom: t.custom, namespaced: t.namespaced, summarize: r.summarized(), format: format}
 	if e.summary == nil {
 		e.summary = r.GenerateSummary
 	}
@@ -188,7 +189,7 @@ func (e *encoder) response(status string, output []any, usage any, incomplete, f
 		"incomplete_details": incomplete, "instructions": orNull(e.instructions), "max_output_tokens": orNull(e.maxOutputTokens),
 		"model": e.model, "output": output, "parallel_tool_calls": e.parallel, "previous_response_id": nil,
 		"reasoning": map[string]any{"effort": e.effort, "summary": e.summary}, "store": false, "temperature": e.temperature,
-		"top_p": e.topP, "text": map[string]any{"format": map[string]string{"type": "text"}}, "tool_choice": choice, "tools": tools,
+		"top_p": e.topP, "text": map[string]any{"format": e.format}, "tool_choice": choice, "tools": tools,
 		"truncation": "disabled", "usage": usage, "user": nil, "metadata": metadata,
 	}
 }

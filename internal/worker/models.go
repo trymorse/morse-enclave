@@ -114,11 +114,15 @@ func (Verbatim) busyWaits() []time.Duration { return nil }
 
 func (Verbatim) hedge() chat.Hedge { return chat.Hedge{} }
 
-type Images struct{ media.ImageGenerator }
+type Images struct {
+	media.ImageGenerator
+	Screened
+}
 
 type Videos struct {
 	media.VideoGenerator
 	UploadsOutput bool
+	Screened
 }
 
 type Search struct{ web.Searcher }

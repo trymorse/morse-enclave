@@ -23,6 +23,11 @@ type videoModel struct {
 	klingSound      bool
 }
 
+func takingReferences(spec media.VideoSpec, most int) media.VideoSpec {
+	spec.MaxReferenceImages = most
+	return spec
+}
+
 var videoModels = map[string]videoModel{
 	"klingai:kling-video@3-pro": {
 		VideoSpec:  media.KlingV3Pro,
@@ -30,7 +35,7 @@ var videoModels = map[string]videoModel{
 		klingSound: true,
 	},
 	"bytedance:seedance@2.5": {
-		VideoSpec: media.Seedance25,
+		VideoSpec: takingReferences(media.Seedance25, 30),
 		sizes: media.SizeTable(map[string][2]int{
 			"16:9 480p": {854, 480}, "9:16 480p": {480, 854}, "1:1 480p": {640, 640},
 			"16:9 720p": {1280, 720}, "9:16 720p": {720, 1280}, "1:1 720p": {960, 960},
@@ -39,7 +44,7 @@ var videoModels = map[string]videoModel{
 		frameResolution: true,
 	},
 	"minimax:h3@max": {
-		VideoSpec: media.MiniMaxH3Max,
+		VideoSpec: takingReferences(media.MiniMaxH3Max, 9),
 		sizes: media.SizeTable(map[string][2]int{
 			"16:9 480p": {832, 480}, "9:16 480p": {480, 832}, "1:1 480p": {480, 480},
 			"16:9 768p": {1344, 768}, "9:16 768p": {768, 1344}, "1:1 768p": {768, 768},
@@ -47,7 +52,7 @@ var videoModels = map[string]videoModel{
 		frameResolution: true,
 	},
 	"alibaba:wan@3.0": {
-		VideoSpec: media.Wan30,
+		VideoSpec: takingReferences(media.Wan30, 10),
 		sizes: media.SizeTable(map[string][2]int{
 			"16:9 480p": {832, 480}, "9:16 480p": {480, 832}, "1:1 480p": {624, 624},
 			"16:9 720p": {1280, 720}, "9:16 720p": {720, 1280}, "1:1 720p": {960, 960},
@@ -104,7 +109,7 @@ var videoModels = map[string]videoModel{
 		frameResolution: true,
 	},
 	"bytedance:seedance@2.0-fast": {
-		VideoSpec: media.Seedance20Fast,
+		VideoSpec: takingReferences(media.Seedance20Fast, 9),
 		sizes: media.SizeTable(map[string][2]int{
 			"16:9 480p": {864, 496}, "9:16 480p": {496, 864}, "1:1 480p": {640, 640},
 			"16:9 720p": {1280, 720}, "9:16 720p": {720, 1280}, "1:1 720p": {960, 960},
@@ -134,7 +139,8 @@ type frameImage struct {
 }
 
 type videoInputs struct {
-	FrameImages []frameImage `json:"frameImages"`
+	FrameImages     []frameImage `json:"frameImages,omitempty"`
+	ReferenceImages []string     `json:"referenceImages,omitempty"`
 }
 
 type videoSettings struct {
@@ -183,6 +189,10 @@ func (p *Videos) SubmitVideo(ctx context.Context, req *media.VideoRequest, _ med
 			task.Resolution = req.Resolution
 		}
 	} else {
+		// why: Runware refuses frames beside reference pictures, and a clip from reference pictures is sized by width and height, as a clip from words is.
+		if refs := req.ReferenceImages(); len(refs) > 0 {
+			task.Inputs = &videoInputs{ReferenceImages: refs}
+		}
 		dims := p.sizes[req.Size]
 		task.Width, task.Height = dims.Width, dims.Height
 	}

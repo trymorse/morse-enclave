@@ -44,6 +44,9 @@ func TestMediaPriceValidateNeedsAPositiveUnitPriceUnderTheCeiling(t *testing.T) 
 	for _, p := range []money.MediaPrice{
 		{}, {PerUnit: -1}, {PerUnit: 1, PerReference: -1}, {PerUnit: money.MaxMicrosPerUnit + 1},
 		{PerUnit: 1, PerUnitAt: map[string]money.Micros{"2k": 0}}, {PerUnit: 1, PerUnitAt: map[string]money.Micros{"4k": money.MaxMicrosPerUnit + 1}},
+		{PerUnit: 1, WithReferencesAt: map[string]money.Micros{"480p": 0}},
+		{PerUnit: 1, FreeReferencePictures: -1},
+		{PerUnit: 1, PerReferencePicture: -1},
 	} {
 		if p.Validate() == nil {
 			t.Errorf("%+v accepted", p)
@@ -184,5 +187,30 @@ func TestAReportedCostRoundTripsThroughJSONWithWhatItKnows(t *testing.T) {
 	var bad money.Reported
 	if err := json.Unmarshal([]byte(`{"micros":1,"known":"guessed"}`), &bad); err == nil {
 		t.Error("a cost known in no listed way decoded")
+	}
+}
+
+func TestAClipHoldsTheRateForItsReferencePicturesAndOneChargePerPicturePastTheFreeOnes(t *testing.T) {
+	heygen := money.MediaPrice{
+		PerUnit: 36_000, PerUnitAt: map[string]money.Micros{"480p": 20_000, "768p": 36_000},
+		WithReferencesAt: map[string]money.Micros{"480p": 70_000, "768p": 100_000}, PerReferencePicture: 40_000, FreeReferencePictures: 2,
+	}
+	plain := money.MediaPrice{PerUnit: 130_000, PerUnitAt: map[string]money.Micros{"480p": 60_000, "720p": 130_000}, Markup: testMarkup}
+	for _, c := range []struct {
+		name       string
+		price      money.MediaPrice
+		resolution string
+		seconds    int
+		pictures   int
+		want       money.Micros
+	}{
+		{"words only", heygen, "768p", 10, 0, 360_000},
+		{"two free pictures at the references rate", heygen, "768p", 10, 2, 1_000_000},
+		{"nine pictures: seven charged", heygen, "480p", 5, 9, 5*70_000 + 7*40_000},
+		{"no extra rate or charge", plain, "720p", 5, 9, plain.Markup.Of(5 * 130_000)},
+	} {
+		if got := c.price.HoldClip(c.resolution, c.seconds, c.pictures); got != c.want {
+			t.Errorf("%s: held %d, want %d", c.name, got, c.want)
+		}
 	}
 }

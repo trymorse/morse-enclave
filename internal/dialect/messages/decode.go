@@ -40,6 +40,28 @@ var privacyPassthroughFields = []string{"provider", "privacy_veil"}
 // "context_management: Extra inputs are not permitted" to retry without context_management.
 var extraInputs = []string{"context_management", "container", "mcp_servers"}
 
+// why: Claude Code opens every session with context_management {"edits":[{"type":"clear_thinking_20251015",
+// "keep":"all"}]} (2.1.325, 2026-11-23), which asks the server to clear nothing, as Morse does.
+func clearsNothing(name string, raw json.RawMessage) bool {
+	var management struct {
+		Edits []struct {
+			Type string          `json:"type"`
+			Keep json.RawMessage `json:"keep"`
+		} `json:"edits"`
+	}
+	exact := json.NewDecoder(bytes.NewReader(raw))
+	exact.DisallowUnknownFields()
+	if name != "context_management" || exact.Decode(&management) != nil {
+		return false
+	}
+	for _, edit := range management.Edits {
+		if !strings.HasPrefix(edit.Type, "clear_thinking_") || string(edit.Keep) != `"all"` {
+			return false
+		}
+	}
+	return true
+}
+
 func Decode(body []byte, known func(string) bool) (dialect.Decoded, error) {
 	if err := strictjson.UniqueKeys(body); err != nil {
 		return dialect.Decoded{}, err
@@ -49,7 +71,7 @@ func Decode(body []byte, known func(string) bool) (dialect.Decoded, error) {
 		return dialect.Decoded{}, invalid("The request body must be a JSON object.")
 	}
 	for _, name := range extraInputs {
-		if raw, ok := fields[name]; ok && !null(raw) {
+		if raw, ok := fields[name]; ok && !null(raw) && !clearsNothing(name, raw) {
 			return dialect.Decoded{}, invalid(name + ": Extra inputs are not permitted")
 		}
 	}
@@ -450,7 +472,11 @@ func reasoningOf(rawThinking, rawConfig json.RawMessage, out map[string]any) (sh
 		return false, invalid("output_config: Input should be an object")
 	}
 	if !null(config.Format) {
-		return false, invalid("output_config.format: Morse does not serve structured outputs on any model. Send the request without output_config.format.")
+		format, err := responseFormatOf(config.Format)
+		if err != nil {
+			return false, err
+		}
+		out["response_format"] = format
 	}
 	var t thinking
 	if !null(rawThinking) && json.Unmarshal(rawThinking, &t) != nil {
@@ -463,7 +489,12 @@ func reasoningOf(rawThinking, rawConfig json.RawMessage, out map[string]any) (sh
 		out["reasoning_effort"] = config.Effort
 	}
 	switch t.Type {
-	case "", "disabled":
+	case "":
+		return false, nil
+	case "disabled":
+		if config.Effort == "" {
+			out["reasoning_effort"] = chat.NoEffort
+		}
 		return false, nil
 	case "adaptive":
 		return true, nil
@@ -474,6 +505,25 @@ func reasoningOf(rawThinking, rawConfig json.RawMessage, out map[string]any) (sh
 		return true, nil
 	}
 	return false, invalid(fmt.Sprintf("thinking: Input tag '%s' found using 'type' does not match any of the expected tags: 'enabled', 'disabled', 'adaptive'", t.Type))
+}
+
+// why: Anthropic's json_schema format carries a schema and no name, and its reply always follows the schema, so the
+// chat's response_format names it output and is strict. The route's response_formats gate it as they do a chat's.
+func responseFormatOf(raw json.RawMessage) (map[string]any, error) {
+	var format struct {
+		Type   string          `json:"type"`
+		Schema json.RawMessage `json:"schema"`
+	}
+	if json.Unmarshal(raw, &format) != nil {
+		return nil, invalid("output_config.format: Input should be an object")
+	}
+	if format.Type != "json_schema" {
+		return nil, invalid(fmt.Sprintf("output_config.format: Input tag '%s' found using 'type' does not match any of the expected tags: 'json_schema'", format.Type))
+	}
+	if null(format.Schema) {
+		return nil, invalid("output_config.format.schema: Field required")
+	}
+	return map[string]any{"type": "json_schema", "json_schema": map[string]any{"name": "output", "schema": format.Schema, "strict": true}}, nil
 }
 
 func budgetEffort(budget int) string {

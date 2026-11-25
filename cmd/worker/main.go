@@ -31,6 +31,7 @@ import (
 	"morse/backend/internal/seal"
 	"morse/backend/internal/taskseal"
 	"morse/backend/internal/tee"
+	"morse/backend/internal/tinfoil"
 	"morse/backend/internal/vendorpins"
 	"morse/backend/internal/worker"
 )
@@ -51,8 +52,9 @@ type built struct {
 	routesData routesdata.Checker
 	door       *listeningDoor
 	// filter and veil are the Privacy Veil's, when this worker serves it: in an enclave, or in dev, with a filter key.
-	filter *tee.PrivacyFilter
-	veil   *worker.PrivacyVeil
+	filter  *tee.PrivacyFilter
+	veil    *worker.PrivacyVeil
+	checker *tee.PromptChecker
 }
 
 const (
@@ -140,11 +142,17 @@ func build(getenv func(string) string, log *logger) (built, error) {
 	}
 	transport, client := vendors.NewClient()
 	gates := vendors.NewGates(transport, client, attestation.NVIDIAPolicy(), log.attestation)
+	var checker *tee.PromptChecker
 	pins := vendorpins.New(vendorpins.Config{
 		Mode: mode, Client: client, Root: trust.Root, Identity: trust.Identity, Witnesses: trust.Witnesses, MaxAge: door.PinsMaxAge, Floor: floor,
 		Now:     trustedTime,
 		Observe: log.vendorPins,
-		OnSwap:  gates.Wake,
+		OnSwap: func() {
+			gates.Wake()
+			if checker != nil {
+				checker.Wake()
+			}
+		},
 	})
 	unwrapped := func() { log.log(researchUnwrapped, fields{}) }
 	keys, err := vendors.ReadKeys(rts, getenv)
@@ -174,6 +182,11 @@ func build(getenv func(string) string, log *logger) (built, error) {
 		filter = tee.NewPrivacyFilter(getenv(privacyFilterKeyEnv), tee.Deps{Base: transport, Unpinned: client, Policy: attestation.NVIDIAPolicy(), Observe: log.attestation})
 		veil = &worker.PrivacyVeil{Filter: filter, Cache: privacyveil.NewCache(privacyVeilCacheBytes, privacyVeilCacheTTL, time.Now), FilterCalls: calls}
 	}
+	var promptCheck *worker.PromptCheck
+	if key := vendors.TinfoilKey(rts, keys); key != "" {
+		checker = tee.NewPromptChecker(key, tinfoil.DecisionSmall, tee.Deps{Base: transport, Unpinned: client, Policy: attestation.NVIDIAPolicy(), Observe: log.attestation})
+		promptCheck = &worker.PromptCheck{Scorer: checker}
+	}
 	instance := rand.Text()
 	seen := &routesSeen{worker: instance, mode: routesMode, boot: digest}
 	inner, err := worker.NewInProcess(worker.Config{
@@ -194,6 +207,7 @@ func build(getenv func(string) string, log *logger) (built, error) {
 		VendorPinsMode: string(mode),
 		RoutesData:     seen.report,
 		PrivacyVeil:    veil,
+		PromptCheck:    promptCheck,
 		Clips:          clips,
 	})
 	if err != nil {
@@ -209,16 +223,19 @@ func build(getenv func(string) string, log *logger) (built, error) {
 	if filter != nil {
 		log.names = append(log.names, filter.Scope())
 	}
+	if checker != nil {
+		log.names = append(log.names, checker.Scope())
+	}
 	mux := http.NewServeMux()
 	mux.Handle("/", worker.NewServer(inner, digest))
 	gate.Register(mux)
 	srv := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: readHeaderTimeout, ErrorLog: discarded()}
-	checker := routesDataChecker(routesMode, bootRoutes{environment: environment, file: boot, floor: floor}, trust, trustedTime, getenv, func(e routesdata.Event) {
+	routesChecker := routesDataChecker(routesMode, bootRoutes{environment: environment, file: boot, floor: floor}, trust, trustedTime, getenv, func(e routesdata.Event) {
 		if seen.see(e) {
 			log.routesData(e)
 		}
 	})
-	return built{server: srv, inner: inner, gates: gates, pins: pins, routes: len(models), routesData: checker, door: front, filter: filter, veil: veil}, nil
+	return built{server: srv, inner: inner, gates: gates, pins: pins, routes: len(models), routesData: routesChecker, door: front, filter: filter, veil: veil, checker: checker}, nil
 }
 
 const taskKeyWait = 3 * time.Minute
@@ -309,6 +326,9 @@ func main() {
 	if w.filter != nil {
 		go w.filter.Run(gatesCtx)
 		go logVeilFailures(gatesCtx, w.veil, log)
+	}
+	if w.checker != nil {
+		go w.checker.Run(gatesCtx)
 	}
 	drained := make(chan struct{})
 	go func() {

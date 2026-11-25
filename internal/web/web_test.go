@@ -16,6 +16,7 @@ import (
 const (
 	queryCanary     = "QUERY-CANARY-7d1a"
 	objectiveCanary = "OBJECTIVE-CANARY-2b9e"
+	domainCanary    = "DOMAIN-CANARY-91ce"
 	pageCanary      = "PAGE-CANARY-5c3f"
 )
 
@@ -59,20 +60,74 @@ func TestSearchRequestTrimsQueriesAndKeepsThemAndTheObjectiveOutOfFmtAndJSON(t *
 	if none := search(t, `{"model":"m","queries":["q"],"objective":null}`); none.Objective() != "" {
 		t.Errorf("null objective became %q", none.Objective())
 	}
-	edge := search(t, `{"model":"m","queries":["`+strings.Repeat("é", web.MaxQueryChars)+`","b","c"],"objective":"`+strings.Repeat("ü", web.MaxObjectiveChars)+`"}`)
+	edge := search(t, `{"model":"m","queries":["`+strings.Repeat("é", web.MaxQueryChars)+`","b","c","d","e"],"objective":"`+strings.Repeat("ü", web.MaxObjectiveChars)+`"}`)
 	if len(edge.Queries()) != web.MaxQueries {
 		t.Errorf("queries at the limits refused: %v", edge)
 	}
 }
 
-func TestSearchRequestRefusesAnythingButTheThreeFields(t *testing.T) {
+func TestSearchRequestTakesUpToFiveLowercasedPublicDomainNames(t *testing.T) {
+	req := search(t, `{"model":"m","queries":["q"],"domains":["  `+domainCanary+`.Example.COM ","shop.example.co.uk","xn--mnchen-3ya.de","a-b.example","example.org"]}`)
+	if got := strings.Join(req.Domains(), "|"); got != strings.ToLower(domainCanary)+".example.com|shop.example.co.uk|xn--mnchen-3ya.de|a-b.example|example.org" {
+		t.Errorf("domains %q", got)
+	}
+	req.Domains()[0] = "changed"
+	if req.Domains()[0] == "changed" {
+		t.Error("Domains hands out the request's own slice")
+	}
+	for _, verb := range []string{"%v", "%+v", "%#v", "%s"} {
+		if out := strings.ToLower(fmt.Sprintf(verb, req) + fmt.Sprintf(verb, *req)); strings.Contains(out, strings.ToLower(domainCanary)) {
+			t.Errorf("%s leaks a domain: %s", verb, out)
+		}
+	}
+	if b, _ := json.Marshal(req); bytes.Contains(bytes.ToLower(b), []byte(strings.ToLower(domainCanary))) {
+		t.Errorf("json.Marshal leaks a domain: %s", b)
+	}
+	for name, body := range map[string]string{
+		"none": `{"model":"m","queries":["q"]}`, "null": `{"model":"m","queries":["q"],"domains":null}`, "empty": `{"model":"m","queries":["q"],"domains":[]}`,
+	} {
+		if got := search(t, body).Domains(); len(got) != 0 {
+			t.Errorf("%s domains became %q", name, got)
+		}
+	}
+	for name, domains := range map[string]string{
+		"six domains":         `["a.com","b.com","c.com","d.com","e.com","f.com"]`,
+		"a string":            `"example.com"`,
+		"a number":            `[5]`,
+		"a blank":             `["example.com"," "]`,
+		"a url":               `["https://example.com"]`,
+		"a path":              `["example.com/sale"]`,
+		"a port":              `["example.com:8443"]`,
+		"a wildcard":          `["*.example.com"]`,
+		"a leading dot":       `[".example.com"]`,
+		"a bare word":         `["example"]`,
+		"an ip":               `["93.184.216.34"]`,
+		"an ipv6 address":     `["2606:2800:220:1::1"]`,
+		"a private name":      `["printer.local"]`,
+		"localhost":           `["app.localhost"]`,
+		"a numeric tld":       `["example.123"]`,
+		"a hyphen at an edge": `["-example.com"]`,
+		"an underscore":       `["shop_one.example.com"]`,
+		"unicode":             `["münchen.de"]`,
+		"a query operator":    `["example.com OR site:other.com"]`,
+		"a long name":         `["` + strings.Repeat("a", web.MaxDomainChars) + `.com"]`,
+	} {
+		_, err := web.ParseSearchRequest(strings.NewReader(`{"model":"m","queries":["q"],"domains":` + domains + `}`))
+		var refusal strictjson.Invalid
+		if !errors.As(err, &refusal) {
+			t.Errorf("%s: err %v, want strictjson.Invalid", name, err)
+		}
+	}
+}
+
+func TestSearchRequestRefusesAnythingButTheFourFields(t *testing.T) {
 	invalid := map[string]string{
 		"no model":            `{"queries":["q"]}`,
 		"empty model":         `{"model":"","queries":["q"]}`,
 		"no queries":          `{"model":"m"}`,
 		"null queries":        `{"model":"m","queries":null}`,
 		"zero queries":        `{"model":"m","queries":[]}`,
-		"four queries":        `{"model":"m","queries":["a","b","c","d"]}`,
+		"six queries":         `{"model":"m","queries":["a","b","c","d","e","f"]}`,
 		"queries a string":    `{"model":"m","queries":"q"}`,
 		"a numeric query":     `{"model":"m","queries":[1]}`,
 		"a blank query":       `{"model":"m","queries":["a","   "]}`,
@@ -301,10 +356,22 @@ func TestPageIsCappedPrefersTheReportedLinkAndRedacts(t *testing.T) {
 		!out.Truncated || utf8.RuneCountInString(out.Content) != web.MaxContentChars || strings.Contains(out.Content, pageCanary) || !page.Truncated() {
 		t.Errorf("page %+v", out)
 	}
-	whole := web.NewPage(req, "https://example.com/page/", str("Title"), nil, "# "+pageCanary)
+	for acquired, want := range map[string]string{
+		"2026-11-24T00:00:00Z":      `"fetched":"2026-11-24"`,
+		"2026-02-05T23:59:59-08:00": `"fetched":"2026-02-06"`,
+		"2026-11-24":                `"fetched":null`,
+		"yesterday":                 `"fetched":null`,
+		"":                          `"fetched":null`,
+	} {
+		var dated bytes.Buffer
+		if err := web.WritePage(&dated, web.NewPage(req, "", nil, nil, "x").FetchedAt(&acquired)); err != nil || !strings.Contains(dated.String(), want) {
+			t.Errorf("acquired %q wrote %s err %v, want %s", acquired, dated.String(), err, want)
+		}
+	}
+	whole := web.NewPage(req, "https://example.com/page/", str("Title"), nil, "# "+pageCanary).FetchedAt(nil)
 	buf.Reset()
 	web.WritePage(&buf, whole)
-	if want := `{"object":"fetch.result","url":"https://example.com/page/","title":"Title","published":null,"content":"# ` + pageCanary + `","truncated":false}`; strings.TrimSpace(buf.String()) != want {
+	if want := `{"object":"fetch.result","url":"https://example.com/page/","title":"Title","published":null,"fetched":null,"content":"# ` + pageCanary + `","truncated":false}`; strings.TrimSpace(buf.String()) != want {
 		t.Errorf("page\n%s\nwant\n%s", buf.String(), want)
 	}
 	for _, verb := range []string{"%v", "%+v", "%#v", "%s"} {

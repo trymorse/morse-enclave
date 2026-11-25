@@ -54,12 +54,12 @@ type toolSpec struct {
 }
 
 const (
-	webSearchParameters = `{"type":"object","properties":{"queries":{"minItems":1,"maxItems":3,"type":"array","items":{"type":"string","minLength":1,"maxLength":200},"description":"1 to 3 keyword search queries, each 3 to 6 words"},"objective":{"description":"Optional: what you are trying to find out, in one plain sentence","type":"string","maxLength":500}},"required":["queries"],"additionalProperties":false}`
+	webSearchParameters = `{"type":"object","properties":{"queries":{"minItems":1,"maxItems":5,"type":"array","items":{"type":"string","minLength":1,"maxLength":200},"description":"1 to 5 keyword search queries, each 3 to 6 words"},"objective":{"description":"Optional: what you are trying to find out, in one plain sentence","type":"string","maxLength":500}},"required":["queries"],"additionalProperties":false}`
 	readPageParameters  = `{"type":"object","properties":{"url":{"type":"string","minLength":1,"description":"The page's full http(s) URL, exactly as the user or a tool result gave it"}},"required":["url"],"additionalProperties":false}`
 )
 
 func webSearchSpec(reads bool) json.RawMessage {
-	description := "Search the web. Write 1 to 3 short keyword queries (3 to 6 words each, like a person would type) that approach the question from different angles, and optionally an objective: one sentence saying what you need to find out. Returns up to 10 results with titles, URLs, publication dates when known, and excerpts."
+	description := "Search the web. Write 1 to 5 short keyword queries (3 to 6 words each, like a person would type) that approach the question from different angles, and optionally an objective: one sentence saying what you need to find out. Returns up to 10 results with titles, URLs, publication dates when known, and excerpts."
 	if reads {
 		description += " To read a result in full, pass its URL to " + readPageName + "."
 	}

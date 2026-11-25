@@ -108,8 +108,11 @@ type imagePrice struct {
 }
 
 type videoPrice struct {
-	HoldMicrosPerSecond             *money.Micros           `json:"hold_micros_per_second"`
-	HoldMicrosPerSecondByResolution map[string]money.Micros `json:"hold_micros_per_second_by_resolution"`
+	HoldMicrosPerSecond                           *money.Micros           `json:"hold_micros_per_second"`
+	HoldMicrosPerSecondByResolution               map[string]money.Micros `json:"hold_micros_per_second_by_resolution"`
+	HoldMicrosPerSecondWithReferencesByResolution map[string]money.Micros `json:"hold_micros_per_second_with_references_by_resolution"`
+	HoldMicrosPerReferencePicture                 *money.Micros           `json:"hold_micros_per_reference_picture"`
+	FreeReferencePictures                         int                     `json:"free_reference_pictures"`
 }
 
 type callPrice struct {

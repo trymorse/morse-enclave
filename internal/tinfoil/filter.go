@@ -1,7 +1,6 @@
 package tinfoil
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -9,8 +8,6 @@ import (
 	"net/http"
 	"strconv"
 
-	"morse/backend/internal/e2ee/ehbp"
-	"morse/backend/internal/e2ee/ehbp/ehbpclient"
 	"morse/backend/internal/privacyveil"
 	"morse/backend/internal/upstream"
 )
@@ -90,24 +87,11 @@ func (f *Filter) send(ctx context.Context, body []byte, out any) (upstream.Reply
 	if !ok {
 		return upstream.Reply{}, privacyveil.ErrUnattested
 	}
-	sealed, wire, err := ehbpclient.SealRequest(key[:], body)
+	reply, plain, err := postSealed(ctx, f.endpoint, key, redactPath, nil, body, maxRedaction)
 	if err != nil {
-		return upstream.Reply{}, err
-	}
-	reply, err := f.endpoint.Call(ctx, upstream.Request{Method: http.MethodPost, Path: redactPath, Body: wire,
-		Header: http.Header{ehbp.HeaderEncapsulatedKey: {sealed.EncapsulatedHex()}, "Content-Type": {"application/json"}}}, maxRedaction)
-	switch {
-	case err != nil:
 		return reply, err
-	case reply.Status/100 != 2:
-		return reply, refuseRedaction(reply)
 	}
-	opener, err := sealed.Reply(reply.Header.Get(ehbp.HeaderResponseNonce))
-	if err != nil {
-		return reply, upstream.ErrMalformed
-	}
-	plain, err := opener.OpenAll(bytes.NewReader(reply.Body))
-	if err != nil || json.Unmarshal(plain, out) != nil {
+	if json.Unmarshal(plain, out) != nil {
 		return reply, upstream.ErrMalformed
 	}
 	return reply, nil
