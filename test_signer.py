@@ -136,6 +136,76 @@ class SignerTest(Fixture):
         self.door.statements.append(("vendor/2.statement.json", json.dumps({**statement, "files": {**files, "v4/near_pins.json": "0" * 64}}).encode(), fake_bundle(head)))
         self.fails(f"FAIL: vendor/2.statement.json lists other files than the vendor pins files at {head} give it")
 
+    # The v5 plan: a morse-vendor-pins-v5 statement covers v5/phala_pins.json, which is v4's file plus the key
+    # service root, and the other three vendor files at the root, which both statements cover.
+    ROOT = "02a335aea3df11d46ae0a373d3f26fbd1d208572ecc87e630e618dac693b7af721"
+
+    def vendor_v5(self):
+        """Commits the four root vendor files and v5/phala_pins.json as the publisher pushes them, and returns the
+        statement sign.yml writes for them, with each hash typed from the file's RFC 8785 bytes."""
+        for name in signer.VENDOR_FILES:
+            (self.door.root / "pins" / name).write_text(f'{{"name": "{name}", "v": 4}}\n')
+        (self.door.root / "pins" / "v5").mkdir()
+        (self.door.root / "pins" / "v5/phala_pins.json").write_text(f'{{\n  "v": 4, "name": "phala_pins.json",\n  "kms_k256_pubkey": "{self.ROOT}"\n}}\n')
+        self.door.git("add", "-A")
+        self.door.git("commit", "-q", "-m", "vendor v5")
+        head = self.door.head()
+        v4 = lambda name: hashlib.sha256(f'{{"name":"{name}","v":4}}'.encode()).hexdigest()
+        files = {"v4/near_pins.json": v4("near_pins.json"), "v4/phala_model_pins.json": v4("phala_model_pins.json"),
+                 "v5/phala_pins.json": hashlib.sha256(f'{{"kms_k256_pubkey":"{self.ROOT}","name":"phala_pins.json","v":4}}'.encode()).hexdigest(),
+                 "v4/tinfoil_pins.json": v4("tinfoil_pins.json")}
+        return {"type": "morse-vendor-pins-v5", "sequence": int(git(self.door.root / "pins", "rev-list", "--count", "HEAD")), "pins_commit": head,
+                "time": "2026-11-26T00:00:00Z", "files": files}
+
+    def test_a_v5_vendor_statement_hashes_phalas_v5_file_and_the_other_three_v4_files(self):
+        statement = self.vendor_v5()
+        head, files = statement["pins_commit"], statement["files"]
+        self.door.statements.append(("vendor-v5/1.statement.json", json.dumps(statement).encode(), fake_bundle(head)))
+        self.assertEqual(self.check7(self.passes()), "  OK")
+        v4_phala = hashlib.sha256(b'{"name":"phala_pins.json","v":4}').hexdigest()
+        wrong = {"v4 phala": {**files, "v5/phala_pins.json": v4_phala},
+                 "v4 path": {**{k: v for k, v in files.items() if k != "v5/phala_pins.json"}, "v4/phala_pins.json": files["v5/phala_pins.json"]},
+                 "the v4 set": {**{k: v for k, v in files.items() if k != "v5/phala_pins.json"}, "v4/phala_pins.json": v4_phala},
+                 "a fifth file": {**files, "v5/near_pins.json": files["v4/near_pins.json"]}}
+        for n, (case, listed) in enumerate(wrong.items(), 2):
+            path = f"vendor-v5/{n}.statement.json"
+            self.door.statements.append((path, json.dumps({**statement, "files": listed}).encode(), fake_bundle(head)))
+            out = self.check7(self.door.run()[1])
+            self.assertIn(f"FAIL: {path} lists other files than the vendor pins files at {head} give it", out, case)
+            self.door.statements.pop()
+
+    def test_a_v1_vendor_statement_still_covers_the_four_root_files_beside_v5(self):
+        statement = self.vendor_v5()
+        v4 = {"v4/phala_pins.json": hashlib.sha256(b'{"name":"phala_pins.json","v":4}').hexdigest(),
+              **{k: v for k, v in statement["files"].items() if k.startswith("v4/")}}
+        self.door.statements.append(("vendor/1.statement.json", json.dumps({**statement, "type": "morse-vendor-pins-v1", "files": v4}).encode(), fake_bundle(statement["pins_commit"])))
+        self.door.statements.append(("vendor-v5/1.statement.json", json.dumps(statement).encode(), fake_bundle(statement["pins_commit"])))
+        self.assertEqual(self.check7(self.passes()), "  OK")
+        self.assertEqual(sorted(self.door.state()["verified_statements"]), ["vendor-v5/1.statement.json", "vendor/1.statement.json"])
+
+    def test_a_v5_vendor_statement_at_a_commit_without_v5_cannot_be_read(self):
+        for name in signer.VENDOR_FILES:
+            (self.door.root / "pins" / name).write_text(f'{{"name": "{name}", "v": 4}}\n')
+        self.door.git("add", "-A")
+        self.door.git("commit", "-q", "-m", "vendor v4 only")
+        head = self.door.head()
+        statement = {"type": "morse-vendor-pins-v5", "sequence": int(git(self.door.root / "pins", "rev-list", "--count", "HEAD")), "pins_commit": head, "time": "2026-11-26T00:00:00Z", "files": {}}
+        self.door.statements.append(("vendor-v5/1.statement.json", json.dumps(statement).encode(), fake_bundle(head)))
+        out = self.fails("FAIL: vendor-v5/1.statement.json or its bundle cannot be read: CalledProcessError(")
+        self.assertIn(f"'show', '{head}:v5/phala_pins.json'", out)
+
+    def test_the_publisher_pushes_v5_and_an_admins_merged_pull_request_does_not(self):
+        self.vendor_v5()
+        self.assertEqual(self.check7(self.passes()), "  OK")
+        for file in ("v5/phala_pins.json", "v5/README"):
+            before = self.door.head()
+            self.door.edit_state(lambda s: s["tips"].update({"morse-pins": before}))
+            self.commit(file, "changed by a person\n")
+            self.last_push(activity_type="pr_merge", actor={"login": "youdaniel"})
+            code, out = self.door.run("--ack-refused", before)
+            self.assertEqual(code, 1, out)
+            self.assertIn(f"FAIL: the pr_merge by youdaniel at {PUSHED}, from {before} to {self.door.head()}, changes {file}: a file the signer signs, which only morse-pins-publisher[bot] pushes", out)
+
     ROUTES = '{"models": [ ],\n "aliases": []}\n'
     BASE = hashlib.sha256(b"the routes.json inside an image").hexdigest()
 
@@ -197,10 +267,11 @@ class SignerTest(Fixture):
             self.assertEqual(code, 1, out)
             self.assertIn(f"FAIL: the pr_merge by youdaniel at {PUSHED}, from {before} to {self.door.head()}, changes {file}: a file the signer signs, which only morse-pins-publisher[bot] pushes", out)
 
-    def test_the_signer_signs_its_pins_files_and_every_path_under_routes(self):
-        for path in ("enclave_pins.json", *signer.VENDOR_FILES, "routes/prod/routes.json", "routes/prod/base", "routes/dev/routes.json", "routes/staging/x", "routes/README"):
+    def test_the_signer_signs_its_pins_files_and_every_path_under_routes_and_v5(self):
+        for path in ("enclave_pins.json", *signer.VENDOR_FILES, "routes/prod/routes.json", "routes/prod/base", "routes/dev/routes.json", "routes/staging/x", "routes/README",
+                     "v5/phala_pins.json", "v5/near_pins.json", "v5/README"):
             self.assertTrue(signer.signs(path), path)
-        for path in ("README.md", "composes/a.yml", "routes", "routes.json", "v4/routes/prod/routes.json", ".github/workflows/sign.yml", "sigstore_trusted_root.json"):
+        for path in ("README.md", "composes/a.yml", "routes", "routes.json", "v4/routes/prod/routes.json", "v5", "v4/v5/phala_pins.json", ".github/workflows/sign.yml", "sigstore_trusted_root.json"):
             self.assertFalse(signer.signs(path), path)
 
     def runs_bound(self):

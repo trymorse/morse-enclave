@@ -142,7 +142,9 @@ func (s sealer) Seal(call func(openaicompat.Sealing) error) error {
 	if err != nil {
 		return err
 	}
-	err = call(sealing{Params: wire.Params{Client: client, Model: key[:]}, client: private})
+	// why: NEAR's docs/e2ee.md forbids falling back to an older version, and only version 3 binds each field
+	// to the client key, so a relay that swaps it gets fields the model refuses to open.
+	err = call(sealing{Params: wire.Params{Client: client, Model: key[:], V3: true}, client: private})
 	if errors.Is(err, errKeyRotated) {
 		s.gate.Forget(key)
 	}
@@ -158,11 +160,6 @@ var _ openaicompat.ToolSealing = sealing{}
 
 func (s sealing) SealContent(_ int, plaintext string) (string, error) {
 	return s.Params.Seal(wire.LabelContent, []byte(plaintext))
-}
-
-func (s sealing) WithTools() openaicompat.ToolSealing {
-	s.V3 = true
-	return s
 }
 
 func (s sealing) SealField(label string, plaintext []byte) (string, error) {

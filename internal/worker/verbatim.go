@@ -232,9 +232,9 @@ func (rw *relayWriter) reply(events int) measure.Reply {
 }
 
 var (
-	errE2EEContentNotEncrypted = apierr.Error{Status: http.StatusBadRequest, Type: "e2ee_content_not_encrypted", Code: "e2ee_content_not_encrypted", Message: "Every message must carry only role and content, and content must be one E2EE v2 ciphertext string."}
-	errE2EEOutputLimitRequired = apierr.Error{Status: http.StatusBadRequest, Type: "e2ee_output_limit_required", Code: "e2ee_output_limit_required", Message: "On e2ee models, set max_tokens or max_completion_tokens to a positive integer, because the proxy forwards the body verbatim and cannot add a limit, so the upstream's own default would govern how much it generates."}
-	errCharacterSealedBody     = apierr.Error{Status: http.StatusBadRequest, Type: "character_unsealable", Code: "character_unsealable", Message: "This e2ee model seals the whole request on the device, so the proxy can't put a character's prompt in front of it. Chat with the character on another e2ee model."}
+	errE2EEContentNotEncrypted = apierr.Invalid(http.StatusBadRequest, "e2ee_content_not_encrypted", "Every message must carry only role and content, and content must be one E2EE v2 ciphertext string.")
+	errE2EEOutputLimitRequired = apierr.Invalid(http.StatusBadRequest, "e2ee_output_limit_required", "On e2ee models, set max_tokens or max_completion_tokens to a positive integer, because the proxy forwards the body verbatim and cannot add a limit, so the upstream's own default would govern how much it generates.")
+	errCharacterSealedBody     = apierr.Invalid(http.StatusBadRequest, "character_unsealable", "This e2ee model seals the whole request on the device, so the proxy can't put a character's prompt in front of it. Chat with the character on another e2ee model.")
 	ErrE2EENotApplied          = apierr.Error{Status: http.StatusBadGateway, Type: "upstream_error", Code: "e2ee_not_applied", Message: "The upstream did not confirm end-to-end encryption, so the proxy withheld its reply."}
 )
 
@@ -246,13 +246,13 @@ func bodyRefusal(err error) apierr.Error {
 	if m.Want == nil {
 		return fieldRefused(m.Field)
 	}
-	return apierr.Error{Status: http.StatusBadRequest, Type: "e2ee_body_mismatch", Code: "e2ee_body_mismatch", Message: "Field " + m.Field + " must equal " + string(m.Want) + " on e2ee models, because the proxy forwards the body verbatim and cannot set it."}
+	return apierr.Invalid(http.StatusBadRequest, "e2ee_body_mismatch", "Field "+m.Field+" must equal "+string(m.Want)+" on e2ee models, because the proxy forwards the body verbatim and cannot set it.")
 }
 
 func fieldRefused(field string) apierr.Error {
-	return apierr.Error{Status: http.StatusBadRequest, Type: "e2ee_field_refused", Code: "e2ee_field_refused", Message: "Field " + field + " is refused on e2ee models, which forward the body verbatim and so admit only the fields and values of the e2ee client contract."}
+	return apierr.Invalid(http.StatusBadRequest, "e2ee_field_refused", "Field "+field+" is refused on e2ee models, which forward the body verbatim and so admit only the fields and values of the e2ee client contract.")
 }
 
 func VerbatimLimitRefused(maxOutputTokens int) apierr.Error {
-	return apierr.Error{Status: http.StatusBadRequest, Type: "e2ee_output_limit_refused", Code: "e2ee_output_limit_refused", Message: "On this e2ee model, max_tokens and max_completion_tokens may be at most " + strconv.Itoa(maxOutputTokens) + " and must be equal when both are set, because the proxy forwards the body verbatim and cannot lower them."}
+	return apierr.Invalid(http.StatusBadRequest, "e2ee_output_limit_refused", "On this e2ee model, max_tokens and max_completion_tokens may be at most "+strconv.Itoa(maxOutputTokens)+" and must be equal when both are set, because the proxy forwards the body verbatim and cannot lower them.")
 }

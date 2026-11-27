@@ -243,9 +243,8 @@ func (f *flight) release() {
 }
 
 var (
-	errNoBearer         = apierr.Invalid(http.StatusUnauthorized, "invalid_api_key", "Incorrect API key provided.")
+	errNoBearer         = apierr.Invalid(http.StatusUnauthorized, "invalid_api_key", "This request carries no API key in a form Morse reads. Send the key in the Authorization header as Bearer <key>, or in the x-api-key header.")
 	errBodiesInFlight   = apierr.Error{Status: http.StatusServiceUnavailable, Type: "server_error", Code: "server_busy", Message: "The door is reading as many request bodies as it can hold, from this address or from all. Retry after the time in the Retry-After header."}
-	errNotFound         = apierr.Invalid(http.StatusNotFound, "not_found", "The door serves only the routes a sealing client uses.")
 	errClientUnknown    = apierr.Error{Status: http.StatusInternalServerError, Type: "server_error", Code: "door_client_unknown", Message: "The door could not tell which address the request came from."}
 	errBodyUnread       = apierr.Invalid(http.StatusBadRequest, "invalid_request_body", "The request body could not be read.")
 	errPlainBody        = apierr.Invalid(http.StatusBadRequest, "invalid_request_body", "The door forwards a GET only without a body.")
@@ -304,7 +303,9 @@ func NewServer(c Config) (*Server, error) {
 	if c.Clips != nil {
 		mux.HandleFunc(clip.UploadPattern, s.receiveClip(c.Clips))
 	}
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) { apierr.WriteError(w, errNotFound) })
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		refuseOwn(w, apierr.Invalid(http.StatusNotFound, "not_found", fmt.Sprintf("Morse does not serve %s %s at this address.", r.Method, r.URL.Path)))
+	})
 	s.server = &http.Server{Handler: mux, TLSConfig: &tls.Config{GetCertificate: c.Door.certificate, MinVersion: tls.VersionTLS12}, MaxHeaderBytes: maxHeaderBytes, Protocols: new(http.Protocols)}
 	s.server.Protocols.SetHTTP1(true)
 	return s, nil
@@ -374,23 +375,23 @@ func (s *Server) pass(pattern string, rt route) http.HandlerFunc {
 		apiKeyAsBearer(r.Header)
 		peer, err := netip.ParseAddrPort(r.RemoteAddr)
 		if err != nil {
-			apierr.WriteError(w, errClientUnknown)
+			refuseOwn(w, errClientUnknown)
 			return
 		}
 		var body seal.Inner
 		f := &flight{budget: &s.budget, client: clientOf(peer.Addr())}
 		defer f.release()
 		if rt.passage == plainPassage && r.ContentLength != 0 {
-			apierr.WriteError(w, errPlainBody)
+			refuseOwn(w, errPlainBody)
 			return
 		}
 		if rt.passage == sealedPassage || rt.passage == carriedPassage {
 			if !bearerShaped(r.Header) {
-				apierr.WriteError(w, errNoBearer)
+				refuseOwn(w, errNoBearer)
 				return
 			}
 			if body, err = s.readBody(w, r, rt.limit, f); err != nil {
-				apierr.WriteError(w, bodyRefusal(w, err))
+				refuseOwn(w, bodyRefusal(w, err))
 				return
 			}
 		}
@@ -401,13 +402,13 @@ func (s *Server) pass(pattern string, rt route) http.HandlerFunc {
 				return
 			}
 			if errors.Is(err, seal.ErrHeadTooLarge) {
-				apierr.WriteError(w, errHeadTooLarge)
+				refuseOwn(w, errHeadTooLarge)
 				return
 			}
 			if errors.Is(err, upstream.ErrUnreachable) {
 				s.reports.RelayFailed(pattern, RelayUnreachable)
 			}
-			apierr.WriteError(w, errRelayUnreachable)
+			refuseOwn(w, errRelayUnreachable)
 			return
 		}
 		defer resp.Body.Close()
@@ -453,6 +454,13 @@ func apiKeyAsBearer(h http.Header) {
 	if key := strings.TrimSpace(h.Get(dialect.HeaderAPIKey)); key != "" && h.Get("Authorization") == "" {
 		h.Set("Authorization", "Bearer "+key)
 	}
+}
+
+// why: the server sets these on every reply it makes, and a reply the door makes itself never reaches the server.
+func refuseOwn(w http.ResponseWriter, e apierr.Error) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
+	apierr.WriteError(w, e)
 }
 
 func bearerShaped(h http.Header) bool {
@@ -556,7 +564,7 @@ func (s *Server) send(r *http.Request, rt route, client netip.Addr, inner seal.I
 	if len(body) > 0 {
 		req.Body, req.ContentLength = &sentBody{buf: body, flight: f.handoff()}, int64(len(body))
 	}
-	req.Header = outerHeader(r.Header, rt, client)
+	req.Header = outerHeader(r.Header, rt, client, s.door.hostOf(r))
 	resp, err := upstream.Do(s.client, req)
 	if err != nil {
 		return nil, nil, err
@@ -598,7 +606,7 @@ func flatten(h http.Header) map[string]string {
 	return flat
 }
 
-func outerHeader(in http.Header, rt route, client netip.Addr) http.Header {
+func outerHeader(in http.Header, rt route, client netip.Addr, host string) http.Header {
 	out := http.Header{}
 	copyHeader(out, in, "Authorization")
 	switch rt.passage {
@@ -616,6 +624,9 @@ func outerHeader(in http.Header, rt route, client netip.Addr) http.Header {
 		copyHeader(out, in, "Origin")
 	}
 	out.Set(seal.DoorClientAddress, client.Unmap().WithZone("").String())
+	if host != "" {
+		out.Set(seal.DoorHost, host)
+	}
 	return out
 }
 
@@ -634,13 +645,13 @@ func (s *Server) answer(w http.ResponseWriter, r *http.Request, resp *http.Respo
 	switch {
 	case cek != nil && !sealed && status < http.StatusBadRequest:
 		s.reports.RelayFailed(pattern, ReplyUnsealed)
-		apierr.WriteError(w, errReplyUnsealed)
+		refuseOwn(w, errReplyUnsealed)
 		return
 	case cek != nil && sealed:
 		reply, err := seal.OpenReply(resp.Body, *cek)
 		if err != nil {
 			s.reports.RelayFailed(pattern, ReplyInvalid)
-			apierr.WriteError(w, errReplyInvalid)
+			refuseOwn(w, errReplyInvalid)
 			return
 		}
 		status, body, inner, skip = reply.Head.Status, reply, reply.Head.Headers, append([]string{"Content-Type"}, hopByHop...)

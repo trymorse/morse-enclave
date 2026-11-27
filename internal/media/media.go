@@ -404,9 +404,12 @@ func ImageOf(data []byte) (Image, error) {
 	if strip == nil {
 		return Image{}, errNotImage
 	}
-	stripped, ok := strip(data)
-	if !ok {
+	stripped, signed, ok := strip(data)
+	switch {
+	case !ok:
 		return Image{}, errUnwalkable
+	case signed:
+		return Image{data: data}, nil
 	}
 	return Image{data: stripped}, nil
 }

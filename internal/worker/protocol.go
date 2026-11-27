@@ -50,8 +50,8 @@ func refuseProtocol(want *chat.Scheme, p protocol) error {
 }
 
 var (
-	errWrongE2EEProtocol    = apierr.Error{Status: http.StatusBadRequest, Type: "e2ee_unsupported_model", Code: "e2ee_unsupported_model", Message: "This model serves end-to-end encryption under another protocol. Use the e2ee_protocol that GET /v1/attestation reports for it."}
-	errE2EEUnsupportedModel = apierr.Error{Status: http.StatusBadRequest, Type: "e2ee_unsupported_model", Code: "e2ee_unsupported_model", Message: "This model does not serve end-to-end encryption. Send E2EE headers only to an e2ee model from GET /v1/models."}
+	errWrongE2EEProtocol    = apierr.Invalid(http.StatusBadRequest, "e2ee_unsupported_model", "This model serves end-to-end encryption under another protocol. Use the e2ee_protocol that GET /v1/attestation reports for it.")
+	errE2EEUnsupportedModel = apierr.Invalid(http.StatusBadRequest, "e2ee_unsupported_model", "This model does not serve end-to-end encryption. Send E2EE headers only to an e2ee model from GET /v1/models.")
 )
 
 func protocolRefusal(err error) apierr.Error {
@@ -59,7 +59,7 @@ func protocolRefusal(err error) apierr.Error {
 	if !errors.As(err, &e) {
 		return apierr.ErrInvalidBody
 	}
-	return apierr.Error{Status: http.StatusBadRequest, Type: e.Type, Code: e.Type, Message: e.Message}
+	return apierr.Invalid(http.StatusBadRequest, e.Type, e.Message)
 }
 
 func hintedHexOnly(err error) error {

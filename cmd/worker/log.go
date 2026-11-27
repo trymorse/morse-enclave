@@ -107,6 +107,7 @@ type fields struct {
 	Outcome    *health.Outcome
 	Status     int
 	Code       *chat.ErrorCode
+	VendorCode string
 	Duration   time.Duration
 	Count      int
 	Calls      int
@@ -155,6 +156,9 @@ func (l *logger) log(m message, f fields) {
 	}
 	if f.Code != nil {
 		attrs = append(attrs, slog.String("code", f.Code.String()))
+	}
+	if f.VendorCode != "" {
+		attrs = append(attrs, slog.String("vendor_code", f.VendorCode))
 	}
 	if f.Duration != 0 {
 		attrs = append(attrs, slog.Int64("duration_ms", f.Duration.Milliseconds()))
@@ -231,8 +235,8 @@ func (l *logger) Failed(route string, err error) {
 
 func (l *logger) LookupBusy(service string) { l.log(lookupVendorBusy, fields{Service: service}) }
 
-func (l *logger) VendorRefused(model string, status int) {
-	l.log(vendorRefused, fields{Route: model, Status: status})
+func (l *logger) VendorRefused(model string, status int, code string) {
+	l.log(vendorRefused, fields{Route: model, Status: status, VendorCode: code})
 }
 
 func (l *logger) UpstreamErrorChunk(model string, code chat.ErrorCode) {

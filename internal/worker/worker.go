@@ -120,7 +120,10 @@ type Opening struct {
 	// veilPartition, where the relay can't reach it.
 	PrivacyVeil VeilOpening
 	// KeySettings is whether the calling API key lets its chats' request settings reach the model host.
-	KeySettings   bool
+	KeySettings bool
+	// why: the API name the inference door says the caller used picks the console a refusal links to. The worker maps
+	// it to one of a fixed few consoles itself, so the relay can pick between them but never write a link of its own.
+	CallerHost    string
 	cek           *[32]byte
 	veilHead      json.RawMessage
 	veilPartition string
@@ -227,6 +230,8 @@ type ChatGrant struct {
 	Figures      measure.RouteFigures
 	Sample       bool
 	CacheKeys    map[catalog.EndpointID]string `json:",omitempty"`
+	KeyPrice     *money.Price                  `json:",omitempty"`
+	VeilPrice    money.VeilRate                `json:",omitempty"`
 }
 
 func (ChatGrant) kind() grantKind { return grantsChat }
@@ -297,6 +302,8 @@ type Measured struct {
 	Downloaded        bool
 	Cost              money.Reported
 	SealedStatusClass int
+	SealedStatus      int    `json:",omitempty"`
+	SealedCode        string `json:",omitempty"`
 	Health            health.Observation
 	Follow            Follow
 	Unsampled         bool                `json:"-"`

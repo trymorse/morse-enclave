@@ -29,7 +29,7 @@ type providerAsk struct {
 var (
 	errProviderNotObject = apierr.InvalidParameter(`provider must be an object, such as {"min_privacy":"tee"}.`)
 	errFloorNotTier      = apierr.InvalidParameter("provider.min_privacy must be one of " + catalog.TierNames() + ".")
-	errFloorSealed       = apierr.Error{Status: http.StatusBadRequest, Type: "e2ee_field_refused", Code: "e2ee_field_refused", Message: "Field provider.min_privacy is refused on e2ee models, which meet every privacy floor and forward the body verbatim, so leave min_privacy out of a sealed request."}
+	errFloorSealed       = apierr.Invalid(http.StatusBadRequest, "e2ee_field_refused", "Field provider.min_privacy is refused on e2ee models, which meet every privacy floor and forward the body verbatim, so leave min_privacy out of a sealed request.")
 )
 
 var providerKeys = map[string]func(*providerAsk, string, json.RawMessage) error{

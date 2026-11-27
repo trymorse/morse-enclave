@@ -5,6 +5,7 @@ const (
 	Endpoint          = "POST /v1/sealed"
 	ContentType       = "application/morse-sealed"
 	DoorClientAddress = "Door-Client-Address"
+	DoorHost          = "Door-Host"
 )
 
 type Route struct {
@@ -16,6 +17,7 @@ var Routes = []Route{
 	{Pattern: "POST /v1/chat/completions", Sealed: true},
 	{Pattern: "POST /v1/chat/compact", Sealed: true},
 	{Pattern: "POST /v1/messages", Sealed: true},
+	{Pattern: "POST /v1/messages/count_tokens", Sealed: true},
 	{Pattern: "POST /v1/responses", Sealed: true},
 	{Pattern: "POST /v1/images/generations", Sealed: true},
 	{Pattern: "POST /v1/videos", Sealed: true},
@@ -33,6 +35,7 @@ var Routes = []Route{
 	{Pattern: "POST /v1/plugins/revoke", Sealed: true},
 	{Pattern: "POST /v1/tasks", Sealed: true},
 	{Pattern: "POST /v1/tasks/{id}/bundle", Sealed: true},
+	{Pattern: "GET /v1/key"},
 	{Pattern: "GET /v1/models"},
 	{Pattern: "GET /v1/models/{id...}"},
 	{Pattern: "GET /v1/attestation"},

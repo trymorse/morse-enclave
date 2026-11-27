@@ -18,6 +18,8 @@ import (
 
 var Dialect = dialect.Dialect{Decode: Decode, Envelope: Envelope}
 
+var CountDialect = dialect.Dialect{Decode: DecodeCount, Envelope: Envelope}
+
 type request struct {
 	Model         string          `json:"model"`
 	MaxTokens     json.RawMessage `json:"max_tokens"`
@@ -63,6 +65,14 @@ func clearsNothing(name string, raw json.RawMessage) bool {
 }
 
 func Decode(body []byte, known func(string) bool) (dialect.Decoded, error) {
+	return decode(body, known, true)
+}
+
+func DecodeCount(body []byte, known func(string) bool) (dialect.Decoded, error) {
+	return decode(body, known, false)
+}
+
+func decode(body []byte, known func(string) bool, limited bool) (dialect.Decoded, error) {
 	if err := strictjson.UniqueKeys(body); err != nil {
 		return dialect.Decoded{}, err
 	}
@@ -89,11 +99,13 @@ func Decode(body []byte, known func(string) bool) (dialect.Decoded, error) {
 		return dialect.Decoded{}, invalid("model: Field required")
 	}
 	out["model"] = modelOf(req.Model, known)
-	limit, err := maxTokens(req.MaxTokens)
-	if err != nil {
-		return dialect.Decoded{}, err
+	if limited || !null(req.MaxTokens) {
+		limit, err := maxTokens(req.MaxTokens)
+		if err != nil {
+			return dialect.Decoded{}, err
+		}
+		out["max_completion_tokens"] = limit
 	}
-	out["max_completion_tokens"] = limit
 	messages, err := conversation(req.System, req.Messages)
 	if err != nil {
 		return dialect.Decoded{}, err
@@ -164,6 +176,7 @@ func maxTokens(raw json.RawMessage) (int, error) {
 type block struct {
 	Type      string          `json:"type"`
 	Text      *string         `json:"text"`
+	Thinking  string          `json:"thinking"`
 	Source    json.RawMessage `json:"source"`
 	ID        string          `json:"id"`
 	Name      string          `json:"name"`
@@ -184,8 +197,21 @@ type message struct {
 	Content json.RawMessage `json:"content"`
 }
 
-// dropped are the blocks that carry nothing Morse can send on: thinking that only Anthropic's signature vouches for.
+// why: a client replays an assistant turn's thinking blocks whole, as Anthropic requires. A thinking block's text
+// reaches the model as the turn's reasoning_content (thinkingOf), and a redacted one holds nothing to send.
 var dropped = []string{"thinking", "redacted_thinking"}
+
+func thinkingOf(raw json.RawMessage) string {
+	var blocks []block
+	json.Unmarshal(raw, &blocks)
+	var thought strings.Builder
+	for _, b := range blocks {
+		if b.Type == "thinking" {
+			thought.WriteString(b.Thinking)
+		}
+	}
+	return thought.String()
+}
 
 func blocksOf(raw json.RawMessage, at string) ([]block, error) {
 	if null(raw) {
@@ -275,6 +301,7 @@ func userTurn(raw json.RawMessage, at string) ([]any, error) {
 		return nil, err
 	}
 	var results []any
+	var shown []any
 	var parts []any
 	for i, b := range blocks {
 		where := fmt.Sprintf("%s.%d", at, i)
@@ -288,16 +315,19 @@ func userTurn(raw json.RawMessage, at string) ([]any, error) {
 			}
 			parts = append(parts, part)
 		case b.Type == "tool_result":
-			result, err := toolResult(b, where)
+			result, images, err := toolResult(b, where)
 			if err != nil {
 				return nil, err
 			}
 			results = append(results, result)
+			if len(images) > 0 {
+				shown = append(append(shown, map[string]any{"type": "text", "text": fmt.Sprintf(imagesOfCall, b.ToolUseID)}), images...)
+			}
 		default:
 			return nil, refusedBlock(where, b.Type)
 		}
 	}
-	if len(parts) > 0 {
+	if parts = append(shown, parts...); len(parts) > 0 {
 		results = append(results, map[string]any{"role": "user", "content": parts})
 	}
 	return results, nil
@@ -318,29 +348,46 @@ func imagePart(raw json.RawMessage, at string) (any, error) {
 	return map[string]any{"type": "image_url", "image_url": map[string]string{"url": "data:" + source.MediaType + ";base64," + source.Data}}, nil
 }
 
-func toolResult(b block, at string) (any, error) {
+// why: a Chat Completions tool message holds text alone, so an image a tool returned, as Claude Code's Read does for a
+// picture, goes in the user message after the turn's tool messages, and the tool message says so.
+const (
+	imagesOfCall = "The image output of tool call %s:"
+	imagesFollow = "[This tool returned image output. It is attached in the next message.]"
+)
+
+func toolResult(b block, at string) (any, []any, error) {
 	if b.ToolUseID == "" {
-		return nil, invalid(at + ".tool_use_id: Field required")
+		return nil, nil, invalid(at + ".tool_use_id: Field required")
 	}
 	blocks, err := blocksOf(b.Content, at+".content")
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	texts := make([]string, 0, len(blocks))
+	texts := make([]string, 0, len(blocks)+1)
+	var images []any
 	for i, c := range blocks {
-		if c.Type != "text" || c.Text == nil {
-			if c.Type == "image" {
-				return nil, invalid(fmt.Sprintf("%s.content.%d: Morse does not take an image in a tool result. Send the image in a user text turn's image block.", at, i))
+		where := fmt.Sprintf("%s.content.%d", at, i)
+		switch {
+		case c.Type == "text" && c.Text != nil:
+			texts = append(texts, *c.Text)
+		case c.Type == "image":
+			part, err := imagePart(c.Source, where)
+			if err != nil {
+				return nil, nil, err
 			}
-			return nil, refusedBlock(fmt.Sprintf("%s.content.%d", at, i), c.Type)
+			images = append(images, part)
+		default:
+			return nil, nil, refusedBlock(where, c.Type)
 		}
-		texts = append(texts, *c.Text)
+	}
+	if len(images) > 0 {
+		texts = append(texts, imagesFollow)
 	}
 	content := strings.Join(texts, "\n\n")
 	if b.IsError {
 		content = "Error: " + content
 	}
-	return map[string]any{"role": "tool", "tool_call_id": b.ToolUseID, "content": content}, nil
+	return map[string]any{"role": "tool", "tool_call_id": b.ToolUseID, "content": content}, images, nil
 }
 
 func assistantTurn(raw json.RawMessage, at string) ([]any, error) {
@@ -368,10 +415,14 @@ func assistantTurn(raw json.RawMessage, at string) ([]any, error) {
 			return nil, refusedBlock(where, b.Type)
 		}
 	}
-	if text.Len() == 0 && len(calls) == 0 {
+	thought := thinkingOf(raw)
+	if text.Len() == 0 && len(calls) == 0 && thought == "" {
 		return nil, nil
 	}
 	turn := map[string]any{"role": "assistant", "content": text.String()}
+	if thought != "" {
+		turn["reasoning_content"] = thought
+	}
 	if len(calls) > 0 {
 		turn["tool_calls"] = calls
 		if text.Len() == 0 {
@@ -461,11 +512,6 @@ type outputConfig struct {
 	Format json.RawMessage `json:"format"`
 }
 
-var budgetEfforts = []struct {
-	upTo   int
-	effort string
-}{{2048, "low"}, {8192, "medium"}, {24576, "high"}, {49152, "xhigh"}}
-
 func reasoningOf(rawThinking, rawConfig json.RawMessage, out map[string]any) (showThinking bool, err error) {
 	var config outputConfig
 	if !null(rawConfig) && json.Unmarshal(rawConfig, &config) != nil {
@@ -500,7 +546,7 @@ func reasoningOf(rawThinking, rawConfig json.RawMessage, out map[string]any) (sh
 		return true, nil
 	case "enabled":
 		if config.Effort == "" {
-			out["reasoning_effort"] = budgetEffort(t.BudgetTokens)
+			out["reasoning_effort"] = chat.EffortOfBudget(t.BudgetTokens)
 		}
 		return true, nil
 	}
@@ -526,22 +572,13 @@ func responseFormatOf(raw json.RawMessage) (map[string]any, error) {
 	return map[string]any{"type": "json_schema", "json_schema": map[string]any{"name": "output", "schema": format.Schema, "strict": true}}, nil
 }
 
-func budgetEffort(budget int) string {
-	for _, b := range budgetEfforts {
-		if budget <= b.upTo {
-			return b.effort
-		}
-	}
-	return "max"
-}
-
 // anthropicDefaultSampling is Anthropic's default temperature and top_p. Sending it would change nothing, yet an API key
 // without forward_settings is refused any temperature or top_p it sends (openaicompat.SettingsOf).
 const anthropicDefaultSampling = 1.0
 
 func samplingOf(req request, out map[string]any) error {
 	if !null(req.TopK) {
-		return invalid("top_k: Morse sends top_k to no model host. Send the request without it.")
+		out["top_k"] = req.TopK
 	}
 	if len(req.StopSequences) > 0 {
 		out["stop"] = req.StopSequences

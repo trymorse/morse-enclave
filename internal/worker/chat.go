@@ -19,6 +19,7 @@ import (
 	"morse/backend/internal/catalog"
 	"morse/backend/internal/chat"
 	"morse/backend/internal/compaction"
+	"morse/backend/internal/consoles"
 	"morse/backend/internal/dialect"
 	"morse/backend/internal/health"
 	"morse/backend/internal/openaicompat"
@@ -269,11 +270,11 @@ func plaintextNarrowings(name chatName, req *chat.Request, want providerAsk, o O
 	if o.KeyCaller && !compaction {
 		steps = append(steps, func(routes []chatRoute) ([]chatRoute, error) {
 			var err error
-			if *settings, err = openaicompat.SettingsOf(req, o.KeySettings); err != nil {
+			if *settings, err = openaicompat.SettingsOf(req, o.KeySettings, consoles.Of(o.CallerHost)); err != nil {
 				return nil, err
 			}
-			return narrowed(routes, []narrowing{forwardingSettings(*settings), honouringResponseFormat(req)})
-		}, takingTools(req), readingImages(req))
+			return narrowed(routes, append([]narrowing{forwardingSettings(*settings), honouringResponseFormat(req)}, takingSampling(*settings)...))
+		}, takingTools(req), takingAForcedTool(req), readingImages(req))
 	}
 	return steps
 }
@@ -303,6 +304,16 @@ func asRetiredNameWasServed(name chatName, req *chat.Request) *chat.Request {
 	return req.With("response_format", anyJSONObject)
 }
 
+func takingSampling(settings []string) []narrowing {
+	var steps []narrowing
+	for _, name := range settings {
+		if setting, ok := catalog.ParseSamplingSetting(name); ok {
+			steps = append(steps, keeping(true, func(r chatRoute) bool { return r.Sampling.Takes(setting) }, func([]chatRoute) error { return openaicompat.SettingsRefusal(name) }))
+		}
+	}
+	return steps
+}
+
 func honouringResponseFormat(req *chat.Request) narrowing {
 	format, asked := openaicompat.ResponseFormatOf(req)
 	return keeping(asked, func(r chatRoute) bool { return r.ResponseFormats.Honours(format) }, func([]chatRoute) error { return openaicompat.ResponseFormatRefusal(format) })
@@ -330,6 +341,23 @@ func callsTools(req *chat.Request) bool {
 		return toolsErr != nil || len(tools) > 0
 	}
 	return true
+}
+
+// why: Novita answers a tool_choice that forces a call with a 400 naming nothing, on Kimi K2.6 while it reasons and on
+// Kimi K2.7 Code always (direct calls, 2026-11-24), so such a chat goes to the model's next host or is refused here.
+func takingAForcedTool(req *chat.Request) narrowing {
+	return keeping(forcesATool(req), func(r chatRoute) bool { return !r.RefusesForcedTool }, func([]chatRoute) error {
+		return apierr.Invalid(http.StatusBadRequest, "unsupported_parameter",
+			"tool_choice is refused: the host that serves "+req.Model+" takes no tool_choice that makes the model call a tool. "+
+				"Send tool_choice \"auto\" and ask for the call in the prompt, or send the request to a model that takes one.").Naming("tool_choice")
+	})
+}
+
+func forcesATool(req *chat.Request) bool {
+	var choice json.RawMessage
+	req.Decode("tool_choice", &choice)
+	choice = bytes.TrimSpace(choice)
+	return string(choice) == `"required"` || bytes.HasPrefix(choice, []byte("{"))
 }
 
 func toolsRefusal(model string) error {
@@ -426,7 +454,8 @@ type attempt struct {
 	hedgeAfter, stallAfter time.Duration
 	// veil restores this call's reply. The attempt takes it when the walk starts the try, so a try that outlives the
 	// run never reads the chat's veil after the run drops it.
-	veil *replyVeil
+	veil      *replyVeil
+	usageCost *keyBill
 }
 
 // attempt is the call on r. Only the last endpoint waits out a busy refusal, and only one whose hedge has no next
@@ -435,7 +464,7 @@ func (o *openedChat) attempt(r chatRoute, g ChatGrant, last, hedgesInPlace bool)
 	c := o.call
 	c.RouteEffort, c.Efforts, c.OutputLimit = r.DefaultReasoningEffort, r.ReasoningEfforts, r.clamp(g.OutputLimit, o.asked)
 	c.CacheKey = o.cacheKey(r, g)
-	a := attempt{route: r, call: c, promptBound: g.PromptBound, veil: o.veil.reply()}
+	a := attempt{route: r, call: c, promptBound: g.PromptBound, veil: o.veil.reply(), usageCost: o.usageCost(g)}
 	if last {
 		a.waits = r.Upstream.busyWaits()
 	}
@@ -561,7 +590,7 @@ func (o *openedChat) try(ctx context.Context, w *InProcess, a attempt, g ChatGra
 	}
 	refused, isRefusal := errors.AsType[upstream.Refused](got.callErr)
 	if isRefusal && vendorFaults[m.Health.Outcome] {
-		w.reports.VendorRefused(a.call.Model, refused.Status)
+		w.reports.VendorRefused(a.call.Model, refused.Status, refused.PlainCode)
 	}
 	if isRefusal && m.Health.Outcome == health.ContextOverflow {
 		m.Health.Window = refused.Window
@@ -710,9 +739,9 @@ func (u Plain) serve(ctx context.Context, w *InProcess, o *openedChat, a attempt
 	cut := newLimitCut(ctx, a.route, a.call)
 	encoder := o.reply()
 	if a.call.Stream {
-		got = stream(ctx, reply, http.NewResponseController(reply), retry, a.call, transcript, clock, w.keepaliveEvery, rv, cut, encoder)
+		got = stream(ctx, reply, http.NewResponseController(reply), retry, a.call, transcript, clock, w.keepaliveEvery, rv, cut, encoder, a.usageCost)
 	} else {
-		got = complete(ctx, reply, retry, a.call, transcript, clock, rv, cut, encoder)
+		got = complete(ctx, reply, retry, a.call, transcript, clock, rv, cut, encoder, a.usageCost)
 	}
 	got.transcript = transcript
 	return got
@@ -830,13 +859,14 @@ func (t *thinkingClock) thought() thought {
 	return thought{duration: cmp.Or(t.firstAnswer, t.now()).Sub(t.firstEvent), interleaved: t.interleaved}
 }
 
-func stream(ctx context.Context, w *replyWriter, rc *http.ResponseController, prov chat.BusyRetry, c chat.Call, transcript *chat.Transcript, clock *thinkingClock, keepalive time.Duration, rv *replyVeil, cut *limitCut, encoder dialect.Encoder) served {
-	sw := &sseWriter{eventStream: eventStream{w: w, rc: rc}, encoder: encoder, transcript: transcript, clock: clock, veil: rv}
+func stream(ctx context.Context, w *replyWriter, rc *http.ResponseController, prov chat.BusyRetry, c chat.Call, transcript *chat.Transcript, clock *thinkingClock, keepalive time.Duration, rv *replyVeil, cut *limitCut, encoder dialect.Encoder, price *keyBill) served {
+	sw := &sseWriter{eventStream: eventStream{w: w, rc: rc}, encoder: encoder, transcript: transcript, clock: clock, veil: rv, excludesReasoning: c.ExcludesReasoning(), price: price}
 	stop := func() {}
 	if clock != nil {
 		stop = sw.keepAlive(ctx, keepalive)
 	}
-	reported, attempts, err := prov.Stream(ctx, c, cut.wrap(dropAfterFinish(sw.emit)))
+	reported, attempts, err := prov.Stream(ctx, c, cut.wrap(dropAfterFinish(sw.emitHoldingUsage)))
+	err = sw.releaseUsage(reported, err)
 	stop()
 	err = stopped(err)
 	if err == nil && sw.empty() {
@@ -853,7 +883,7 @@ func stream(ctx context.Context, w *replyWriter, rc *http.ResponseController, pr
 	return served{reported: reported, attempts: attempts, reply: measure.Streamed{Events: sw.delivered, VisibleBytes: sw.visible}, finish: sw.finish, unanswered: unanswered(sw.finish, sw.sent), answer: measure.AnswerOf(sw.answered, sw.unreadable), malformed: sw.calls.Malformed(sw.finish, c.Stops()), writeErr: sw.err, callErr: err, thought: clock.thought(), firstAnswer: sw.firstAnswer, atLimit: cut.atLimit()}
 }
 
-func complete(ctx context.Context, w http.ResponseWriter, prov chat.BusyRetry, c chat.Call, transcript *chat.Transcript, clock *thinkingClock, rv *replyVeil, cut *limitCut, encoder dialect.Encoder) served {
+func complete(ctx context.Context, w http.ResponseWriter, prov chat.BusyRetry, c chat.Call, transcript *chat.Transcript, clock *thinkingClock, rv *replyVeil, cut *limitCut, encoder dialect.Encoder, price *keyBill) served {
 	clock.startAtCall()
 	body, tokens, attempts, err := whole(ctx, prov, c, cut)
 	if err != nil {
@@ -862,6 +892,7 @@ func complete(ctx context.Context, w http.ResponseWriter, prov chat.BusyRetry, c
 	w.Header().Set("Content-Type", "application/json")
 	d := body.Delta()
 	billed, _ := clock.billed(d)
+	body = costed(body, price, tokens, unanswered(d.Finish, billed.Delivered()))
 	if unanswered(d.Finish, billed.Delivered()) {
 		body = body.MarkUnanswered()
 	}
@@ -871,6 +902,9 @@ func complete(ctx context.Context, w http.ResponseWriter, prov chat.BusyRetry, c
 	}
 	vendorBytes := len(chunkBytes(body))
 	body = rv.complete(body)
+	if c.ExcludesReasoning() {
+		body = body.WithoutReasoning()
+	}
 	n, writeErr := w.Write(encoder.Whole(body, tokens))
 	written := int64(n)
 	if written > 0 {

@@ -178,14 +178,14 @@ func inTheClearAt(floor catalog.Tier) func(chatRoute) bool {
 func (n chatName) sealUnder() error { return SealUnder(n.sealsAs) }
 
 func SealUnder(name string) error {
-	return apierr.Error{Status: http.StatusBadRequest, Type: "e2ee_header_missing", Code: "e2ee_header_missing", Message: fmt.Sprintf("A chat on this model is sealed to its e2ee endpoint, which serves it as %q, the name its receipt binds: seal the request and send model %q.", name, name)}
+	return apierr.Invalid(http.StatusBadRequest, "e2ee_header_missing", fmt.Sprintf("A chat on this model is sealed to its e2ee endpoint, which serves it as %q, the name its receipt binds: seal the request and send model %q.", name, name))
 }
 
 func (n chatName) sealedElsewhere() error {
 	if n.sealsAs == "" {
 		return errE2EEUnsupportedModel
 	}
-	return apierr.Error{Status: http.StatusBadRequest, Type: "e2ee_unsupported_model", Code: "e2ee_unsupported_model", Message: fmt.Sprintf("A sealed request names the model its e2ee endpoint serves under, which the receipt binds: send model %q.", n.sealsAs)}
+	return apierr.Invalid(http.StatusBadRequest, "e2ee_unsupported_model", fmt.Sprintf("A sealed request names the model its e2ee endpoint serves under, which the receipt binds: send model %q.", n.sealsAs))
 }
 
 // atTier is the routes of one tier, in the order mostPrivateFirst gave them.

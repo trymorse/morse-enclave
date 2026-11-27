@@ -364,7 +364,22 @@ func (c capability) check(up Upstream, rt Route) error {
 	if err := c.checkResponseFormats(up, rt, chat); err != nil {
 		return err
 	}
+	if err := c.checkSampling(up, rt, chat); err != nil {
+		return err
+	}
 	return c.reasoningShown(up, chat)
+}
+
+func (c capability) checkSampling(up Upstream, rt Route, chat Chat) error {
+	switch {
+	case chat.Sampling == 0:
+		return nil
+	case rt.Tier.Sealed():
+		return fmt.Errorf("sets sampling at tier %s, whose body is forwarded verbatim, so the proxy neither reads nor sends its sampling settings", rt.Tier)
+	case !c.openAIHost && !c.sendsSettings:
+		return fmt.Errorf("sets sampling, but %s does not send a key's settings to its host", up)
+	}
+	return nil
 }
 
 func (c capability) checkResponseFormats(up Upstream, rt Route, chat Chat) error {
@@ -390,6 +405,8 @@ func (c capability) checkRouteFixes(up Upstream, rt Route, chat Chat) error {
 		field = "tools false"
 	case chat.ThinkingOffSwitch:
 		field = "thinking_off_switch"
+	case chat.RefusesForcedTool:
+		field = "refuses_forced_tool_choice"
 	default:
 		return nil
 	}
@@ -400,6 +417,8 @@ func (c capability) checkRouteFixes(up Upstream, rt Route, chat Chat) error {
 		return fmt.Errorf("sets thinking_off_switch, but %s documents no request field that turns thinking off", up)
 	case chat.NoTools && rt.Tier.Sealed():
 		return fmt.Errorf("sets tools false at tier %s, whose body is forwarded verbatim, so the proxy cannot drop its tools", rt.Tier)
+	case chat.RefusesForcedTool && rt.Tier.Sealed():
+		return fmt.Errorf("sets refuses_forced_tool_choice at tier %s, whose body is forwarded verbatim, so the proxy cannot read its tool_choice", rt.Tier)
 	}
 	return nil
 }

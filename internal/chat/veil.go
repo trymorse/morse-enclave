@@ -186,6 +186,11 @@ func (r *Request) rewrite(veil func(role, s string) string) (*Request, error) {
 			}
 			fields["tool_calls"], _ = json.Marshal(calls)
 		}
+		for _, key := range reasoningKeys {
+			if reasoning := m.replayedReasoning(key); reasoning != "" {
+				fields[key], _ = json.Marshal(inRole(reasoning))
+			}
+		}
 		list.Write(encodeObject(fields))
 	}
 	list.WriteByte(']')

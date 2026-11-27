@@ -56,6 +56,12 @@ func (w *InProcess) keep(o Opening, run opened) Handle {
 	return h
 }
 
+func (w *InProcess) Held() int {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return len(w.opened)
+}
+
 func (w *InProcess) entry(h Handle) *entry {
 	w.mu.Lock()
 	defer w.mu.Unlock()

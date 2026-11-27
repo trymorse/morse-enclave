@@ -16,8 +16,10 @@ import (
 	"fmt"
 	"io"
 	"math/big"
+	"net"
 	"net/http"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -26,7 +28,12 @@ import (
 	"morse/backend/internal/seal"
 )
 
-var sharedNames = map[string]string{"prod": "inference.trymorse.ai", "dev": "inference.watermark.ac"}
+var hosts = map[string][]string{
+	"prod": {"inference.trymorse.ai", "api.morseinference.com"},
+	"dev":  {"inference.watermark.ac", "api-dev.morseinference.com"},
+}
+
+func Hosts(environment string) []string { return slices.Clone(hosts[environment]) }
 
 const (
 	maxChain      = 64 << 10
@@ -147,13 +154,13 @@ func New(environment string, enclave Enclave, trust Trust, floor uint64) (*Door,
 }
 
 func newDoor(environment string, roots *x509.CertPool, enclave Enclave, trust Trust, key *ecdsa.PrivateKey, floor uint64) (*Door, error) {
-	if _, known := sharedNames[environment]; !known {
+	if _, known := hosts[environment]; !known {
 		return nil, fmt.Errorf("door: environment %q is neither dev nor prod", environment)
 	}
 	if environment == "prod" && roots == nil {
 		return nil, errors.New("door: prod verifies each chain to the image's CA bundle, and has none")
 	}
-	h, err := hold(sharedNames[environment], key)
+	h, err := hold(hosts[environment], key)
 	if err != nil {
 		return nil, err
 	}
@@ -184,13 +191,39 @@ func newDoor(environment string, roots *x509.CertPool, enclave Enclave, trust Tr
 	return d, nil
 }
 
-func hold(shared string, key *ecdsa.PrivateKey) (held, error) {
+// why: what the new host offers may differ from the first host, so either name pointing at it is enough to count a
+// request under it; otherwise the Host header, which names the request's target, wins over the TLS name.
+func (d *Door) hostOf(r *http.Request) string {
+	var sni string
+	if r.TLS != nil {
+		sni = r.TLS.ServerName
+	}
+	own := hosts[d.environment]
+	var named []string
+	for _, name := range []string{r.Host, sni} {
+		if h, _, err := net.SplitHostPort(name); err == nil {
+			name = h
+		}
+		if name = strings.TrimSuffix(strings.ToLower(name), "."); slices.Contains(own, name) {
+			named = append(named, name)
+		}
+	}
+	switch {
+	case slices.Contains(named, own[1]):
+		return own[1]
+	case len(named) > 0:
+		return named[0]
+	}
+	return ""
+}
+
+func hold(served []string, key *ecdsa.PrivateKey) (held, error) {
 	spki, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
 	if err != nil {
 		return held{}, err
 	}
 	sum := sha256.Sum256(spki)
-	names := []string{shared, hex.EncodeToString(sum[:8]) + ".k." + shared}
+	names := append(slices.Clone(served), hex.EncodeToString(sum[:8])+".k."+served[0])
 	csr, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{DNSNames: names}, key)
 	if err != nil {
 		return held{}, err

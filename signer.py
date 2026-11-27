@@ -6,7 +6,8 @@ entry in a Rekor v2 shard with k witness cosignatures, read by rekor.py, a Fulci
 Sigstore's trusted root at its NotBefore, the identity of sign.yml on main of trymorse/morse-pins in the first attempt
 of a push or schedule run, a signature over the statement's digest, and k cosignatures at or before the
 certificate's NotAfter. It also recomputes what a statement must say from the morse-pins commit it names: the images
-of an environment, the hashes of the vendor pins files, or the hash and base of an environment's routes file.
+of an environment, the hashes of the vendor pins files in their v4 or v5 set, or the hash and base of an environment's
+routes file.
 """
 
 import base64
@@ -31,6 +32,10 @@ WORKFLOW = f"{REPOSITORY}/.github/workflows/sign.yml@refs/heads/main"
 TRIGGERS = ("push", "schedule")
 VENDOR_FILES = ("near_pins.json", "phala_model_pins.json", "phala_pins.json", "tinfoil_pins.json")
 SIGNED_FILES = ("enclave_pins.json", *VENDOR_FILES)
+# A morse-vendor-pins-v5 statement covers the v4 files at the root, except Phala's, whose v5 format adds the key
+# service root and lives under v5/. The publisher owns every path under v5/, as it owns the root files.
+V5_DIR = "v5/"
+V5_VENDOR_FILES = ("near_pins.json", "phala_model_pins.json", V5_DIR + "phala_pins.json", "tinfoil_pins.json")
 # sign.yml signs routes/<environment>/routes.json and the base beside it, and refuses to sign anything while routes/
 # holds another path, so every path under routes/ is the signer's.
 ROUTES_DIR = "routes/"
@@ -40,7 +45,7 @@ ROUTES_BASE = re.compile(r"[0-9a-f]{64}\n")
 
 def signs(path):
     """Whether sign.yml reads the morse-pins file at path, so that only the publisher may push it."""
-    return path in SIGNED_FILES or path.startswith(ROUTES_DIR)
+    return path in SIGNED_FILES or path.startswith((ROUTES_DIR, V5_DIR))
 
 OID = "1.3.6.1.4.1.57264.1."
 ISSUER_V1, ISSUER_V2, BUILD_SIGNER, RUNNER, SOURCE_URI, SOURCE_DIGEST, SOURCE_REF, SOURCE_ID, OWNER, CONFIG_URI, CONFIG_DIGEST, TRIGGER, RUN = (
@@ -220,6 +225,8 @@ def expected_statement(statement, show, count):
         body = {"environment": statement.get("environment"), "images": images}
     elif kind == "morse-vendor-pins-v1":
         body = {"files": {f"v4/{name}": jcs_sha256(show(name)) for name in VENDOR_FILES}}
+    elif kind == "morse-vendor-pins-v5":
+        body = {"files": {path if path.startswith(V5_DIR) else f"v4/{path}": jcs_sha256(show(path)) for path in V5_VENDOR_FILES}}
     elif kind == "morse-routes-v1":
         environment = statement.get("environment")
         if environment not in ROUTES_ENVIRONMENTS:

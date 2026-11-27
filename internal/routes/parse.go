@@ -21,6 +21,15 @@ import (
 
 const defaultOwner = "morse"
 
+// why: the Morse app groups and titles chats by owned_by, so its lists keep defaultOwner, while an API key's lists and the
+// catalog name the maker, as OpenAI's owned_by does.
+func (r Route) Maker() string {
+	if r.OwnedBy == defaultOwner {
+		return cmp.Or(r.Lab, r.OwnedBy)
+	}
+	return r.OwnedBy
+}
+
 func parseRetention(raw string) (catalog.Retention, error) {
 	if raw == "" {
 		return catalog.RetentionVendor, nil

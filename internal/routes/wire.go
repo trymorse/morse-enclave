@@ -70,6 +70,7 @@ type chatRoute struct {
 	NativeTools            bool        `json:"native_tools"`
 	Characters             *bool       `json:"characters"`
 	ResponseFormats        []string    `json:"response_formats"`
+	Sampling               []string    `json:"sampling"`
 	HiddenReasoningTPS     int         `json:"hidden_reasoning_tps"`
 	DecodeMaxTPS           int         `json:"decode_max_tps"`
 	Quantization           string      `json:"quantization"`

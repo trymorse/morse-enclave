@@ -150,6 +150,10 @@ type sseWriter struct {
 	clock       *thinkingClock
 	veil        *replyVeil
 	firstAnswer time.Time
+	price       *keyBill
+	heldUsage   *chat.Chunk
+
+	excludesReasoning bool
 }
 
 func (s *sseWriter) emit(c chat.Chunk) error {
@@ -161,6 +165,9 @@ func (s *sseWriter) emit(c chat.Chunk) error {
 		c = c.MarkUnanswered()
 	}
 	c = s.veil.chunk(c)
+	if s.excludesReasoning {
+		c = c.WithoutReasoning()
+	}
 	err := s.events(s.encoder.Chunk(c))
 	if err == nil {
 		if counts {

@@ -38,8 +38,11 @@ var forwardedMessageKeys = map[string][]string{
 	"tool":      {"content", "tool_call_id"},
 }
 
-func messageKeys(role string) []string {
-	if keys, ok := forwardedMessageKeys[role]; ok {
+func (p *Provider) messageKeys(role string) []string {
+	switch keys, ok := forwardedMessageKeys[role]; {
+	case role == "assistant":
+		return slices.Concat(keys, p.ReasoningKeys)
+	case ok:
 		return keys
 	}
 	return []string{"content"}
@@ -72,6 +75,7 @@ type Provider struct {
 	ContinuousUsage bool
 	Fixes           catalog.Fixes
 	ThinkingField   string
+	ReasoningKeys   []string
 	SendsCacheKey   bool
 	CacheKeyHeader  string
 	Admit           func(chat.Call) error
@@ -564,7 +568,7 @@ func (p *Provider) encode(c chat.Call, stream bool) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		set["messages"] = chat.EncodeMessages(developerAsSystem(msgs), messageKeys)
+		set["messages"] = chat.EncodeMessages(chat.ReplayingReasoningAs(developerAsSystem(msgs), p.ReasoningKeys), p.messageKeys)
 	}
 	for _, name := range retentionSwitches {
 		if _, forced := set[name]; forced || slices.Contains(anonymousFields, name) {

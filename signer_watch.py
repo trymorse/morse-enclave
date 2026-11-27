@@ -24,9 +24,10 @@ from github_read import read_github
 # without running the file, fails a pull request whose tree is not yet listed (DOOR.md, check 7).
 # b06ce985 is the tree of 4e2a388c, the commit that added sign.yml (trymorse/morse-pins#1). 9871adfb is the tree of
 # 3228c05e, which makes sign.yml also sign a morse-routes-v1 statement for each routes/<environment>/ (trymorse/morse-pins#2).
-# e7b5724b is the tree of the change that adds allowlist.yml, on 25bbc95a.
+# e7b5724b is the tree of the change that adds allowlist.yml, on 25bbc95a. 71ae547f is the tree of de424ae2, which makes
+# sign.yml also sign a morse-vendor-pins-v5 statement (trymorse/morse-pins#4).
 SIGNER_TREES = {"b06ce985178151ac41cc22a84b2b8a7d033b2f80", "9871adfbf1660c9419281712f79b48081537095f",
-                "e7b5724b3044e990652981f9ec450a58b19bf42b"}
+                "e7b5724b3044e990652981f9ec450a58b19bf42b", "71ae547f1d2348880fcef71d2f1e6e10d5c15019"}
 SIGNER_WORKFLOW = ".github/workflows/sign.yml"
 STATEMENTS_REF = "origin/statements/images"
 GITHUB_API = "https://api.github.com/"

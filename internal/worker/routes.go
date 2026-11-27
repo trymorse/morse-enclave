@@ -32,7 +32,7 @@ const (
 
 // Dialects are the chat routes whose clients speak a wire format other than Chat Completions, by route pattern. The
 // relay and the door write their refusals on such a route in its dialect's envelope.
-var Dialects = map[string]dialect.Dialect{MessagesPattern: messages.Dialect, ResponsesPattern: responses.Dialect}
+var Dialects = map[string]dialect.Dialect{MessagesPattern: messages.Dialect, TokenCountPattern: messages.CountDialect, ResponsesPattern: responses.Dialect}
 
 func pluginOpener(kind plugins.Kind) opener {
 	return func(w *InProcess, o Opening, _ func(string) string) (Admission, error) { return w.openPlugin(o, kind) }
@@ -53,6 +53,7 @@ var sealableRoutes = []struct {
 	{ChatPattern, chatOpener(dialect.Dialect{}, false)},
 	{CompactPattern, chatOpener(dialect.Dialect{}, true)},
 	{MessagesPattern, chatOpener(messages.Dialect, false)},
+	{TokenCountPattern, func(w *InProcess, o Opening, _ func(string) string) (Admission, error) { return w.openTokenCount(o) }},
 	{ResponsesPattern, chatOpener(responses.Dialect, false)},
 	{ImagesPattern, func(w *InProcess, o Opening, _ func(string) string) (Admission, error) { return w.openImages(o) }},
 	{VideosPattern, func(w *InProcess, o Opening, _ func(string) string) (Admission, error) { return w.openVideo(o) }},

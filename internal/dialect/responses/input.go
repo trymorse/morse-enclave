@@ -3,6 +3,7 @@ package responses
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -16,6 +17,7 @@ type item struct {
 	Arguments *string         `json:"arguments"`
 	Input     *string         `json:"input"`
 	Output    json.RawMessage `json:"output"`
+	Summary   []contentPart   `json:"summary"`
 }
 
 type contentPart struct {
@@ -32,6 +34,7 @@ type contentPart struct {
 type conversation struct {
 	out     []map[string]any
 	calling map[string]any
+	thought string
 }
 
 func conversationOf(instructions, input json.RawMessage) ([]map[string]any, error) {
@@ -68,7 +71,11 @@ func (c *conversation) add(m map[string]any) {
 	c.calling = nil
 	if m["role"] == "assistant" {
 		c.calling = m
+		if c.thought != "" {
+			m["reasoning_content"] = c.thought
+		}
 	}
+	c.thought = ""
 }
 
 func (c *conversation) item(it item, at string) error {
@@ -76,6 +83,7 @@ func (c *conversation) item(it item, at string) error {
 	case "message", "":
 		return c.message(it, at)
 	case "reasoning":
+		c.thought += it.reasoned()
 		return nil
 	case "function_call":
 		if it.Arguments == nil {
@@ -94,6 +102,20 @@ func (c *conversation) item(it item, at string) error {
 		return unsupported(at, "item_reference is not supported: Morse keeps no items to refer to. Send the item itself, as a client does when its request sets store: false.")
 	}
 	return unsupported(at+".type", fmt.Sprintf("An input item of type %s is not supported: Morse takes message, function_call, function_call_output, custom_tool_call, custom_tool_call_output, and reasoning items.", it.Type))
+}
+
+// why: a Responses reasoning item comes before the message or tool call it led to, with its text in summary parts and,
+// from an open model's host, in reasoning_text content parts.
+func (it item) reasoned() string {
+	var content []contentPart
+	json.Unmarshal(it.Content, &content)
+	var thought strings.Builder
+	for _, p := range slices.Concat(it.Summary, content) {
+		if (p.Type == "summary_text" || p.Type == "reasoning_text") && p.Text != nil {
+			thought.WriteString(*p.Text)
+		}
+	}
+	return thought.String()
 }
 
 func (c *conversation) call(it item, at, arguments string) error {

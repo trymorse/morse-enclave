@@ -388,3 +388,21 @@ func TestOnlyDeepInfraAndAbliterationAreSentTheCallsCacheKeyInTheBodyMorphInItsH
 		t.Errorf("DeepInfra was sent %s for a call with no cache key, want no prompt_cache_key", body)
 	}
 }
+
+func TestEveryHostIsSentAnAssistantsReplayedReasoningUnderTheKeysItsTemplateReads(t *testing.T) {
+	for _, h := range Hosts() {
+		s := stub(t)
+		c := h.NewChat(s.srv.URL, "k", "m", catalog.Fixes{}, s.srv.Client())
+		if _, _, err := c.Complete(context.Background(), call(t, `{"model":"m","messages":[{"role":"user","content":"hi"},{"role":"assistant","content":"a","reasoning":"plan"},{"role":"user","content":"go on"}]}`)); err != nil {
+			t.Fatalf("%s: %v", h.Name, err)
+		}
+		var sent struct{ Messages []map[string]any }
+		if err := json.Unmarshal([]byte(s.requests()[0].body), &sent); err != nil {
+			t.Fatal(err)
+		}
+		_, underReasoning := sent.Messages[1]["reasoning"]
+		if sent.Messages[1]["reasoning_content"] != "plan" || underReasoning != (h.Name == "wafer") {
+			t.Errorf("%s was sent the assistant message %v, want the reasoning as reasoning_content, and as reasoning too only on wafer", h.Name, sent.Messages[1])
+		}
+	}
+}

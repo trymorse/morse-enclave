@@ -153,8 +153,10 @@ func New(baseURL, upstreamModel, apiKey string, clients Clients, keys Keys) *Rou
 	provider := func(sender openaicompat.Sender) openaicompat.Provider {
 		return openaicompat.Provider{Sender: sender, Model: upstreamModel, Force: maps.Clone(constraint), LimitField: openaicompat.MaxTokens, ContinuousUsage: true}
 	}
+	inTheClear := provider(openaicompat.HTTPSender{Endpoint: plaintext})
+	inTheClear.ReasoningKeys = []string{"reasoning_content"}
 	return &Route{
-		Provider: provider(openaicompat.HTTPSender{Endpoint: plaintext}),
+		Provider: inTheClear,
 		Gateway:  objects,
 		verbatim: openaicompat.Relay{Endpoint: sealed, Model: upstreamModel, Force: maps.Clone(constraint), Admits: map[string]func(json.RawMessage) bool{"provider": admitsProvider}, Receipt: openaicompat.ReceiptHeaders(chat.ReceiptHeaders...), Proves: objects.prover(upstreamModel, keys)},
 		onBehalf: provider(openaicompat.SealedSender{Endpoint: plaintext, Sealer: sealer{model: upstreamModel, keys: keys}}),

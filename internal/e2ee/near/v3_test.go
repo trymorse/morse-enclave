@@ -76,9 +76,9 @@ func TestParseHeadersReadsVersion3WithOrWithoutAllFields(t *testing.T) {
 		t.Errorf("version 2: v3 %t err %v, want a v2 request that seals no tools", v2.V3, err)
 	}
 	sent := map[string]string{}
-	Params{}.Forward(func(name, value string) { sent[name] = value })
+	v2.Forward(func(name, value string) { sent[name] = value })
 	if sent[HeaderVersion] != "2" {
-		t.Errorf("params with no version forward %q, want 2, which the worker seals on a client's behalf", sent[HeaderVersion])
+		t.Errorf("a version 2 client's params forward %q, want 2: the proxy relays the version the client sealed on", sent[HeaderVersion])
 	}
 }
 

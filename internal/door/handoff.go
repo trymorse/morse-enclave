@@ -216,7 +216,7 @@ func (d *Door) take(ctx context.Context, req Handed) *Refusal {
 	if refused != nil {
 		return refused
 	}
-	key, err := hold(sharedNames[d.environment], private)
+	key, err := hold(hosts[d.environment], private)
 	if err != nil {
 		return refuse(http.StatusUnprocessableEntity, "payload_unreadable", "%v", err)
 	}

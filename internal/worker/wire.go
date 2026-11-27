@@ -50,10 +50,12 @@ const (
 	admitsLookup
 	admitsPlugin
 	admitsTask
+	admitsTokenCount
 )
 
 var admissionKindNames = enum.Names[admissionKind]{
 	admitsChat: "chat", admitsMedia: "media", admitsCall: "call", admitsRead: "read", admitsLookup: "lookup", admitsPlugin: "plugin", admitsTask: "task",
+	admitsTokenCount: "token_count",
 }
 
 func (k admissionKind) MarshalText() ([]byte, error) { return admissionKindNames.MarshalText(k) }
@@ -73,12 +75,13 @@ const (
 	grantsResearchEvents
 	grantsLookup
 	grantsPlugin
+	grantsTokenCount
 )
 
 var grantKindNames = enum.Names[grantKind]{
 	grantsChat: "chat", grantsMedia: "media", grantsCall: "call",
 	grantsVideoRead: "video_read", grantsResearchRead: "research_read", grantsResearchEvents: "research_events", grantsLookup: "lookup",
-	grantsPlugin: "plugin",
+	grantsPlugin: "plugin", grantsTokenCount: "token_count",
 }
 
 func (k grantKind) MarshalText() ([]byte, error) { return grantKindNames.MarshalText(k) }
@@ -114,13 +117,14 @@ func decodeGrant[G Grant](e envelope[grantKind]) (Grant, error) {
 }
 
 var admissionOfKind = map[admissionKind]func(envelope[admissionKind]) (Admission, error){
-	admitsChat:   decodeAdmission[ChatAdmission, *ChatAdmission],
-	admitsMedia:  decodeAdmission[MediaAdmission, *MediaAdmission],
-	admitsCall:   decodeAdmission[CallAdmission, *CallAdmission],
-	admitsRead:   decodeAdmission[ReadAdmission, *ReadAdmission],
-	admitsLookup: decodeAdmission[LookupAdmission, *LookupAdmission],
-	admitsPlugin: decodeAdmission[PluginAdmission, *PluginAdmission],
-	admitsTask:   decodeAdmission[TaskAdmission, *TaskAdmission],
+	admitsChat:       decodeAdmission[ChatAdmission, *ChatAdmission],
+	admitsMedia:      decodeAdmission[MediaAdmission, *MediaAdmission],
+	admitsCall:       decodeAdmission[CallAdmission, *CallAdmission],
+	admitsRead:       decodeAdmission[ReadAdmission, *ReadAdmission],
+	admitsLookup:     decodeAdmission[LookupAdmission, *LookupAdmission],
+	admitsPlugin:     decodeAdmission[PluginAdmission, *PluginAdmission],
+	admitsTask:       decodeAdmission[TaskAdmission, *TaskAdmission],
+	admitsTokenCount: decodeAdmission[TokenCountAdmission, *TokenCountAdmission],
 }
 
 var grantOfKind = map[grantKind]func(envelope[grantKind]) (Grant, error){
@@ -132,6 +136,7 @@ var grantOfKind = map[grantKind]func(envelope[grantKind]) (Grant, error){
 	grantsResearchEvents: decodeGrant[ResearchEventsGrant],
 	grantsLookup:         decodeGrant[LookupGrant],
 	grantsPlugin:         decodeGrant[PluginGrant],
+	grantsTokenCount:     decodeGrant[TokenCountGrant],
 }
 
 func admissionWire(a Admission, pattern string) ([]byte, error) {
@@ -245,12 +250,13 @@ type openingWire struct {
 	KeyCaller   bool              `json:"key_caller,omitempty"`
 	KeyFloor    string            `json:"key_floor,omitempty"`
 	KeySettings bool              `json:"key_settings,omitempty"`
+	CallerHost  string            `json:"caller_host,omitempty"`
 	Veil        VeilOpening       `json:"privacy_veil,omitzero"`
 	keyFloor    catalog.Tier
 }
 
-func setOpening(header http.Header, c chat.Cast, f Framing, keyCaller bool, keyFloor catalog.Tier, keySettings bool, veil VeilOpening) {
-	o := openingWire{Prompts: c.Prompts(), Rules: c.Rules(), Launch: f.Launch, Own: f.Own, Writing: f.Writing, KeyCaller: keyCaller, KeySettings: keySettings, Veil: veil}
+func setOpening(header http.Header, c chat.Cast, f Framing, keyCaller bool, keyFloor catalog.Tier, keySettings bool, callerHost string, veil VeilOpening) {
+	o := openingWire{Prompts: c.Prompts(), Rules: c.Rules(), Launch: f.Launch, Own: f.Own, Writing: f.Writing, KeyCaller: keyCaller, KeySettings: keySettings, CallerHost: callerHost, Veil: veil}
 	if keyFloor.Valid() {
 		o.KeyFloor = keyFloor.String()
 	}

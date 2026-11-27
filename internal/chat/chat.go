@@ -30,6 +30,8 @@ type Request struct {
 	outputLimits []int
 	effort       *string
 	messages     func() ([]Message, error)
+
+	excludesReasoning bool
 }
 
 type Call struct {
@@ -94,6 +96,9 @@ func ParseRequest(body io.Reader) (*Request, error) {
 	}
 	if unmarshalField(fields, "reasoning_effort", &req.effort) != nil || req.effort != nil && !slices.Contains(EffortLadder, *req.effort) {
 		return nil, errInvalidEffort
+	}
+	if err := req.readReasoning(); err != nil {
+		return nil, err
 	}
 	for _, name := range legacyToolFields {
 		if _, ok := fields[name]; ok {
@@ -348,6 +353,10 @@ func (r *Request) PromptTexts() ([]string, bool) {
 		if !ok {
 			return nil, false
 		}
+		// why: replayed reasoning reaches the host and counts in its prompt_tokens, so a sample that left it out would learn it as overhead.
+		if reasoning := m.ReplayedReasoning(); reasoning != "" {
+			texts = append(texts, reasoning)
+		}
 		if text != "" {
 			texts = append(texts, text)
 		}
@@ -369,7 +378,7 @@ func (r *Request) RenderedPromptTexts() ([]string, int, bool) {
 		if !ok {
 			return nil, 0, false
 		}
-		if reasoning := cmp.Or(m.replayedReasoning("reasoning_content"), m.replayedReasoning("reasoning")); reasoning != "" {
+		if reasoning := m.ReplayedReasoning(); reasoning != "" {
 			texts = append(texts, reasoning)
 		}
 		if calls := m.ToolCalls(); len(calls) > 0 {
@@ -395,12 +404,44 @@ func (m Message) ReasoningState() string {
 	return state
 }
 
+// why: DeepSeek named an assistant message's earlier thinking reasoning_content and OpenRouter named it reasoning, and
+// clients replay either (https://api-docs.deepseek.com/guides/thinking_mode).
+var reasoningKeys = []string{"reasoning_content", "reasoning"}
+
+func ReplaysReasoning(key string) bool { return slices.Contains(reasoningKeys, key) }
+
+func (m Message) ReplayedReasoning() string {
+	for _, key := range reasoningKeys {
+		if s := m.replayedReasoning(key); s != "" {
+			return s
+		}
+	}
+	return ""
+}
+
 func (m Message) replayedReasoning(key string) string {
 	var s string
 	if m.Role != "assistant" || json.Unmarshal(m.raw[key], &s) != nil {
 		return ""
 	}
 	return s
+}
+
+func ReplayingReasoningAs(msgs []Message, keys []string) []Message {
+	out := slices.Clone(msgs)
+	for i, m := range out {
+		reasoning := m.ReplayedReasoning()
+		out[i].raw = maps.Clone(m.raw)
+		for _, key := range reasoningKeys {
+			delete(out[i].raw, key)
+		}
+		for _, key := range keys {
+			if reasoning != "" {
+				out[i].raw[key], _ = json.Marshal(reasoning)
+			}
+		}
+	}
+	return out
 }
 
 // PromptTextBytes is the size of the text the model reads: every text part of every message, the assistant's
@@ -413,7 +454,7 @@ func (r *Request) PromptTextBytes() (int, error) {
 	}
 	n := len(r.fields["tools"])
 	for _, m := range msgs {
-		n += len(m.ToolCalls()) + m.TextBytes()
+		n += len(m.ToolCalls()) + m.TextBytes() + len(m.ReplayedReasoning())
 	}
 	return n, nil
 }
@@ -588,29 +629,44 @@ func (c Chunk) WriteTo(w io.Writer) (int64, error) {
 	return int64(n), err
 }
 
-func (c Chunk) MarkUnanswered() Chunk {
+func (c Chunk) MarkUnanswered() Chunk { return c.AddToUsage("unanswered", []byte("true")) }
+
+func (c Chunk) AddToUsage(field string, value []byte) Chunk {
+	end, empty, ok := c.usageEnd()
+	if !ok {
+		return c
+	}
+	name, _ := json.Marshal(field)
+	marker := slices.Concat([]byte(","), name, []byte(":"), value)
+	if empty {
+		marker = marker[1:]
+	}
+	c.object = slices.Concat(c.object[:end], marker, c.object[end:])
+	return c
+}
+
+func (c Chunk) CarriesUsage() bool {
+	_, _, ok := c.usageEnd()
+	return ok
+}
+
+func (c Chunk) usageEnd() (end int, empty, ok bool) {
 	dec := json.NewDecoder(bytes.NewReader(c.object))
 	if open, err := dec.Token(); err != nil || open != json.Delim('{') {
-		return c
+		return 0, false, false
 	}
 	for dec.More() {
 		key, _ := dec.Token()
 		var value json.RawMessage
 		if dec.Decode(&value) != nil {
-			return c
+			return 0, false, false
 		}
 		if key != "usage" || len(value) < 2 || value[0] != '{' {
 			continue
 		}
-		end := int(dec.InputOffset()) - 1
-		marker := `,"unanswered":true`
-		if string(bytes.TrimSpace(value[1:len(value)-1])) == "" {
-			marker = marker[1:]
-		}
-		c.object = slices.Concat(c.object[:end], []byte(marker), c.object[end:])
-		return c
+		return int(dec.InputOffset()) - 1, string(bytes.TrimSpace(value[1:len(value)-1])) == "", true
 	}
-	return c
+	return 0, false, false
 }
 
 // Ending is the chunk that ends choice 0 of c's reply with finish and says nothing more: c's id, object, created and

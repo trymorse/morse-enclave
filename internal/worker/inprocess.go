@@ -63,7 +63,7 @@ type Reporter interface {
 	UnknownReplyField(model, field string)
 	Failed(route string, err error)
 	LookupBusy(service string)
-	VendorRefused(model string, status int)
+	VendorRefused(model string, status int, code string)
 	UpstreamErrorChunk(model string, code chat.ErrorCode)
 	VendorUsageMissing(model string)
 }
@@ -73,7 +73,7 @@ type NopReporter struct{}
 func (NopReporter) UnknownReplyField(string, string)          {}
 func (NopReporter) Failed(string, error)                      {}
 func (NopReporter) LookupBusy(string)                         {}
-func (NopReporter) VendorRefused(string, int)                 {}
+func (NopReporter) VendorRefused(string, int, string)         {}
 func (NopReporter) UpstreamErrorChunk(string, chat.ErrorCode) {}
 func (NopReporter) VendorUsageMissing(string)                 {}
 
@@ -135,7 +135,9 @@ func NewInProcess(cfg Config) (*InProcess, error) {
 	}
 	for name, to := range cfg.Retired {
 		live := cmp.Or(idNames[to], to)
-		if c, ok := w.chats[live]; ok {
+		// why: a model id's own chat entry serves every tier the id does; idNames[to] is only its top tier's alias,
+		// which may take sealed requests alone.
+		if c, ok := w.chats[to]; ok {
 			w.chats[name] = c
 		}
 		if tier, ok := w.tiers[live]; ok {

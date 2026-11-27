@@ -125,36 +125,39 @@ func (s *Server) opening(header http.Header) (Opening, error) {
 	if err != nil {
 		return Opening{}, err
 	}
-	return Opening{Cast: s.casts.of(o.Prompts, o.Rules), Framing: Framing{Launch: o.Launch, Own: o.Own, Writing: o.Writing}, KeyCaller: o.KeyCaller, KeyFloor: o.keyFloor, KeySettings: o.KeySettings, PrivacyVeil: o.Veil}, nil
+	return Opening{Cast: s.casts.of(o.Prompts, o.Rules), Framing: Framing{Launch: o.Launch, Own: o.Own, Writing: o.Writing}, KeyCaller: o.KeyCaller, KeyFloor: o.keyFloor, KeySettings: o.KeySettings, CallerHost: o.CallerHost, PrivacyVeil: o.Veil}, nil
 }
 
 func (s *Server) open(w http.ResponseWriter, r *http.Request) {
+	began, body := time.Now(), &timedBody{Reader: r.Body}
 	o, err := s.opening(r.Header)
 	if err != nil {
 		apierr.WriteError(w, apierr.ErrInvalidBody)
 		return
 	}
-	o.Method, o.Path, o.Query, o.Header, o.Body = r.Header.Get(headerMethod), r.Header.Get(headerPath), r.Header.Get(headerQuery), ContentHeaders(r.Header), r.Body
+	o.Method, o.Path, o.Query, o.Header, o.Body = r.Header.Get(headerMethod), r.Header.Get(headerPath), r.Header.Get(headerQuery), ContentHeaders(r.Header), body
 	admitted, err := s.inner.Open(r.Context(), o)
 	if err != nil {
 		apierr.WriteError(w, refusalWire(err))
 		return
 	}
-	s.writeAdmission(w, admitted, "")
+	setOpenTook(w.Header(), body.took(began))
+	s.writeAdmission(w, r, admitted, "")
 }
 
 func (s *Server) openSealed(w http.ResponseWriter, r *http.Request) {
+	began, timed := time.Now(), &timedBody{Reader: r.Body}
 	o, err := s.opening(r.Header)
 	if err != nil {
 		apierr.WriteError(w, apierr.ErrInvalidBody)
 		return
 	}
-	body, err := io.ReadAll(io.LimitReader(r.Body, maxSealedWire+1))
+	body, err := io.ReadAll(io.LimitReader(timed, maxSealedWire+1))
 	if err != nil || len(body) > maxSealedWire {
 		apierr.WriteError(w, apierr.ErrRequestTooLarge)
 		return
 	}
-	opened, err := s.inner.OpenSealed(r.Context(), SealedOpening{Body: body, Cast: o.Cast, Framing: o.Framing, KeyCaller: o.KeyCaller, KeyFloor: o.KeyFloor, KeySettings: o.KeySettings, PrivacyVeil: o.PrivacyVeil})
+	opened, err := s.inner.OpenSealed(r.Context(), SealedOpening{Body: body, Cast: o.Cast, Framing: o.Framing, KeyCaller: o.KeyCaller, KeyFloor: o.KeyFloor, KeySettings: o.KeySettings, CallerHost: o.CallerHost, PrivacyVeil: o.PrivacyVeil})
 	if refused, ok := errors.AsType[SealedRefusal](err); ok {
 		w.Header().Set("Content-Type", seal.ContentType)
 		w.Write(refused.Reply)
@@ -168,10 +171,11 @@ func (s *Server) openSealed(w http.ResponseWriter, r *http.Request) {
 		apierr.WriteError(w, refusalWire(err))
 		return
 	}
-	s.writeAdmission(w, opened.Admission, opened.Pattern)
+	setOpenTook(w.Header(), timed.took(began))
+	s.writeAdmission(w, r, opened.Admission, opened.Pattern)
 }
 
-func (s *Server) writeAdmission(w http.ResponseWriter, admitted Admission, pattern string) {
+func (s *Server) writeAdmission(w http.ResponseWriter, r *http.Request, admitted Admission, pattern string) {
 	data, err := admissionWire(admitted, pattern)
 	if err != nil {
 		s.inner.Cut(admitted.Handle(), measure.CutByProxy)
@@ -179,7 +183,14 @@ func (s *Server) writeAdmission(w http.ResponseWriter, admitted Admission, patte
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	w.Write(data)
+	if _, err = w.Write(data); err == nil {
+		err = http.NewResponseController(w).Flush()
+	}
+	// why: a relay the admission never reached can never run or cut its handle, which would wait out OpenedFor; the
+	// flush makes a failed delivery show here rather than in a buffer, and a relay already gone has not heard it either.
+	if (err != nil && !errors.Is(err, http.ErrNotSupported)) || r.Context().Err() != nil {
+		s.inner.Cut(admitted.Handle(), measure.CutByProxy)
+	}
 }
 
 // A run answers with the reply itself and the measurement as a trailer, so the reply is chunked and a length the

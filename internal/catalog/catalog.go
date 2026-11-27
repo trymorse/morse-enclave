@@ -203,6 +203,7 @@ type ChatTerms struct {
 	NoCharacters           bool
 	NativeTools            bool
 	ResponseFormats        ResponseFormats
+	Sampling               Sampling
 	Fixes
 }
 
@@ -211,6 +212,7 @@ type Fixes struct {
 	ReasoningInContent  bool `json:"reasoning_in_content"`
 	ThinkingOffSwitch   bool `json:"thinking_off_switch"`
 	ToolCallsFinishStop bool `json:"tool_calls_finish_stop"`
+	RefusesForcedTool   bool `json:"refuses_forced_tool_choice"`
 	NoTools             bool `json:"-"`
 }
 

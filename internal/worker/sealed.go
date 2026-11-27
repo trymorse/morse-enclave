@@ -2,7 +2,9 @@ package worker
 
 import (
 	"bytes"
+	"cmp"
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/url"
@@ -99,6 +101,7 @@ type SealedOpening struct {
 	KeyFloor    catalog.Tier
 	PrivacyVeil VeilOpening
 	KeySettings bool
+	CallerHost  string
 }
 
 type SealedAdmission struct {
@@ -183,7 +186,7 @@ func (w *InProcess) OpenSealed(ctx context.Context, o SealedOpening) (SealedAdmi
 	}
 	cek := req.CEK
 	admitted, err := w.Open(ctx, Opening{Method: req.Method, Path: target.Path, Query: target.RawQuery, Header: ContentHeaders(header), Body: bytes.NewReader(req.Body), Cast: o.Cast, Framing: o.Framing, KeyCaller: o.KeyCaller, KeyFloor: o.KeyFloor, KeySettings: o.KeySettings,
-		PrivacyVeil: o.PrivacyVeil, cek: &cek, veilHead: req.PrivacyVeil, veilPartition: req.PrivacyVeilPartition, clipKey: header.Get(clip.KeyHeader)})
+		CallerHost: o.CallerHost, PrivacyVeil: o.PrivacyVeil, cek: &cek, veilHead: req.PrivacyVeil, veilPartition: req.PrivacyVeilPartition, clipKey: header.Get(clip.KeyHeader)})
 	if err != nil {
 		refusal := refusalWire(contentRefusal(err))
 		return refuse(refusal.Envelope(), refusal.Status)
@@ -219,6 +222,7 @@ type sealedReply struct {
 	stream *seal.Stream
 	inner  http.Header
 	status int
+	code   string
 }
 
 func newSealedReply(outer http.ResponseWriter, cek [32]byte) *sealedReply {
@@ -242,6 +246,9 @@ func (s *sealedReply) WriteHeader(code int) {
 
 func (s *sealedReply) Write(p []byte) (int, error) {
 	s.WriteHeader(http.StatusOK)
+	if s.status >= http.StatusInternalServerError && s.code == "" {
+		s.code = sealedFailureCode(p)
+	}
 	return s.stream.Write(p)
 }
 
@@ -256,9 +263,34 @@ func (s *sealedReply) close() int {
 }
 
 func (s *sealedReply) finish(m *Measured) {
-	m.SealedStatusClass = s.close() / 100
+	status := s.close()
+	m.SealedStatusClass = status / 100
+	if status >= http.StatusInternalServerError {
+		m.SealedStatus, m.SealedCode = status, cmp.Or(s.code, sealedCodeOther)
+	}
 	m.Refusal = measure.NoRefusal
 	if m.Health.Outcome == health.ContentFilter {
 		m.Health.Outcome = health.ClientError
 	}
+}
+
+const sealedCodeOther = "other"
+
+// why: a relay that keeps the vendor's envelope can put the vendor's own error code in the inner body, and a vendor's
+// code may say anything about the sealed request, so only codes the worker writes itself reach the relay.
+var sealedFailureCodes = []string{
+	apierr.ErrUpstream.Code, apierr.ErrUpstreamBusy.Code, apierr.ErrUpstreamUnavailable.Code, apierr.ErrUpstreamRefused.Code,
+	apierr.ErrUnattested.Code, apierr.ErrUpstreamRetention.Code, apierr.ErrUnavailable.Code, apierr.ErrPromptCheckDown.Code,
+}
+
+func sealedFailureCode(body []byte) string {
+	var envelope struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(body, &envelope) != nil || !slices.Contains(sealedFailureCodes, envelope.Error.Code) {
+		return sealedCodeOther
+	}
+	return envelope.Error.Code
 }

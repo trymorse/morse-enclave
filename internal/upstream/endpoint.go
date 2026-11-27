@@ -10,6 +10,7 @@ import (
 	"maps"
 	"net"
 	"net/http"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -90,7 +91,20 @@ type Refused struct {
 	Status int
 	Err    error
 	// Window is the context window the vendor stated when it refused the prompt as too long, or 0.
-	Window int
+	Window    int
+	PlainCode string
+}
+
+var plainCode = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_.-]{0,63}$`)
+
+func PlainCode(code string) string {
+	switch {
+	case code == "":
+		return ""
+	case plainCode.MatchString(code):
+		return code
+	}
+	return "unrecognized"
 }
 
 func (r Refused) Error() string   { return r.Err.Error() }
@@ -206,7 +220,7 @@ func (e Endpoint) send(ctx context.Context, r Request) (*http.Response, error) {
 	}
 	maps.Copy(h, e.Auth)
 	if clock := callClockOf(ctx); clock != nil {
-		ctx = clock.trace(ctx)
+		ctx = clock.Trace(ctx)
 	}
 	req, err := http.NewRequestWithContext(ctx, r.Method, e.BaseURL+r.Path, nil)
 	if err != nil {

@@ -37,7 +37,7 @@ func WithCallClock(ctx context.Context, c *CallClock) context.Context {
 	return context.WithValue(ctx, callClockKey{}, c)
 }
 
-func (c *CallClock) trace(ctx context.Context) context.Context {
+func (c *CallClock) Trace(ctx context.Context) context.Context {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.claimed {

@@ -82,7 +82,7 @@ func TestACodexTurnDecodesToTheChatItMeans(t *testing.T) {
 			`{"content":"permissions","role":"system"},` +
 			`{"content":[{"text":"environment_context","type":"text"}],"role":"user"},` +
 			`{"content":[{"text":"list files","type":"text"}],"role":"user"},` +
-			`{"content":"Listing.","role":"assistant","tool_calls":[` +
+			`{"content":"Listing.","reasoning_content":"hmm","role":"assistant","tool_calls":[` +
 			`{"function":{"arguments":"{\"command\":[\"ls\"]}","name":"shell"},"id":"call_1","type":"function"},` +
 			`{"function":{"arguments":"{\"input\":\"*** Begin Patch\"}","name":"apply_patch"},"id":"call_2","type":"function"}]},` +
 			`{"content":"a.go","role":"tool","tool_call_id":"call_1"},` +
@@ -177,6 +177,25 @@ func TestWhatMorseCannotServeIsRefusedNamingIt(t *testing.T) {
 		var refusal apierr.Error
 		if !errors.As(err, &refusal) || refusal.Status != 400 || refusal.Param != c.param || !strings.Contains(refusal.Message, c.says) {
 			t.Errorf("%s: %+v, want 400 naming %s and saying %q", c.input, err, c.param, c.says)
+		}
+	}
+}
+
+func TestAReasoningItemsTextReachesTheChatAsTheReasoningOfTheMessageOrCallAfterIt(t *testing.T) {
+	for name, c := range map[string]struct{ input, want string }{
+		"a summary before a message": {`[{"role":"user","content":"hi"},{"type":"reasoning","summary":[{"type":"summary_text","text":"plan a"}]},{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}]`,
+			`{"content":"ok","reasoning_content":"plan a","role":"assistant"}`},
+		"reasoning text before a call": {`[{"role":"user","content":"hi"},{"type":"reasoning","summary":[],"content":[{"type":"reasoning_text","text":"plan b"}]},{"type":"function_call","call_id":"c","name":"f","arguments":"{}"}]`,
+			`{"content":null,"reasoning_content":"plan b","role":"assistant","tool_calls":[{"function":{"arguments":"{}","name":"f"},"id":"c","type":"function"}]}`},
+		"only what it encrypted": {`[{"role":"user","content":"hi"},{"type":"reasoning","summary":[],"encrypted_content":"opaque"},{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}]`,
+			`{"content":"ok","role":"assistant"}`},
+		"reasoning a user message follows": {`[{"type":"reasoning","summary":[{"type":"summary_text","text":"lost"}]},{"role":"user","content":"hi"},{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}]`,
+			`{"content":"ok","role":"assistant"}`},
+	} {
+		out := decoded(t, `{"model":"glm-5.3","input":`+c.input+`}`)
+		msgs := out["messages"].([]any)
+		if got := asJSON(msgs[len(msgs)-1]); got != c.want {
+			t.Errorf("%s: the assistant message is %s, want %s", name, got, c.want)
 		}
 	}
 }

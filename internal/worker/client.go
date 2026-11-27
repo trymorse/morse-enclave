@@ -90,27 +90,10 @@ func (c *Client) get(ctx context.Context, path string) ([]byte, http.Header, err
 	return c.call(req)
 }
 
-// A bodyErr keeps the error the relay's own body reader gave, which the transport may wrap or swallow when it
-// aborts the send.
-type bodyErr struct {
-	io.Reader
-	err error
-}
-
-func (b *bodyErr) Read(p []byte) (int, error) {
-	n, err := b.Reader.Read(p)
-	if err != nil && err != io.EOF && b.err == nil {
-		b.err = err
-	}
-	return n, err
-}
-
 func (c *Client) Open(ctx context.Context, o Opening) (Admission, error) {
-	var body io.Reader = http.NoBody
-	sent := &bodyErr{}
-	if o.Body != nil {
-		sent.Reader = o.Body
-		body = sent
+	body, err := wholeBody(ctx, o.Body)
+	if err != nil {
+		return nil, err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+"/open", body)
 	if err != nil {
@@ -122,16 +105,26 @@ func (c *Client) Open(ctx context.Context, o Opening) (Admission, error) {
 	req.Header.Set(headerMethod, o.Method)
 	req.Header.Set(headerPath, o.Path)
 	req.Header.Set(headerQuery, o.Query)
-	setOpening(req.Header, o.Cast, o.Framing, o.KeyCaller, o.KeyFloor, o.KeySettings, o.PrivacyVeil)
-	data, _, err := c.call(req)
-	if sent.err != nil {
-		return nil, sent.err
-	}
+	setOpening(req.Header, o.Cast, o.Framing, o.KeyCaller, o.KeyFloor, o.KeySettings, o.CallerHost, o.PrivacyVeil)
+	data, _, err := c.callOpen(ctx, req)
 	if err != nil {
 		return nil, err
 	}
 	opened, err := admissionOf(data)
 	return opened.Admission, err
+}
+
+func (c *Client) callOpen(ctx context.Context, req *http.Request) ([]byte, http.Header, error) {
+	t := openTraceOf(ctx)
+	if t == nil {
+		return c.call(req)
+	}
+	clock := &upstream.CallClock{}
+	t.Bytes = req.ContentLength
+	data, header, err := c.call(req.WithContext(clock.Trace(ctx)))
+	t.Call = clock.Times()
+	t.took(header)
+	return data, header, err
 }
 
 func (c *Client) OpenSealed(ctx context.Context, o SealedOpening) (SealedAdmission, error) {
@@ -140,8 +133,8 @@ func (c *Client) OpenSealed(ctx context.Context, o SealedOpening) (SealedAdmissi
 		return SealedAdmission{}, err
 	}
 	req.Header.Set("Content-Type", seal.ContentType)
-	setOpening(req.Header, o.Cast, o.Framing, o.KeyCaller, o.KeyFloor, o.KeySettings, o.PrivacyVeil)
-	data, header, err := c.call(req)
+	setOpening(req.Header, o.Cast, o.Framing, o.KeyCaller, o.KeyFloor, o.KeySettings, o.CallerHost, o.PrivacyVeil)
+	data, header, err := c.callOpen(ctx, req)
 	switch {
 	case err != nil:
 		return SealedAdmission{}, err

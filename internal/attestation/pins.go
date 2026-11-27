@@ -6,7 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/big"
 	"os"
+	"reflect"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -355,24 +358,111 @@ func ParseIdentityPins(raw []byte) (IdentityPins, error) {
 	if err := decodePins(raw, &p); err != nil {
 		return IdentityPins{}, err
 	}
+	if err := p.check(); err != nil {
+		return IdentityPins{}, err
+	}
+	return p, nil
+}
+
+func (p IdentityPins) check() error {
 	for _, f := range p.fields() {
 		if f.value == "" {
-			return IdentityPins{}, fmt.Errorf("%w: %s is missing", ErrPins, f.name)
+			return fmt.Errorf("%w: %s is missing", ErrPins, f.name)
 		}
 	}
 	if len(p.Releases) == 0 {
-		return IdentityPins{}, fmt.Errorf("%w: %s is missing", ErrPins, ReleasesField)
+		return fmt.Errorf("%w: %s is missing", ErrPins, ReleasesField)
 	}
 	for i, r := range p.Releases {
 		if r.Source == "" || r.ComposeHash == "" || !digestPinnedImage.MatchString(r.LauncherImage) {
-			return IdentityPins{}, fmt.Errorf("%w: every %s entry needs a source, a compose_hash, and a launcher_image pinned by sha256 digest", ErrPins, ReleasesField)
+			return fmt.Errorf("%w: every %s entry needs a source, a compose_hash, and a launcher_image pinned by sha256 digest", ErrPins, ReleasesField)
 		}
 		if slices.Contains(p.Releases[:i], r) {
-			return IdentityPins{}, fmt.Errorf("%w: %s repeats %s", ErrPins, ReleasesField, r)
+			return fmt.Errorf("%w: %s repeats %s", ErrPins, ReleasesField, r)
 		}
 	}
 	if err := checkImages(p.Images); err != nil {
-		return IdentityPins{}, fmt.Errorf("%w: %w", ErrPins, err)
+		return fmt.Errorf("%w: %w", ErrPins, err)
+	}
+	return nil
+}
+
+const KMSRootField = "kms_k256_pubkey"
+
+type PhalaPinsV5 struct {
+	IdentityPins
+	KMSRoot string `json:"kms_k256_pubkey"`
+}
+
+var compressedK256 = regexp.MustCompile(`^0[23][0-9a-f]{64}$`)
+
+var k256Prime, _ = new(big.Int).SetString("fffffffffffffffffffffffffffffffffffffffffffffffffffffffefffffc2f", 16)
+
+func checkKMSRoot(root string) error {
+	if !compressedK256.MatchString(root) {
+		return fmt.Errorf("%w: %s %q is not a compressed secp256k1 key in lowercase hex", ErrPins, KMSRootField, root)
+	}
+	x, _ := new(big.Int).SetString(root[2:], 16)
+	y2 := new(big.Int).Exp(x, big.NewInt(3), k256Prime)
+	y2.Add(y2, big.NewInt(7)).Mod(y2, k256Prime)
+	if x.Cmp(k256Prime) >= 0 || new(big.Int).ModSqrt(y2, k256Prime) == nil {
+		return fmt.Errorf("%w: %s %s is not a point on secp256k1", ErrPins, KMSRootField, root)
+	}
+	return nil
+}
+
+func ParsePhalaPinsV5(raw []byte) (PhalaPinsV5, error) {
+	var p PhalaPinsV5
+	if err := decodePins(raw, &p); err != nil {
+		return PhalaPinsV5{}, err
+	}
+	if err := p.check(); err != nil {
+		return PhalaPinsV5{}, err
+	}
+	if err := checkKMSRoot(p.KMSRoot); err != nil {
+		return PhalaPinsV5{}, err
 	}
 	return p, nil
+}
+
+func LoadPhalaPinsV5(path string) (PhalaPinsV5, error) { return readPins(path, ParsePhalaPinsV5) }
+
+type PhalaPinFiles struct {
+	V4, V5 string
+}
+
+var ErrFormatsDiffer = errors.New("attestation: v5 Phala pins are not the v4 pins plus kms_k256_pubkey")
+
+func LoadPhalaPinPair(files PhalaPinFiles) (pins IdentityPins, root string, err error) {
+	if pins, err = LoadPhalaPins(files.V4); err != nil || files.V5 == "" {
+		return pins, "", err
+	}
+	v5, err := LoadPhalaPinsV5(files.V5)
+	if err != nil {
+		return IdentityPins{}, "", err
+	}
+	if !reflect.DeepEqual(v5.IdentityPins, pins) {
+		return IdentityPins{}, "", fmt.Errorf("%w: %s and %s", ErrFormatsDiffer, files.V5, files.V4)
+	}
+	return pins, v5.KMSRoot, nil
+}
+
+func WritePhalaPinPair(files PhalaPinFiles, pins IdentityPins, root string) error {
+	v4, err := EncodePins(pins, ParseIdentityPins)
+	if err != nil {
+		return err
+	}
+	var v5 []byte
+	if files.V5 != "" {
+		if v5, err = EncodePins(PhalaPinsV5{IdentityPins: pins, KMSRoot: root}, ParsePhalaPinsV5); err != nil {
+			return err
+		}
+	}
+	if err := os.WriteFile(files.V4, v4, 0o644); err != nil {
+		return err
+	}
+	if v5 == nil {
+		return nil
+	}
+	return os.WriteFile(files.V5, v5, 0o644)
 }

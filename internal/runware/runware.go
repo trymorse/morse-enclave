@@ -49,7 +49,7 @@ func send(ctx context.Context, vendor upstream.Endpoint, task any, limit int64) 
 	case json.Unmarshal(resp.Body, &r) != nil && resp.Status/100 == 2:
 		return reply{}, upstream.ErrMalformed
 	case len(r.Errors) > 0 || resp.Status/100 != 2:
-		return r, upstream.Refused{Status: resp.Status, Err: failure(resp.Status, r.Errors)}
+		return r, upstream.Refused{Status: resp.Status, Err: failure(resp.Status, r.Errors), PlainCode: plainCode(r.Errors)}
 	}
 	return r, nil
 }
@@ -68,6 +68,13 @@ func moderated(errs []vendorError) bool {
 		}
 	}
 	return false
+}
+
+func plainCode(errs []vendorError) string {
+	if len(errs) == 0 {
+		return ""
+	}
+	return upstream.PlainCode(errs[0].Code)
 }
 
 func failure(status int, errs []vendorError) apierr.Error {

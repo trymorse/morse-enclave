@@ -3,6 +3,7 @@ package worker
 import (
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -15,6 +16,7 @@ import (
 	"morse/backend/internal/media"
 	"morse/backend/internal/promptcheck"
 	"morse/backend/internal/strictjson"
+	"morse/backend/internal/upstream"
 	"morse/backend/internal/web"
 )
 
@@ -110,6 +112,9 @@ func (o *openedImages) run(_ context.Context, w *InProcess, h Handle, g Grant, r
 	}
 	m.Measurement.Outcome, m.Cut, m.Refusal = end.outcome(), end.cut(), end.refusal(err)
 	m.Health = rw.observed(ctx, err, cutForCaller, opened, returned)
+	if refused, isRefusal := errors.AsType[upstream.Refused](err); isRefusal && vendorFaults[m.Health.Outcome] {
+		w.reports.VendorRefused(o.req.Model, refused.Status, refused.PlainCode)
+	}
 	if rw.unsent(err) {
 		refuse(ctx, rw, err)
 	}

@@ -75,6 +75,10 @@ func (r chatRoute) chat(defaultMarkup money.Markup) (Chat, error) {
 	if err != nil {
 		return Chat{}, err
 	}
+	sampling, err := catalog.ParseSampling(r.Sampling)
+	if err != nil {
+		return Chat{}, err
+	}
 	view, err := r.reasoningView()
 	if err != nil {
 		return Chat{}, err
@@ -87,6 +91,7 @@ func (r chatRoute) chat(defaultMarkup money.Markup) (Chat, error) {
 			Quantization: quantization, Fixes: r.withTools(), NoCharacters: r.Characters != nil && !*r.Characters,
 			NativeTools:     r.NativeTools,
 			ResponseFormats: formats,
+			Sampling:        sampling,
 		},
 		Price: price, Markup: markup, DecodeMaxTPS: r.DecodeMaxTPS,
 		Tokenizer: r.Tokenizer, HiddenReasoningTPS: r.HiddenReasoningTPS,

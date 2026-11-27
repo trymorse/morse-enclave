@@ -108,7 +108,8 @@ func (w *InProcess) TaskOpen(_ context.Context, o TaskOpening) (TaskOpened, erro
 	if !ok {
 		return TaskOpened{}, apierr.ErrInvalidBody
 	}
-	if tier, served := w.tiers[b.Route]; !served || tier != b.Mode.Tier() || len(w.chats[b.Route].named) == 0 {
+	_, chats := w.chats[b.Route]
+	if tier, served := w.tiers[b.Route]; !served || tier != b.Mode.Tier() || !chats {
 		return TaskOpened{}, apierr.ErrModelNotFound
 	}
 	r := taskrun.New(taskrun.Spec{

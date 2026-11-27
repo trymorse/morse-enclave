@@ -3,7 +3,7 @@
 [![License: AGPL-3.0](https://img.shields.io/github/license/trymorse/morse-enclave)](LICENSE)
 [![CodeQL](https://github.com/trymorse/morse-enclave/actions/workflows/github-code-scanning/codeql/badge.svg)](https://github.com/trymorse/morse-enclave/actions/workflows/github-code-scanning/codeql)
 
-This is the source of the AWS Nitro enclave that runs Morse's worker. The worker reads each request, calls the model vendor, and returns the reply. Morse's other servers cannot read a prompt or a reply. The Morse web app seals each request to the enclave's key. An API key calls `https://inference.trymorse.ai/v1`, where TLS ends inside the enclave, and `api.trymorse.ai` refuses `sk_` keys. The [limits](#limits) say what this does not cover.
+This is the source of the AWS Nitro enclave that runs Morse's worker. The worker reads each request, calls the model vendor, and returns the reply. Morse's other servers cannot read a prompt or a reply. The Morse web app seals each request to the enclave's key. An API key calls `https://inference.trymorse.ai/v1`, where TLS ends inside the enclave, and `api.trymorse.ai` refuses `sk_` keys. The door's certificate also names `api.morseinference.com`, a second name for the same door that is not open to the public yet. The [limits](#limits) say what this does not cover.
 
 For a quick check, run `npx @askmorse/verify`. It checks the enclaves serving Morse's API against this source and the pins in [morse-pins](https://github.com/trymorse/morse-pins). [morse-verifier](https://github.com/trymorse/morse-verifier) says what it checks and how, and lists its releases if you want to pin one.
 
@@ -15,8 +15,8 @@ This repository does not take pull requests. To report a bug, open an issue. To 
 
 ## Limits
 
-- **Metadata.** The host and the relay see which account or `sk_` key calls, the caller's IP address, when it called, the model and vendor, the token counts, the request and reply sizes to the nearest 1 KiB, the reply's timing, and the character a chat names.
-- **Plain API calls.** No client check guards a plain request's connection. To read one, Morse would need another certificate for `inference.trymorse.ai`. A certificate from a CA that logs appears in the public logs that [Watch the door](#watch-the-door) checks.
+- **Metadata.** The host and the relay see which account or `sk_` key calls, the caller's IP address, which of the door's names it called, when it called, the model and vendor, the token counts, the request and reply sizes to the nearest 1 KiB, the reply's timing, and the character a chat names.
+- **Plain API calls.** No client check guards a plain request's connection. To read one, Morse would need another certificate for `inference.trymorse.ai` or `api.morseinference.com`. A certificate from a CA that logs appears in the public logs. [Watch the door](#watch-the-door) checks those for `inference.trymorse.ai` only, so a certificate naming `api.morseinference.com` alone is not checked yet.
 - **Vendors outside an enclave.** Only NEAR AI, Phala and Tinfoil models run in enclaves the worker checks. Every other model and media vendor in [`SERVICES.md`](SERVICES.md) reads the request and writes the reply in plain text, under Morse's account, and keeps both under its own terms.
 - **The Privacy Veil.** Tinfoil's filter reads the chat's text, in an enclave the worker checks. Detection is best-effort, and images, audio and files go to the vendor as written.
 - **Plugins.** Each plugin vendor in `SERVICES.md` sees the user's account and what the worker sends it.

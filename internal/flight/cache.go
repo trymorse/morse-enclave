@@ -9,10 +9,13 @@ import (
 // Cache holds the last value Fetch produced. Fetch attempts are at least MinRefetch apart, and one that fails
 // keeps the previous value and reports its error until the next attempt.
 type Cache[T any] struct {
-	Fetch      func(context.Context) (T, error)
-	MaxAge     time.Duration
-	MinRefetch time.Duration
-	Timeout    time.Duration
+	Fetch        func(context.Context) (T, error)
+	MaxAge       time.Duration
+	MinRefetch   time.Duration
+	Timeout      time.Duration
+	RefreshAhead time.Duration
+
+	ahead atomic.Bool
 
 	latest atomic.Pointer[cached[T]]
 	group  Group[refresh[T]]
@@ -33,6 +36,9 @@ type refresh[T any] struct {
 // Current is the value while it is younger than MaxAge, whatever a later attempt did, and otherwise a Refresh.
 func (c *Cache[T]) Current(ctx context.Context, now time.Time) (T, error) {
 	if e := c.young(now); e != nil {
+		if c.RefreshAhead > 0 && now.Sub(e.fetchedAt) >= c.MaxAge-c.RefreshAhead && now.Sub(e.triedAt) >= c.MinRefetch {
+			c.refreshAhead(now)
+		}
 		return e.value, nil
 	}
 	value, _, err := c.Refresh(ctx, now)
@@ -45,6 +51,13 @@ func (c *Cache[T]) Read(ctx context.Context, now time.Time) (value T, fetched bo
 		return e.value, false, e.err
 	}
 	return c.Refresh(ctx, now)
+}
+
+func (c *Cache[T]) FetchedAt() time.Time {
+	if e := c.latest.Load(); e != nil {
+		return e.fetchedAt
+	}
+	return time.Time{}
 }
 
 func (c *Cache[T]) young(now time.Time) *cached[T] {
@@ -80,4 +93,15 @@ func (c *Cache[T]) Refresh(ctx context.Context, now time.Time) (value T, fetched
 		return value, false, err
 	}
 	return r.value, r.fetched, r.err
+}
+
+func (c *Cache[T]) refreshAhead(now time.Time) {
+	if !c.ahead.CompareAndSwap(false, true) {
+		return
+	}
+	go func() {
+		defer c.ahead.Store(false)
+		// why: the request that noticed the age may end before the fetch does, so the fetch keeps no context of it.
+		c.Refresh(context.Background(), now)
+	}()
 }

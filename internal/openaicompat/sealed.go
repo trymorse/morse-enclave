@@ -29,11 +29,10 @@ type Sealing interface {
 	Open(replyID string, f e2ee.ResponseField, sealed string) ([]byte, error)
 }
 
-// why: NEAR seals tool fields only on version 3, which binds each field's label and the client key into its seal
-// (nearai/inference-proxy docs/e2ee.md), so a call with tools is sealed and opened on that version's sealing.
+// why: NEAR seals tool fields on version 3, which binds each field's label and the client key into its seal
+// (nearai/inference-proxy docs/e2ee.md).
 type ToolSealing interface {
 	Sealing
-	WithTools() ToolSealing
 	SealField(label string, plaintext []byte) (string, error)
 }
 
@@ -112,7 +111,7 @@ func (e *UnsealableField) Error() string {
 var (
 	sealableFields = map[string]bool{"model": true, "messages": true, "max_tokens": true, "max_completion_tokens": true,
 		"stream": true, "stream_options": true, "temperature": true, "top_p": true, "frequency_penalty": true,
-		"presence_penalty": true, "seed": true, "n": true, "reasoning_effort": true, "provider": true}
+		"presence_penalty": true, "seed": true, "n": true, "reasoning_effort": true, "reasoning": true, "provider": true}
 	sealableRoles = map[string]bool{"system": true, "user": true, "assistant": true}
 	textTurnKeys  = map[string]bool{"role": true, "content": true}
 )
@@ -157,7 +156,7 @@ func unsealableMessage(m chat.Message, tools bool) error {
 		return &UnsealableField{Name: "messages.role"}
 	}
 	for _, key := range m.Keys() {
-		if !allowed[key] {
+		if !allowed[key] && !(m.Role == "assistant" && chat.ReplaysReasoning(key)) {
 			return &UnsealableField{Name: "messages." + key}
 		}
 	}
@@ -227,8 +226,6 @@ func sealBody(body []byte, seal Sealing) ([]byte, Sealing, error) {
 	}
 	set := map[string]json.RawMessage{}
 	if sealsFields && carriesTools(req) {
-		fields = fields.WithTools()
-		seal = fields
 		if raw, ok := req.Field("tools"); ok {
 			if set["tools"], err = nearseal.SealTools(raw, fields.SealField); err != nil {
 				return nil, nil, err

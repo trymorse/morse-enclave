@@ -70,6 +70,7 @@ func TestToolChoicesAndSettingsMapOntoTheirChatFields(t *testing.T) {
 		{`"thinking":{"type":"adaptive"}`, "reasoning_effort", `null`},
 		{`"output_config":{"format":{"type":"json_schema","schema":{"type":"object","properties":{"city":{"type":"string"}}}}}`, "response_format", `{"json_schema":{"name":"output","schema":{"properties":{"city":{"type":"string"}},"type":"object"},"strict":true},"type":"json_schema"}`},
 		{`"stop_sequences":["END"]`, "stop", `["END"]`},
+		{`"top_k":5`, "top_k", `5`},
 		{`"temperature":0.2`, "temperature", `0.2`},
 		{`"top_p":0.9`, "top_p", `0.9`},
 		{`"provider":{"min_privacy":"tee"}`, "provider", `{"min_privacy":"tee"}`},
@@ -95,10 +96,10 @@ func TestWhatMorseCannotServeIsRefusedNamingIt(t *testing.T) {
 		{`{"model":"glm-5.3","max_tokens":10,"messages":[{"role":"user","content":"hi"}],"mcp_servers":[{"type":"url"}]}`, "mcp_servers: Extra inputs are not permitted"},
 		{`{"model":"glm-5.3","max_tokens":10,"messages":[{"role":"user","content":"hi"}],"output_config":{"format":{"type":"json_object"}}}`, "output_config.format: Input tag 'json_object'"},
 		{`{"model":"glm-5.3","max_tokens":10,"messages":[{"role":"user","content":"hi"}],"output_config":{"format":{"type":"json_schema"}}}`, "output_config.format.schema: Field required"},
-		{`{"model":"glm-5.3","max_tokens":10,"messages":[{"role":"user","content":"hi"}],"top_k":5}`, "top_k"},
 		{user(`{"type":"document","source":{"type":"base64","media_type":"application/pdf","data":"x"}}`), "messages.0.content.0: Morse does not take document blocks"},
 		{user(`{"type":"image","source":{"type":"url","url":"https://e.com/a.png"}}`), "messages.0.content.0.source: Morse does not take an image linked by URL"},
-		{user(`{"type":"tool_result","tool_use_id":"t","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"x"}}]}`), "an image in a tool result"},
+		{user(`{"type":"tool_result","tool_use_id":"t","content":[{"type":"image","source":{"type":"url","url":"https://e.com/a.png"}}]}`), "messages.0.content.0.content.0.source: Morse does not take an image linked by URL"},
+		{user(`{"type":"tool_result","tool_use_id":"t","content":[{"type":"tool_reference","tool_name":"x"}]}`), "messages.0.content.0.content.0: Morse does not take tool_reference blocks"},
 		{user(`{"type":"search_result","source":"s","title":"t","content":[]}`), "search_result blocks"},
 		{`{"model":"glm-5.3","messages":[{"role":"user","content":"hi"}]}`, "max_tokens: Field required"},
 		{`{"model":"glm-5.3","max_tokens":10,"messages":[{"role":"user","content":"hi"}],"thinking":{"type":"sometimes"}}`, "Input tag 'sometimes'"},
@@ -108,6 +109,31 @@ func TestWhatMorseCannotServeIsRefusedNamingIt(t *testing.T) {
 		if !errors.As(err, &refusal) || refusal.Status != 400 || !strings.Contains(refusal.Message, c.says) {
 			t.Errorf("%s: refused with %v, want a 400 saying %q", c.body, err, c.says)
 		}
+	}
+}
+
+// why: Claude Code's Read returns a picture as an image block inside the tool result, and a Chat Completions tool
+// message holds text alone.
+func TestAnImageAToolReturnedFollowsTheTurnsToolMessages(t *testing.T) {
+	image := func(data string) string {
+		return `{"type":"image","source":{"type":"base64","media_type":"image/png","data":"` + data + `"}}`
+	}
+	out := decoded(t, `{"model":"glm-5.3","max_tokens":10,"messages":[`+
+		`{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"Read","input":{"file_path":"a.png"}},{"type":"tool_use","id":"t2","name":"Bash","input":{}},{"type":"tool_use","id":"t3","name":"Shot","input":{}}]},`+
+		`{"role":"user","content":[`+
+		`{"type":"tool_result","tool_use_id":"t1","content":[`+image("QQ==")+`]},`+
+		`{"type":"tool_result","tool_use_id":"t2","content":"ok"},`+
+		`{"type":"tool_result","tool_use_id":"t3","is_error":true,"content":[{"type":"text","text":"two views"},`+image("Qg==")+`,`+image("Qw==")+`]},`+
+		`{"type":"text","text":"what colour is it?"}]}]}`)
+	msgs := out["messages"].([]any)
+	want := `[{"content":"[This tool returned image output. It is attached in the next message.]","role":"tool","tool_call_id":"t1"},` +
+		`{"content":"ok","role":"tool","tool_call_id":"t2"},` +
+		`{"content":"Error: two views\n\n[This tool returned image output. It is attached in the next message.]","role":"tool","tool_call_id":"t3"},` +
+		`{"content":[{"text":"The image output of tool call t1:","type":"text"},{"image_url":{"url":"data:image/png;base64,QQ=="},"type":"image_url"},` +
+		`{"text":"The image output of tool call t3:","type":"text"},{"image_url":{"url":"data:image/png;base64,Qg=="},"type":"image_url"},{"image_url":{"url":"data:image/png;base64,Qw=="},"type":"image_url"},` +
+		`{"text":"what colour is it?","type":"text"}],"role":"user"}]`
+	if got := asJSON(msgs[1:]); got != want {
+		t.Errorf("after the assistant's calls the model got\n%s\nwant\n%s", got, want)
 	}
 }
 
@@ -176,5 +202,34 @@ func TestReasoningTheClientDoesNotSeeIsFilledWithPings(t *testing.T) {
 	}
 	if want := []string{"message_start", "ping", "ping"}; !slices.Equal(got, want) {
 		t.Errorf("hidden reasoning over 36 seconds sent %v, want %v", got, want)
+	}
+}
+
+func TestATokenCountRequestNeedsNoMaxTokensAndAMessagesRequestDoes(t *testing.T) {
+	for name, tc := range map[string]struct {
+		decode func([]byte, func(string) bool) (dialect.Decoded, error)
+		body   string
+		limit  any
+		err    string
+	}{
+		"a count with none":      {DecodeCount, `{"model":"glm-5.3","messages":[{"role":"user","content":"hi"}]}`, nil, ""},
+		"a count with one":       {DecodeCount, `{"model":"glm-5.3","max_tokens":10,"messages":[{"role":"user","content":"hi"}]}`, float64(10), ""},
+		"a count with a bad one": {DecodeCount, `{"model":"glm-5.3","max_tokens":0,"messages":[{"role":"user","content":"hi"}]}`, nil, "max_tokens: Input should be a positive integer"},
+		"a count with no model":  {DecodeCount, `{"messages":[{"role":"user","content":"hi"}]}`, nil, "model: Field required"},
+		"a message with none":    {Decode, `{"model":"glm-5.3","messages":[{"role":"user","content":"hi"}]}`, nil, "max_tokens: Field required"},
+		"a message with one":     {Decode, `{"model":"glm-5.3","max_tokens":10,"messages":[{"role":"user","content":"hi"}]}`, float64(10), ""},
+	} {
+		d, err := tc.decode([]byte(tc.body), knows("glm-5.3"))
+		var refusal apierr.Error
+		if tc.err != "" {
+			if !errors.As(err, &refusal) || refusal.Message != tc.err {
+				t.Errorf("%s: %v, want %q", name, err, tc.err)
+			}
+			continue
+		}
+		var out map[string]any
+		if err != nil || json.Unmarshal(d.Body, &out) != nil || out["max_completion_tokens"] != tc.limit {
+			t.Errorf("%s: %s (%v), want max_completion_tokens %v", name, d.Body, err, tc.limit)
+		}
 	}
 }
