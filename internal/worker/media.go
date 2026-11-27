@@ -26,6 +26,7 @@ type openedImages struct {
 	generator media.ImageGenerator
 	screened  Screened
 	req       *media.ImageRequest
+	successor string
 }
 
 func (w *InProcess) openImages(o Opening) (Admission, error) {
@@ -46,7 +47,7 @@ func (w *InProcess) openImages(o Opening) (Admission, error) {
 	if err := generator.CheckImages(req); err != nil {
 		return nil, apierr.InvalidParameter(err.Error())
 	}
-	oi := &openedImages{cuts: newCuts(), endpoint: w.endpoints[req.Model], generator: generator, screened: w.screened[req.Model], req: req}
+	oi := &openedImages{cuts: newCuts(), endpoint: w.endpoints[req.Model], generator: generator, screened: w.screened[req.Model], req: req, successor: w.retired[req.Model]}
 	return MediaAdmission{admitted: admitted{w.keep(o, oi)}, Route: req.Model, Units: req.N, References: len(req.References()), Resolution: req.Size.Resolution, Frames: req.ReferenceDigests()}, nil
 }
 
@@ -76,6 +77,7 @@ func (o *openedImages) run(_ context.Context, w *InProcess, h Handle, g Grant, r
 	}
 	ctx, cancel := context.WithTimeout(o.cuts.run, media.ImageTimeout)
 	defer cancel()
+	announceSuccessor(reply, o.successor)
 	rw := newReplyWriter(reply)
 	opened := time.Now()
 	var imgs media.Images
@@ -209,4 +211,10 @@ func (o *openedCall) run(_ context.Context, w *InProcess, h Handle, g Grant, rep
 		refuse(ctx, rw, err)
 	}
 	return m
+}
+
+func announceSuccessor(reply http.ResponseWriter, successor string) {
+	if successor != "" {
+		reply.Header().Set(HeaderModelSuccessor, successor)
+	}
 }

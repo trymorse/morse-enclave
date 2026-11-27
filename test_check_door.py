@@ -120,21 +120,23 @@ class CertificatesTest(Fixture):
         self.assertNotIn("  FAIL: ", out)
         self.assertEqual(len((self.door.root / "caa.jsonl").read_text().splitlines()), 1)
 
-    def test_a_certificate_that_does_not_parse_leaves_the_evidence_unread_while_the_other_source_answers(self):
+    def test_a_certificate_that_does_not_parse_leaves_check_1_not_enforced_while_the_other_source_answers(self):
         self.crtsh_answers(self.door.ct[0])
         bad = self.door.root / "bad.json"
         bad.write_text(json.dumps([{"id": "0", "cert_der": base64.b64encode(b"not a certificate").decode()}]))
         code, out = self.door.run("--ct", "crt.sh", "--ct", str(bad))
-        self.assertEqual(code, 1, out)
-        self.assertIn("FAIL: could not read the evidence: ValueError(", out)
+        self.assertEqual(code, 2, out)
+        self.assertTrue(self.section(out, "check 1").startswith(f"  NOT ENFORCED: check 1 not enforced for inference.trymorse.ai on this run: {bad} answered with an entry this watcher could not parse, so a certificate for inference.trymorse.ai may have gone unread: ValueError("), out)
         self.assertNotIn("could not be read, so this run judges check 1", out)
 
-    def test_a_crtsh_certificate_that_does_not_parse_leaves_the_evidence_unread_while_the_other_source_answers(self):
+    def test_a_crtsh_certificate_that_does_not_parse_still_fails_a_rogue_certificate_the_other_source_returns(self):
         self.crtsh_answers(self.door.ct[0])
         self.door.crtsh[check_door.CRTSH_CERT_URL.format(0)] = b"not a certificate"
+        rogue = self.door.rogue(["inference.trymorse.ai"])
         code, out = self.door.run("--ct", "crt.sh", "--ct", str(self.door.root / "ct.json"))
         self.assertEqual(code, 1, out)
-        self.assertIn("FAIL: could not read the evidence: ValueError(", out)
+        self.assertIn("NOT ENFORCED: check 1 not enforced for inference.trymorse.ai on this run: crt.sh answered with an entry this watcher could not parse", out)
+        self.assertIn(self.unrecorded(rogue), self.section(out, "check 1"))
         self.assertNotIn("could not be read, so this run judges check 1", out)
 
     def test_two_ct_sources_that_answer_leave_no_note(self):

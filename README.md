@@ -16,7 +16,7 @@ This repository does not take pull requests. To report a bug, open an issue. To 
 ## Limits
 
 - **Metadata.** The host and the relay see which account or `sk_` key calls, the caller's IP address, which of the door's names it called, when it called, the model and vendor, the token counts, the request and reply sizes to the nearest 1 KiB, the reply's timing, and the character a chat names.
-- **Plain API calls.** No client check guards a plain request's connection. To read one, Morse would need another certificate for `inference.trymorse.ai` or `api.morseinference.com`. A certificate from a CA that logs appears in the public logs. [Watch the door](#watch-the-door) checks those for `inference.trymorse.ai` only, so a certificate naming `api.morseinference.com` alone is not checked yet.
+- **Plain API calls.** No client check guards a plain request's connection. To read one, Morse would need another certificate for `inference.trymorse.ai` or `api.morseinference.com`. A certificate from a CA that logs appears in the public logs. [Watch the door](#watch-the-door) checks those for each name it is given. Morse's own watcher checks both `inference.trymorse.ai` and `api.morseinference.com`.
 - **Vendors outside an enclave.** Only NEAR AI, Phala and Tinfoil models run in enclaves the worker checks. Every other model and media vendor in [`SERVICES.md`](SERVICES.md) reads the request and writes the reply in plain text, under Morse's account, and keeps both under its own terms.
 - **The Privacy Veil.** Tinfoil's filter reads the chat's text, in an enclave the worker checks. Detection is best-effort, and images, audio and files go to the vendor as written.
 - **Plugins.** Each plugin vendor in `SERVICES.md` sees the user's account and what the worker sends it.
@@ -63,7 +63,7 @@ uv run check-enclave.py
 
 ## Watch the door
 
-Each boot logs its TLS key in Sigstore's Rekor v2 before it serves, and Morse lists those entries in [trymorse/morse-records](https://github.com/trymorse/morse-records). `check-door.py` checks that every certificate for `inference.trymorse.ai` holds a key whose record shows it was born in a pinned prod enclave. [`DOOR.md`](DOOR.md) has every check and how to keep its state. Run it at least every 5 minutes:
+Each boot logs its TLS key in Sigstore's Rekor v2 before it serves, and Morse lists those entries in [trymorse/morse-records](https://github.com/trymorse/morse-records). `check-door.py` checks that every certificate for `inference.trymorse.ai`, or for each name given with `--name` instead, holds a key whose record shows it was born in a pinned prod enclave. [`DOOR.md`](DOOR.md) has every check and how to keep its state. Run it at least every 5 minutes:
 
 ```sh
 git clone https://github.com/trymorse/morse-pins
@@ -73,6 +73,8 @@ uv run check-door.py --pins morse-pins --records morse-records --enclave morse-e
   --caa-history caa.jsonl --sequence-state state.json \
   --caa-account letsencrypt.org=<account URI> --caa-account pki.goog=<account URI>
 ```
+
+To watch both names, add `--name inference.trymorse.ai --name api.morseinference.com`. A `--name` replaces the default, so give `inference.trymorse.ai` too.
 
 ## License
 

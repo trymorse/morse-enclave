@@ -1,4 +1,4 @@
-"""Fixtures for test_check_door.py, test_rekor.py and test_signer.py: AWS Nitro documents under a test root, a fake Rekor v2 shard
+"""Fixtures for test_check_door.py, test_check_door_hosts.py, test_rekor.py and test_signer.py: AWS Nitro documents under a test root, a fake Rekor v2 shard
 with its tiles and witnesses, a fake TUF repository, a CA with an OCSP responder and a CRL, local morse-pins, morse-records
 and morse-enclave repositories, and for check 7 a statements branch, GitHub's activity and runs listings, and a fake bundle
 verifier. It loads check-door.py, which loads rekor.py, door_records.py, door_checks.py, signer.py and signer_watch.py, and refuses the network to every test that imports it.
@@ -690,7 +690,7 @@ class Door:
         self.commit_records()
         self.build_enclave()
         (self.root / "ct.json").write_text(json.dumps([{"id": str(n), "cert_der": b64(c.public_bytes(DER))} for n, c in enumerate(self.ct)]))
-        (self.root / "caa.jsonl").write_text("".join(json.dumps({"time": f"2026-11-0{n + 1}T00:00:00Z", "caa": s}) + "\n" for n, s in enumerate(self.caa)))
+        (self.root / "caa.jsonl").write_text("".join(json.dumps({"time": f"2026-11-0{n + 1}T00:00:00Z", **(s if isinstance(s, dict) else {"caa": s})}) + "\n" for n, s in enumerate(self.caa)))
         (self.root / "attestation.json").write_text(json.dumps({"instances": [b64(relayed(d, check_door.utcnow() - timedelta(minutes=1))) for d in self.live]}))
         argv = ["--pins", str(self.root / "pins"), "--records", str(self.root / "records"), "--enclave", str(self.root / "enclave"),
                 "--attestation", str(self.root / "attestation.json"), "--caa-history", str(self.root / "caa.jsonl"),

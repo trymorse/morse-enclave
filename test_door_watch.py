@@ -37,10 +37,10 @@ BOTH_READ = {"crt.sh": None, "certspotter": None}
 CRTSH_DOWN = {"crt.sh": BAD_GATEWAY, "certspotter": None}
 
 
-def verdict(kind, unenforced=(), failed=(), ct=None):
+def verdict(kind, unenforced=(), failed=(), ct=None, hosts=(), checks=()):
     code = {"passed": 0, "failed": 1, "unenforced": 2, "unread": 1}[kind]
     ct = {} if kind == "unread" else BOTH_READ if ct is None else ct
-    return {"kind": kind, "exit": code, "retryable": kind == "unread", "failed": list(failed), "unenforced": list(unenforced), "checks": [], "ct": ct}
+    return {"kind": kind, "exit": code, "retryable": kind == "unread", "failed": list(failed), "unenforced": list(unenforced), "checks": list(checks), "ct": ct, "hosts": list(hosts)}
 
 
 def passed(ct=None):
@@ -48,7 +48,10 @@ def passed(ct=None):
 
 
 def failed(*checks):
-    return {"code": 1, "output": FAILED, "verdict": verdict("failed", failed=checks or (1,))}
+    checks = checks or (1,)
+    first = ("inference.trymorse.ai",) if 1 in checks else ()
+    messages = [{"check": 1, "messages": [{"level": "FAIL", "text": "a rogue certificate", "hosts": list(first)}]}] if first else []
+    return {"code": 1, "output": FAILED, "verdict": verdict("failed", failed=checks, hosts=first, checks=messages)}
 
 
 def unread():
@@ -147,7 +150,7 @@ class WatchTest(unittest.TestCase):
 
     def test_a_failed_check_alerts_at_once_under_its_own_label(self):
         w = self.watcher.run(failed())
-        self.assertEqual((w.code, w.alert, w.label, w.hours, w.title), (1, "failed", "door-watch-failed", "0", "The inference door's watcher failed a check"))
+        self.assertEqual((w.code, w.alert, w.label, w.hours, w.title), (1, "failed", "door-watch-failed", "0", "The inference door's watcher failed a check for inference.trymorse.ai"))
         self.assertEqual(w.body, f"check-door.py exited 1 and failed check 1. A certificate for inference.trymorse.ai whose key no verified record attests can be a rogue certificate: read check 1 first, in {RUN_URL}\n\n```\n{FAILED}```\n")
 
     def test_a_failed_check_6_alone_points_at_check_6_not_check_1(self):
@@ -234,7 +237,7 @@ class WatchTest(unittest.TestCase):
     def test_a_ct_source_down_on_fewer_runs_in_a_row_than_the_threshold_alerts_no_one(self):
         runs = self.crtsh_down(door_watch.CT_ALERT_AFTER - 1)
         self.assertEqual({(w.code, w.alert, w.ct_alert, w.ct_body) for w in runs}, {(0, "", "", "")})
-        self.assertIn(f"crt.sh could not be read on {door_watch.CT_ALERT_AFTER - 1} run(s) in a row.", runs[-1].summary)
+        self.assertIn(f"crt.sh could not be read or parsed for at least one of the door's names on {door_watch.CT_ALERT_AFTER - 1} run(s) in a row.", runs[-1].summary)
 
     def test_a_ct_source_down_on_the_threshold_alerts_once_under_its_own_label(self):
         runs = self.crtsh_down(door_watch.CT_ALERT_AFTER + 5)
@@ -242,9 +245,34 @@ class WatchTest(unittest.TestCase):
         w = runs[door_watch.CT_ALERT_AFTER - 1]
         self.assertEqual((w.code, w.alert, w.ct_alert, w.ct_title), (0, "", "crt.sh", f"The inference door's watcher could not read crt.sh on {door_watch.CT_ALERT_AFTER} or more runs in a row"))
         since = json.loads(self.watcher.read("door-state/ct-streak"))["crt.sh"]["since"]
-        self.assertTrue(w.ct_body.startswith(f"crt.sh could not be read on {door_watch.CT_ALERT_AFTER} door-watch runs in a row, since {since}, so check 1 has judged the door's certificates from certspotter alone"), w.ct_body)
+        self.assertTrue(w.ct_body.startswith(f"crt.sh could not be read on {door_watch.CT_ALERT_AFTER} door-watch runs in a row, since {since}, and on the last of those runs certspotter could be read. "), w.ct_body)
         self.assertIn(f"Its last error: {BAD_GATEWAY}\n\nThe last of those runs is {RUN_URL}\n\n```\n{PASSED}```\n", w.ct_body)
         self.assertEqual(door_watch.compose_ct({"crt.sh": {"count": door_watch.CT_ALERT_AFTER, "since": since, "why": BAD_GATEWAY}}, door_watch.judge(0, PASSED, verdict("passed", ct=CRTSH_DOWN)), RUN_URL).label, "door-watch-ct")
+
+    def test_a_ct_source_read_for_one_name_and_not_the_other_alternating_counts_on_and_alerts_its_coverage_incomplete(self):
+        first, second = "inference.trymorse.ai", "api.morseinference.com"
+
+        def partial(read, unread):
+            run = passed(CRTSH_DOWN)
+            run["verdict"]["ct_hosts"] = {"crt.sh": {"read": [read], "unread": [unread]}, "certspotter": {"read": [first, second], "unread": []}}
+            return run
+        runs = self.runs(*[partial(first, second) if i % 2 == 0 else partial(second, first) for i in range(door_watch.CT_ALERT_AFTER)])
+        self.assertEqual([i for i, w in enumerate(runs, 1) if w.ct_alert], [door_watch.CT_ALERT_AFTER])
+        w = runs[-1]
+        self.assertEqual(w.ct_title, f"The inference door's watcher could not read crt.sh for some of the door's names ({second} and {first} missed at least once) on {door_watch.CT_ALERT_AFTER} or more runs in a row")
+        self.assertIn(f"crt.sh could not be read or parsed for at least one of the door's names on {door_watch.CT_ALERT_AFTER} door-watch runs in a row", w.ct_body)
+        self.assertIn(f"The names it missed at least once are {second} and {first}. crt.sh's coverage of the door was incomplete on those runs, not wholly unavailable", w.ct_body)
+        self.assertNotIn("Check 1's coverage", w.ct_body)
+        self.assertIn(f"crt.sh could not be read or parsed for at least one of the door's names on {door_watch.CT_ALERT_AFTER} run(s) in a row, missing {second} and {first} at least once.", w.summary)
+
+    def test_a_source_down_for_both_names_while_the_other_covers_one_names_what_each_source_read(self):
+        first, second = "inference.trymorse.ai", "api.morseinference.com"
+        run = passed(CRTSH_DOWN)
+        run["verdict"]["ct_hosts"] = {"crt.sh": {"read": [], "unread": [first, second]}, "certspotter": {"read": [first], "unread": []}}
+        w = self.runs(*[run] * door_watch.CT_ALERT_AFTER)[-1]
+        self.assertIn(f"door-watch runs in a row, since {json.loads(self.watcher.read('door-state/ct-streak'))['crt.sh']['since']}, and on the last of those runs certspotter read {first}, and no other source read {second}. ", w.ct_body)
+        self.assertNotIn("judged", w.ct_body)
+        self.assertIn(f"crt.sh could not be read or parsed for at least one of the door's names on {door_watch.CT_ALERT_AFTER} run(s) in a row.", w.summary)
 
     def test_a_run_that_reads_the_source_restarts_its_count(self):
         runs = self.crtsh_down(door_watch.CT_ALERT_AFTER - 1) + self.runs(passed()) + self.crtsh_down(door_watch.CT_ALERT_AFTER - 1)
@@ -301,10 +329,10 @@ class WatchTest(unittest.TestCase):
 
 
 class VerdictTest(Fixture):
-    def verdict(self, *extra):
+    def verdict(self, *extra, **kwargs):
         path = self.door.root / "verdict.json"
         path.unlink(missing_ok=True)
-        code, out = self.door.run("--verdict", str(path), *extra)
+        code, out = self.door.run("--verdict", str(path), *extra, **kwargs)
         found = json.loads(path.read_text())
         self.assertEqual(found["exit"], code, out)
         return found, door_watch.judge(code, out, found)
@@ -314,7 +342,7 @@ class VerdictTest(Fixture):
         self.assertEqual((run.kind, found["failed"], found["unenforced"], run.retryable), ("passed", [], [], False))
         self.assertEqual([c["check"] for c in found["checks"]], list(range(1, 10)))
         self.assertEqual(found["ct"], {str(self.door.root / "ct.json"): None})
-        self.assertEqual(found["checks"][0]["title"], "Every certificate in CT for the door's name holds a key a verified record attests")
+        self.assertEqual(found["checks"][0]["title"], "Every certificate in CT for each of the door's names holds a key a verified record attests")
 
     def test_a_failed_check_is_failed_and_names_its_check(self):
         rogue = self.door.rogue(["inference.trymorse.ai"])
@@ -343,6 +371,58 @@ class VerdictTest(Fixture):
         found, run = self.verdict("--ct", "crt.sh", "--ct", ct)
         self.assertEqual((run.kind, found["ct"]), ("passed", {"crt.sh": "URLError(OSError(101, 'Network is unreachable'))", ct: None}))
         self.assertEqual(dict(run.ct), found["ct"])
+
+    def test_a_rogue_certificate_for_the_second_host_names_that_host_in_the_alert(self):
+        second = "api.morseinference.com"
+        self.door.ct[0] = certificate(self.door.tls, self.door.ca, "inference.trymorse.ai", ["inference.trymorse.ai", second], issuer_cn="test ca")
+        self.door.caa.append({"name": second, "caa": CAA})
+        self.door.rogue([second])
+        found, run = self.verdict("--name", "inference.trymorse.ai", "--name", second)
+        self.assertEqual((run.kind, run.hosts), ("failed", (second,)))
+        alert = door_watch.compose("failed", run, "door-watch-1-1", RUN_URL)
+        self.assertEqual(alert.title, "The inference door's watcher failed a check for api.morseinference.com")
+        self.assertIn("failed check 1. A certificate for api.morseinference.com whose key no verified record attests can be a rogue certificate", alert.body)
+        self.assertNotIn("A certificate for inference.trymorse.ai", alert.body)
+
+    def test_a_caa_record_the_second_host_could_not_read_names_that_host_in_the_unenforced_alert(self):
+        second = "api.morseinference.com"
+        self.door.ct[0] = certificate(self.door.tls, self.door.ca, "inference.trymorse.ai", ["inference.trymorse.ai", second], issuer_cn="test ca")
+        self.door.caa.append({"name": second, "caa": CAA})
+        self.door.doh = lambda url: json.dumps({"Status": 2} if second in url else {"Status": 0, "Answer": [{"type": 257, "data": e} for e in CAA]}).encode()
+        found, run = self.verdict("--name", "inference.trymorse.ai", "--name", second, sample=True)
+        self.assertEqual((run.kind, run.unenforced, run.hosts), ("unenforced", (5,), (second,)))
+        alert = door_watch.compose("unenforced", run, "door-watch-1-1", RUN_URL)
+        self.assertEqual(alert.title, "The inference door's watcher has not enforced check 5 for api.morseinference.com")
+
+    def test_check_1_failing_for_one_host_and_check_5_for_the_other_names_both_in_the_title_and_only_the_first_as_holding_the_certificate(self):
+        second = "api.morseinference.com"
+        self.door.ct[0] = certificate(self.door.tls, self.door.ca, "inference.trymorse.ai", ["inference.trymorse.ai", second], issuer_cn="test ca")
+        self.door.caa.append({"name": second, "caa": CAA})
+        self.door.rogue(["inference.trymorse.ai"])
+        stray = '0 issue "letsencrypt.org; accounturi=https://acme-v02.api.letsencrypt.org/acme/acct/9; validationmethods=dns-01"'
+        self.door.doh = lambda url: json.dumps({"Status": 0, "Answer": [{"type": 257, "data": e} for e in (CAA + [stray] if second in url else CAA)]}).encode()
+        found, run = self.verdict("--name", "inference.trymorse.ai", "--name", second, sample=True)
+        self.assertEqual((run.kind, sorted(set(run.failed)), run.hosts, run.certificate_hosts), ("failed", [1, 5], ("inference.trymorse.ai", second), ("inference.trymorse.ai",)))
+        alert = door_watch.compose("failed", run, "door-watch-1-1", RUN_URL)
+        self.assertEqual(alert.title, "The inference door's watcher failed a check for inference.trymorse.ai and api.morseinference.com")
+        self.assertIn("failed check 1, check 5. A certificate for inference.trymorse.ai whose key no verified record attests can be a rogue certificate", alert.body)
+
+    def test_a_ct_outage_alert_from_a_mixed_read_and_parse_verdict_claims_no_enforcement_the_reads_do_not_show(self):
+        second = "api.morseinference.com"
+        self.door.ct[0] = certificate(self.door.tls, self.door.ca, "inference.trymorse.ai", ["inference.trymorse.ai", second], issuer_cn="test ca")
+        self.door.caa.append({"name": second, "caa": CAA})
+        rows = [{"id": 0, "name_value": "inference.trymorse.ai\n" + second, "entry_timestamp": None}]
+        self.door.crtsh = {check_door.CRTSH_URL.format("trymorse.ai"): json.dumps(rows).encode(),
+                           check_door.CRTSH_CERT_URL.format(0): self.door.ct[0].public_bytes(serialization.Encoding.PEM),
+                           check_door.CRTSH_URL.format("morseinference.com"): json.dumps([{"id": 7, "entry_timestamp": None}]).encode()}
+        gone = str(self.door.root / "gone.json")
+        found, run = self.verdict("--name", "inference.trymorse.ai", "--name", second, "--ct", "crt.sh", "--ct", gone)
+        self.assertEqual((found["ct_hosts"]["crt.sh"], found["unenforced"]), ({"read": ["inference.trymorse.ai"], "unread": [second]}, [1]))
+        alert = door_watch.compose_ct({gone: {"count": door_watch.CT_ALERT_AFTER, "since": "then", "why": found["ct"][gone]}}, run, RUN_URL)
+        self.assertIn(f"{gone} could not be read on {door_watch.CT_ALERT_AFTER} door-watch runs in a row, since then, and on the last of those runs crt.sh read inference.trymorse.ai, "
+                      f"and no other source read {second}. ", alert.body)
+        self.assertNotIn("judged", alert.body)
+        self.assertIn(f"NOT ENFORCED: check 1 not enforced for {second} on this run: crt.sh answered with an entry this watcher could not parse", alert.body)
 
     def test_a_github_outage_is_a_result_and_not_evidence_to_read_again(self):
         def down(url, *_):

@@ -12,6 +12,7 @@ RUN_GAP = timedelta(minutes=7)
 MAX_KEY_AGE = timedelta(days=60)
 POINTER_LATE = timedelta(minutes=20)
 WITNESS_LAPSE = timedelta(hours=24)
+FIRST_NAME = "inference.trymorse.ai"
 ACK_BOOT = re.compile(r"([0-9a-f]{16})=(https://\S+)", re.ASCII)
 
 
@@ -21,6 +22,18 @@ class Unenforced(str):
 
 class Note(str):
     pass
+
+
+class Fail(str):
+    pass
+
+
+def about(failure, hosts):
+    """The same message, of the same level, carrying the watched names it concerns, which the verdict and the alert
+    read from it rather than judging the evidence again."""
+    tagged = (Fail if type(failure) is str else type(failure))(failure)
+    tagged.hosts = list(hosts)
+    return tagged
 
 
 UNENFORCED = Unenforced("check 6 not enforced: needs --sequence-state from this watcher's earlier runs, which keeps every boot it has seen live and when it last ran, and this file has no last_run, so a boot listed before this run without a record cannot show")
@@ -52,7 +65,7 @@ class Boot:
 
 @dataclass
 class Evidence:
-    name: str
+    names: list
     environment: str
     certificates: list
     ct_counts: dict
@@ -74,6 +87,10 @@ class Evidence:
     last_run: datetime | None = None
     revocations: dict = field(default_factory=dict)
     ct_unread: dict = field(default_factory=dict)
+    caa_unread: dict = field(default_factory=dict)
+    ct_malformed: dict = field(default_factory=dict)
+    ct_inventory: dict = field(default_factory=dict)
+    judgments: dict = field(default_factory=dict)
     checkpoints: dict = field(default_factory=dict)
     signer: list = field(default_factory=list)
     signer_state: object = None
@@ -115,25 +132,59 @@ def failing(ev):
     return [c for c, why in findings(ev) if not isinstance(why, Note)]
 
 
-def check_certificates(ev):
-    recorded = ev.recorded()
-    failures = [Note(f"{source} could not be read, so this run judges check 1 from {', '.join(ev.ct_counts)} alone: {e!r}") for source, e in ev.ct_unread.items()]
-    for source, count in ev.ct_counts.items():
-        others = {other: n for other, n in ev.ct_counts.items() if n}
-        if count == 0 and (others or recorded):
-            failures.append(f"{source} returned no certificate covering {ev.name}, though " + (", ".join(f"{o} returned {n}" for o, n in others.items()) if others else f"{len(recorded)} SPKIs have verified records"))
-    for c, why in findings(ev):
-        if isinstance(why, Note):
-            failures.append(why)
+def covers(pattern, name):
+    pattern = pattern.lower().rstrip(".")
+    return pattern == name or (pattern.startswith("*.") and pattern[2:] == name.split(".", 1)[1])
+
+
+def unread_why(errors):
+    """Why a source could not be read, given the error for each name it failed on."""
+    if len(errors) == 1:
+        return repr(next(iter(errors.values())))
+    return "; ".join(f"{name}: {e!r}" for name, e in errors.items())
+
+
+def certificate_findings(ev):
+    """Check 1's messages, each with the watched names it concerns, and each certificate's judgment in
+    ev.judgments. A source that could not be read for one name still counts for the others. A name no source could be
+    read for, or one a source answered with an entry that does not parse, which could be any certificate, is not
+    enforced rather than judged."""
+    recorded, out = ev.recorded(), []
+    for name in ev.names:
+        named = f" for {name}" if len(ev.names) > 1 else ""
+        read = {source: counts[name] for source, counts in ev.ct_counts.items() if name in counts}
+        unread = {source: errors[name] for source, errors in ev.ct_unread.items() if name in errors}
+        if name in ev.ct_malformed:
+            out += [([name], Unenforced(f"check 1 not enforced for {name} on this run: {source} answered with an entry this watcher could not parse, so a certificate for {name} may have gone unread: {e!r}"))
+                    for source, e in ev.ct_malformed[name].items()]
             continue
+        if not read:
+            out.append(([name], Unenforced(f"check 1 not enforced for {name} on this run: no CT source could be read for it: " + "; ".join(f"{s}: {e!r}" for s, e in unread.items()))))
+            continue
+        out += [([name], Note(f"{source} could not be read{named}, so this run judges check 1{named} from {', '.join(read)} alone: {e!r}")) for source, e in unread.items()]
+        others = {source: n for source, n in read.items() if n}
+        for source, count in read.items():
+            if count == 0 and (others or recorded):
+                out.append(([name], f"{source} returned no certificate covering {name}, though " + (", ".join(f"{o} returned {n}" for o, n in others.items()) if others else f"{len(recorded)} SPKIs have verified records")))
+    ev.judgments = {c.der: {"judgment": "attested", "revoked": None} for c in ev.certificates}
+    for c, why in findings(ev):
+        hosts = [name for name in ev.names if any(covers(n, name) for n in c.names)]
         answer = ev.revocations.get(c.der, Revocation(None, "this run did not ask its CA"))
-        if answer.revoked:
-            failures.append(Note(f"revoked, skipped: {why}. Its CA revoked it, {answer.how}"))
+        if isinstance(why, Note):
+            message = why
+        elif answer.revoked:
+            message = Note(f"revoked, skipped: {why}. Its CA revoked it, {answer.how}")
         elif answer.revoked is False:
-            failures.append(f"{why}. Its CA has not revoked it, {answer.how}")
+            message = f"{why}. Its CA has not revoked it, {answer.how}"
         else:
-            failures.append(f"{why}. Whether its CA revoked it is unknown, so it counts: {answer.how}")
-    return failures
+            message = f"{why}. Whether its CA revoked it is unknown, so it counts: {answer.how}"
+        ev.judgments[c.der] = {"judgment": level(message), "revoked": answer.revoked}
+        out.append((hosts, message))
+    return out
+
+
+def check_certificates(ev):
+    return [about(failure, hosts) for hosts, failure in certificate_findings(ev)]
 
 
 def check_records(ev):
@@ -194,15 +245,24 @@ def caa_refusal(entry, accounts):
     return None
 
 
+def caa_findings(ev):
+    findings = {name: [] for name in ev.names}
+    for name in ev.names:
+        if name in ev.caa_unread:
+            findings[name].append(Unenforced(f"check 5 not enforced for {name} on this run: its CAA record could not be read: {ev.caa_unread[name]!r}"))
+        # Samples from before the watcher took several names name no host, and were all of the door's first name.
+        samples = [s for s in ev.caa_history if s.get("name", FIRST_NAME) == name]
+        if not samples and name not in ev.caa_unread:
+            findings[name].append(f"the CAA history has no samples for {name}")
+        for sample in samples:
+            if not any(re.match(r"\s*\d+\s+issue\s", e, re.I) for e in sample["caa"]):
+                findings[name].append(f"at {sample['time']} no CAA issue property restricted who may issue for {name}")
+            findings[name] += [f"{name} at {sample['time']}: {r}" for r in (caa_refusal(e, ev.caa_accounts) for e in sample["caa"]) if r]
+    return findings
+
+
 def check_caa(ev):
-    if not ev.caa_history:
-        return ["the CAA history has no samples"]
-    failures = []
-    for sample in ev.caa_history:
-        if not any(re.match(r"\s*\d+\s+issue\s", e, re.I) for e in sample["caa"]):
-            failures.append(f"at {sample['time']} no CAA issue property restricted who may issue")
-        failures += [f"at {sample['time']}: {r}" for r in (caa_refusal(e, ev.caa_accounts) for e in sample["caa"]) if r]
-    return failures
+    return [about(f, [name]) for name, failures in caa_findings(ev).items() for f in failures]
 
 
 def read_acked_boots(given):

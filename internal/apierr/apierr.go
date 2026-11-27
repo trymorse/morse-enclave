@@ -121,6 +121,7 @@ var (
 	ErrInvalidBody           = Invalid(400, "invalid_request_body", "Request body must be a JSON object with a non-empty string model.")
 	ErrUnavailable           = Error{Status: 503, Type: "server_error", Code: "service_unavailable", Message: "The service is temporarily unable to authorize requests. Try again shortly."}
 	ErrShuttingDown          = Error{Status: 503, Type: "server_error", Code: "service_unavailable", Message: "The service is restarting and cut this request before it began. Retry it."}
+	ErrUnavailableHere       = Error{Status: 403, Type: "region", Code: "service_unavailable_in_region", Message: "Morse isn't available in your country or region."}
 )
 
 func InvalidParameter(message string) Error { return Invalid(400, "invalid_parameter", message) }

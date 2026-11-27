@@ -27,6 +27,7 @@ type openedVideo struct {
 	generator media.VideoGenerator
 	screened  Screened
 	req       *media.VideoRequest
+	successor string
 }
 
 func (w *InProcess) openVideo(o Opening) (Admission, error) {
@@ -48,7 +49,7 @@ func (w *InProcess) openVideo(o Opening) (Admission, error) {
 	if err != nil {
 		return nil, contentRefusal(err)
 	}
-	ov := &openedVideo{cuts: newCuts(), endpoint: w.endpoints[req.Model], route: req.Model, generator: generator, screened: w.screened[req.Model], req: &resolved}
+	ov := &openedVideo{cuts: newCuts(), endpoint: w.endpoints[req.Model], route: req.Model, generator: generator, screened: w.screened[req.Model], req: &resolved, successor: w.retired[req.Model]}
 	return MediaAdmission{admitted: admitted{w.keep(o, ov)}, Route: req.Model, Units: resolved.Seconds, References: len(resolved.ReferenceImages()), Resolution: resolved.Resolution, Frames: resolved.FrameDigests()}, nil
 }
 
@@ -56,6 +57,7 @@ func (o *openedVideo) cut(reason measure.Cut) { o.cuts.cut(reason, false) }
 
 func (o *openedVideo) submit(w *InProcess, g JobGrant, reply http.ResponseWriter, accepted func(media.Submitted)) Measured {
 	queued := &VideoView{ID: g.ID, Object: "video", Model: o.req.Model, Status: media.Statuses.String(jobs.Queued), CreatedAt: g.CreatedAt.Unix()}
+	announceSuccessor(reply, o.successor)
 	return submit(o.cuts, o.endpoint, reply, queued, accepted, func(ctx context.Context) (media.Submitted, error) {
 		if err := o.unconsented(g); err != nil {
 			return media.Submitted{}, err

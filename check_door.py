@@ -2,9 +2,9 @@
 
 Usage: uv run check-door.py --pins <morse-pins checkout> --records <morse-records checkout> --enclave <morse-enclave checkout> --caa-history caa.jsonl --sequence-state state.json --caa-account <ca>=<account uri> ...
 
-It reads Certificate Transparency for inference.trymorse.ai and every wildcard that covers it, the enclave_pins.json
+It reads Certificate Transparency for each --name (inference.trymorse.ai when none is given) and every wildcard that covers it, the enclave_pins.json
 history in morse-pins, the pointers in morse-records, each entry a pointer names in Sigstore's Rekor v2, with the log
-keys from Sigstore's TUF repository and the witnesses this script lists, the CAA record, the door's live
+keys from Sigstore's TUF repository and the witnesses this script lists, each name's CAA record, the door's live
 attestation, and for the public image signer the statements branch of morse-pins and GitHub's record of who pushed
 its main and which sign.yml runs there were, and runs the checks listed in CHECKS below. GH_TOKEN, if set, raises
 GitHub's limit of 60 API requests an hour. It exits 1 if any check fails, and 2 if none fails but a check is not
@@ -43,7 +43,7 @@ from github_read import rate_limited, read_github
 from rekor import Refusal
 
 
-NAME = "inference.trymorse.ai"
+NAME = checks.FIRST_NAME
 CRTSH_URL = "https://crt.sh/?q=%25.{}&output=json"
 CRTSH_CERT_URL = "https://crt.sh/?d={}"
 CERTSPOTTER_URL = "https://api.certspotter.com/v1/issuances?domain={}&match_wildcards=true&expand=dns_names&expand=cert_der"
@@ -98,11 +98,6 @@ def fetch(url):
         return reply.read()
 
 
-def covers(pattern, name):
-    pattern = pattern.lower().rstrip(".")
-    return pattern == name or (pattern.startswith("*.") and pattern[2:] == name.split(".", 1)[1])
-
-
 def parse_certificate(source, der, logged):
     cert = x509.load_der_x509_certificate(der)
     try:
@@ -130,7 +125,7 @@ def read_ct(source, name):
         rows = json.loads(fetch(CRTSH_URL.format(name.split(".", 1)[1])))
         logged = {}
         for r in rows:
-            if any(covers(n, name) for n in r["name_value"].split("\n")):
+            if any(checks.covers(n, name) for n in r["name_value"].split("\n")):
                 t = crtsh_time(r)
                 logged[r["id"]] = min(t, logged[r["id"]]) if t and logged.get(r["id"]) else t or logged.get(r["id"])
         return [(f"crt.sh {i}", x509.load_pem_x509_certificate(fetch(CRTSH_CERT_URL.format(i))).public_bytes(serialization.Encoding.DER), logged[i]) for i in sorted(logged)]
@@ -147,12 +142,18 @@ def read_ct(source, name):
 
 
 CT_UNREAD = (OSError, http.client.HTTPException, json.JSONDecodeError)
+# A source's answer that reads but does not hold the certificates it should, such as a DER or PEM that does not parse
+# or an entry missing a field. Caught after CT_UNREAD, since json.JSONDecodeError is a ValueError.
+CT_MALFORMED = (ValueError, KeyError, TypeError, AttributeError)
 CRTSH_RETRY_DELAYS = (2, 5)
 
 
-def read_covering(source, name):
-    certs = [(der, parse_certificate(label, der, logged)) for label, der, logged in read_ct(source, name)]
-    return [(der, cert) for der, cert in certs if any(covers(n, name) for n in cert.names)]
+def read_parsed(source, name):
+    return [(der, parse_certificate(label, der, logged)) for label, der, logged in read_ct(source, name)]
+
+
+def covering(certs, name):
+    return [(der, cert) for der, cert in certs if any(checks.covers(n, name) for n in cert.names)]
 
 
 def reread_crtsh(name, read, unread):
@@ -162,15 +163,15 @@ def reread_crtsh(name, read, unread):
     for delay in CRTSH_RETRY_DELAYS:
         time.sleep(delay)
         try:
-            again = read_covering("crt.sh", name)
+            again = read_parsed("crt.sh", name)
         except CT_UNREAD as e:
             why = e
             continue
-        if again:
+        if covering(again, name):
             return again, None
         why = None
     if why is None:
-        others = ", ".join(f"{s} returned {len(c)}" for s, c in read.items() if c)
+        others = ", ".join(f"{s} returned {len(covering(c, name))}" for s, c in read.items() if covering(c, name))
         why = LookupError(f"it returned no certificate covering {name} in {len(CRTSH_RETRY_DELAYS) + 1} reads, " +
                           (f"though {others}" if others else f"and {', '.join(unread)} could not be read"))
     return [], why
@@ -333,7 +334,7 @@ def read_trust(enclave_dir, history, environment):
 
 
 CHECKS = [
-    (1, "Every certificate in CT for the door's name holds a key a verified record attests", checks.check_certificates),
+    (1, "Every certificate in CT for each of the door's names holds a key a verified record attests", checks.check_certificates),
     (2, "Every pointer's entry verifies, and morse-pins and morse-records keep their history", checks.check_records),
     (3, "Every record's custody ends at a born record, with one origin per key and a floor that never falls", checks.check_custody),
     (4, "Each Rekor shard's checkpoint verifies and extends the last one this watcher accepted", checks.check_logs),
@@ -353,9 +354,15 @@ def sample_caa(name):
         if answer.get("Status") not in (0, 3):
             raise Refused(f"the DoH answer for {asked} has Status {answer.get('Status')}")
         caa = [a["data"] for a in answer.get("Answer", []) if a["type"] == 257]
+        # A sample is kept and judged on every later run, so a value check 5 cannot read is refused before it is.
+        if bad := [d for d in caa if not isinstance(d, str)]:
+            raise Refused(f"the DoH answer for {asked} holds a CAA record that is not text: {bad[0]!r}")
         if caa:
             return caa
     return []
+
+
+CAA_UNREAD = (OSError, http.client.HTTPException, ValueError, KeyError, TypeError, AttributeError, Refused)
 
 
 def records_visibility():
@@ -380,29 +387,46 @@ def gather(args):
     cache = Path(args.cache) if args.cache else state_path.with_name(state_path.name + ".cache")
 
     sources = args.ct or ["crt.sh", "certspotter"]
-    read, ct_unread = {}, {}
-    for source in sources:
-        try:
-            read[source] = read_covering(source, args.name)
-        except CT_UNREAD as e:
-            ct_unread[source] = e
-    if read.get("crt.sh") == [] and (any(read.values()) or ct_unread):
-        read["crt.sh"], why = reread_crtsh(args.name, read, ct_unread)
-        if why is not None:
+    names = args.name or [NAME]
+    seen, certificates, ct_counts, ct_unread, ct_malformed, ct_inventory = set(), [], {}, {}, {}, {}
+    for name in names:
+        read, unread, malformed = {}, {}, {}
+        for source in sources:
+            try:
+                read[source] = read_parsed(source, name)
+            except CT_UNREAD as e:
+                unread[source] = e
+            except CT_MALFORMED as e:
+                malformed[source] = e
+        if "crt.sh" in read and not covering(read["crt.sh"], name) and (any(covering(c, name) for c in read.values()) or unread):
             del read["crt.sh"]
-            ct_unread["crt.sh"] = why
-
-    seen, certificates, ct_counts = set(), [], {}
-    for source in [s for s in sources if s in read]:
-        ct_counts[source] = len(read[source])
-        for der, cert in read[source]:
-            if hashlib.sha256(der).digest() in seen:
-                continue
-            seen.add(hashlib.sha256(der).digest())
-            if args.since is None or cert.not_after >= args.since:
-                certificates.append(cert)
+            try:
+                again, why = reread_crtsh(name, read, unread)
+            except CT_MALFORMED as e:
+                malformed["crt.sh"] = e
+            else:
+                if why is None:
+                    read["crt.sh"] = again
+                else:
+                    unread["crt.sh"] = why
+        for source, e in unread.items():
+            ct_unread.setdefault(source, {})[name] = e
+        if malformed:
+            ct_malformed[name] = malformed
+        for source in [s for s in sources if s in read]:
+            ct_inventory.setdefault(source, {})[name] = [{"entry": cert.source, "sha256": hashlib.sha256(der).hexdigest(), "covers": any(checks.covers(n, name) for n in cert.names),
+                                                          "not_after": cert.not_after.isoformat()} for der, cert in read[source]]
+            ct_counts.setdefault(source, {})[name] = len(covering(read[source], name))
+            for der, cert in covering(read[source], name):
+                if hashlib.sha256(der).digest() in seen:
+                    continue
+                seen.add(hashlib.sha256(der).digest())
+                if args.since is None or cert.not_after >= args.since:
+                    certificates.append(cert)
     if not ct_counts:
-        raise OSError("no CT source could be read: " + "; ".join(f"{source}: {e!r}" for source, e in ct_unread.items()))
+        if ct_malformed:
+            raise next(e for errors in ct_malformed.values() for e in errors.values())
+        raise OSError("no CT source could be read: " + "; ".join(f"{source}: {checks.unread_why(errors)}" for source, errors in ct_unread.items()))
 
     pins_dir, records_dir = Path(args.pins), Path(args.records)
     history = read_pins_history(pins_dir)
@@ -468,10 +492,19 @@ def gather(args):
     except (Refused, subprocess.CalledProcessError, OSError) as e:
         trust = Refused(str(e.stderr.strip()) if isinstance(e, subprocess.CalledProcessError) else str(e))
 
+    caa_unread = {}
     if not args.no_caa_sample:
-        sample = {"time": datetime.now(timezone.utc).isoformat(timespec="seconds"), "caa": sample_caa(args.name)}
+        when = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        samples = []
+        for name in names:
+            try:
+                samples.append({"time": when, "name": name, "caa": sample_caa(name)})
+            except CAA_UNREAD as e:
+                caa_unread[name] = e
+        if not samples:
+            raise next(iter(caa_unread.values()))
         with open(args.caa_history, "a") as f:
-            f.write(json.dumps(sample) + "\n")
+            f.writelines(json.dumps(sample) + "\n" for sample in samples)
     with open(args.caa_history) as f:
         caa_history = [json.loads(line) for line in f if line.strip()]
 
@@ -489,8 +522,8 @@ def gather(args):
         if isinstance(seen_, records.Live):
             boot = boots.get(seen_.key_id, checks.Boot(dated, {}))
             boots[seen_.key_id] = checks.Boot(boot.first_seen, {seen_.spki_sha256: now} | boot.spkis)
-    ev = checks.Evidence(args.name, args.environment, certificates, ct_counts, pointers, list(verified_.values()), notes, shard_failures, caa_history, accounts,
-                         live, tips, rewound, witnesses, trust, records_visibility(), policy, now, boots, last_run, ct_unread=ct_unread, checkpoints=checkpoints, acked_boots=args.ack_boot)
+    ev = checks.Evidence(names, args.environment, certificates, ct_counts, pointers, list(verified_.values()), notes, shard_failures, caa_history, accounts,
+                         live, tips, rewound, witnesses, trust, records_visibility(), policy, now, boots, last_run, ct_unread=ct_unread, caa_unread=caa_unread, ct_malformed=ct_malformed, ct_inventory=ct_inventory, checkpoints=checkpoints, acked_boots=args.ack_boot)
     ev.revocations = {c.der: revocation.revocation(c.der, fetch) for c in checks.failing(ev)}
 
     ev.signer, ev.signer_state = signer_watch.watch(pins_dir, args, saved["signer"], now, trusted_root, shards, policy)
@@ -538,7 +571,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--pins", required=True, help="a full-history checkout of morse-pins, for its enclave_pins.json history")
     parser.add_argument("--records", required=True, help="a full-history checkout of trymorse/morse-records, with <environment>.jsonl pointers and leaves/")
-    parser.add_argument("--caa-history", required=True, help="a JSON lines file of CAA samples; each run appends one")
+    parser.add_argument("--caa-history", required=True, help="a JSON lines file of CAA samples; each run appends one for each --name whose CAA lookup succeeded, and a sample that names no host is inference.trymorse.ai's")
     parser.add_argument("--caa-account", action="append", default=[], metavar="CA=URI", help="an ACME account CAA may name, such as letsencrypt.org=https://acme-v02.api.letsencrypt.org/acme/acct/1")
     parser.add_argument("--sequence-state", required=True, help="a JSON file holding each Rekor shard's last accepted checkpoint and its witnesses, the morse-pins and morse-records commits the last run saw, when this watcher last ran, every boot it has seen live with each SPKI it held and when it first saw it, and for check 7 where it stopped in the activity of morse-pins main, the highest sign.yml run number judged and when its runs were last read, the runs still pending and the runs refused or missing not yet acknowledged, the statements already verified, the refused pushes not yet acknowledged, and since when main has been unlisted")
     parser.add_argument("--cache", help="a directory for the TUF metadata and the entries already proven; beside --sequence-state if omitted")
@@ -550,17 +583,17 @@ def main(argv=None):
     parser.add_argument("--no-caa-sample", action="store_true", help="check the CAA history without adding a sample")
     parser.add_argument("--since", type=lambda s: datetime.fromisoformat(s).replace(tzinfo=timezone.utc), help="skip certificates that expired before this date")
     parser.add_argument("--environment", default="prod")
-    parser.add_argument("--name", default=NAME)
-    parser.add_argument("--verdict", help="a file to write this run's verdict to as JSON: its kind (passed, failed, unenforced or unread), exit code, whether a retry may read the evidence, the checks that failed and the checks not enforced, each check's messages, and each CT source with why it could not be read, or null when it was read (none when the evidence was unread)")
+    parser.add_argument("--name", action="append", metavar="HOST", help=f"a hostname of the door to watch; give it once for each, {NAME} if omitted")
+    parser.add_argument("--verdict", help="a file to write this run's verdict to as JSON: its kind (passed, failed, unenforced or unread), exit code, whether a retry may read the evidence, the checks that failed and the checks not enforced, each check's messages, each CT source with why it could not be read or parsed for any name, or null when it was read for every name, and which names it read and which it could not (none when the evidence was unread), the watched hosts the failed checks' messages concern, or when no check failed, those the not enforced ones concern, each certificate check 1 judged with the names it covers and its judgment, every entry each CT source returned for each name, and each covering entry check 1 did not judge, with why")
     args = parser.parse_args(argv)
 
     try:
         ev = gather(args)
     except Exception as e:
         print(f"FAIL: could not read the evidence: {e!r}")
-        write_verdict(args.verdict, {"kind": "unread", "exit": 1, "retryable": True, "error": f"could not read the evidence: {e!r}", "failed": [], "unenforced": [], "checks": [], "ct": {}})
+        write_verdict(args.verdict, {"kind": "unread", "exit": 1, "retryable": True, "error": f"could not read the evidence: {e!r}", "failed": [], "unenforced": [], "checks": [], "ct": {}, "hosts": [], "ct_hosts": {}, "certificates": [], "ct_inventory": {}, "unjudged": []})
         sys.exit(1)
-    print(f"{len(ev.certificates)} certificates in CT cover {ev.name}. morse-records has {len(ev.pointers)} {ev.environment} pointers, and {len(ev.verified)} of their entries verify.\n")
+    print(f"{len(ev.certificates)} certificates in CT cover {' or '.join(ev.names)}. morse-records has {len(ev.pointers)} {ev.environment} pointers, and {len(ev.verified)} of their entries verify.\n")
 
     results = []
     for number, title, check in CHECKS:
@@ -574,14 +607,41 @@ def main(argv=None):
         if not [f for f in failures if not isinstance(f, Note)]:
             print("  OK")
         print()
-        results.append({"check": number, "title": title, "messages": [{"level": checks.level(f), "text": str(f)} for f in failures]})
+        results.append({"check": number, "title": title, "messages": [{"level": checks.level(f), "text": str(f), "hosts": getattr(f, "hosts", [])} for f in failures]})
     failed = [r["check"] for r in results if any(m["level"] == "FAIL" for m in r["messages"])]
     unenforced = [r["check"] for r in results if any(m["level"] == "NOT ENFORCED" for m in r["messages"])]
     kind, code = ("failed", 1) if failed else ("unenforced", 2) if unenforced else ("passed", 0)
-    ct = {source: None for source in ev.ct_counts} | {source: repr(e) for source, e in ev.ct_unread.items()}
-    write_verdict(args.verdict, {"kind": kind, "exit": code, "retryable": False, "error": None, "failed": failed, "unenforced": unenforced, "checks": results, "ct": ct})
+    missed = {source: dict(errors) for source, errors in ev.ct_unread.items()}
+    for name, errors in ev.ct_malformed.items():
+        for source, e in errors.items():
+            missed.setdefault(source, {})[name] = e
+    ct = {source: None for source in ev.ct_counts} | {source: checks.unread_why(errors) for source, errors in missed.items()}
+    ct_hosts = {source: {"read": [n for n in ev.names if n in ev.ct_counts.get(source, {}) and n not in missed.get(source, {})], "unread": [n for n in ev.names if n in missed.get(source, {})]} for source in ct}
+    hosts = hosts_at(results, failed, "FAIL", ev.names) if failed else hosts_at(results, unenforced, "NOT ENFORCED", ev.names)
+    write_verdict(args.verdict, {"kind": kind, "exit": code, "retryable": False, "error": None, "failed": failed, "unenforced": unenforced, "checks": results, "ct": ct, "hosts": hosts,
+                                 "ct_hosts": ct_hosts, "certificates": certificate_identities(ev), "ct_inventory": ev.ct_inventory, "unjudged": unjudged(ev, args.since)})
     write_state(Path(args.sequence_state), ev)
     sys.exit(code)
+
+
+def hosts_at(results, numbers, at, names):
+    """The watched names the messages at level at of the checks numbered carry, in the order the names were given."""
+    hosts = {h for r in results if r["check"] in numbers for m in r["messages"] if m["level"] == at for h in m["hosts"]}
+    return [n for n in names if n in hosts]
+
+
+def certificate_identities(ev):
+    return [{"source": c.source, "names": c.names, "sha256": hashlib.sha256(c.der).hexdigest(), "spki_sha256": c.spki_sha256, "not_before": c.not_before.isoformat(),
+             "not_after": c.not_after.isoformat(), "logged": c.logged.isoformat(), "hosts": [n for n in ev.names if any(checks.covers(p, n) for p in c.names)],
+             **ev.judgments.get(c.der, {"judgment": "unjudged", "revoked": None})} for c in ev.certificates]
+
+
+def unjudged(ev, since):
+    """Each entry a CT source returned covering a watched name whose certificate check 1 did not judge, from the same
+    reads: only one that expired before --since should be here."""
+    judged = {hashlib.sha256(c.der).hexdigest() for c in ev.certificates}
+    return [{"source": source, "name": name, **entry, "why": "expired before --since" if since and datetime.fromisoformat(entry["not_after"]) < since else "not judged"}
+            for source, names in ev.ct_inventory.items() for name, entries in names.items() for entry in entries if entry["covers"] and entry["sha256"] not in judged]
 
 
 def write_verdict(path, verdict):

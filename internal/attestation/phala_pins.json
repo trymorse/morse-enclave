@@ -157,5 +157,6 @@
       "rtmr1": "0aeb0837dcfd2af038f52fad4a51f559c4b296eece5105d2ab21367ac33ef3dfbe0f030b781cc0c4404bf98c8f0b99e8",
       "rtmr2": "1da92dd6b73db6deef07131c957ed2221779d126ee3c6c2d85cb7c4a60f3f1eeb2bc0ee9a9e8a730a1beeb43433fa0c5"
     }
-  ]
+  ],
+  "kms_k256_pubkey": "02a335aea3df11d46ae0a373d3f26fbd1d208572ecc87e630e618dac693b7af721"
 }

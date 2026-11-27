@@ -224,6 +224,9 @@ var errorTypes = map[int]string{
 }
 
 func Envelope(e apierr.Error) []byte {
+	if e.Code == apierr.ErrUnavailableHere.Code {
+		return e.Envelope()
+	}
 	typ, ok := errorTypes[e.Status]
 	switch {
 	case ok:

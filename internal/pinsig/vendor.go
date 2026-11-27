@@ -11,12 +11,12 @@ import (
 	"morse/backend/internal/sigstore/rekorv2"
 )
 
-const vendorStatementType = "morse-vendor-pins-v1"
+const vendorStatementType = "morse-vendor-pins-v5"
 
 // VendorFiles are the pins repository files a vendor statement digests, by their path there. A statement
 // lists exactly these, as the check in Morse's apps does.
 var VendorFiles = [...]string{
-	"v4/phala_pins.json",
+	"v5/phala_pins.json",
 	"v4/near_pins.json",
 	"v4/tinfoil_pins.json",
 	"v4/phala_model_pins.json",

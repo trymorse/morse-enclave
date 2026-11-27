@@ -51,10 +51,11 @@ func (s VendorSource) String() string {
 // VendorSet is every vendor pin the enclave judges an upstream by. The three files travel together: a signed
 // release replaces all of them, never one.
 type VendorSet struct {
-	Phala   IdentityPins
-	Near    GatewayModelPins
-	Tinfoil RouterPins
-	Source  VendorSource
+	Phala        IdentityPins
+	PhalaKMSRoot string
+	Near         GatewayModelPins
+	Tinfoil      RouterPins
+	Source       VendorSource
 }
 
 // VendorCounts is how many pins a set holds, so a log can say what a swap would add or drop.
@@ -79,10 +80,11 @@ func (s VendorSet) Counts() VendorCounts {
 // ParseVendorSet parses the three files, which must be valid pins.
 func ParseVendorSet(phala, near, tinfoil []byte, source VendorSource) (VendorSet, error) {
 	set := VendorSet{Source: source}
-	var err error
-	if set.Phala, err = ParseIdentityPins(phala); err != nil {
+	v5, err := ParsePhalaPinsV5(phala)
+	if err != nil {
 		return VendorSet{}, fmt.Errorf("phala_pins.json: %w", err)
 	}
+	set.Phala, set.PhalaKMSRoot = v5.IdentityPins, v5.KMSRoot
 	if set.Near, err = ParseNearPins(near); err != nil {
 		return VendorSet{}, fmt.Errorf("near_pins.json: %w", err)
 	}
@@ -131,7 +133,8 @@ func LoadPhalaPins(path string) (IdentityPins, error) {
 	if path == "" {
 		return PhalaPins(), nil
 	}
-	return readPins(path, ParseIdentityPins)
+	p, err := LoadPhalaPinsV5(path)
+	return p.IdentityPins, err
 }
 
 func LoadNearPins(path string) (GatewayModelPins, error) {

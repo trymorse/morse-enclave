@@ -34,6 +34,10 @@ import (
 // byte, so the tier of the attempt that begins the reply is final.
 const HeaderTier = "X-Tier"
 
+// why: the captain chose to keep serving a retired id and name its successor on the reply, so a caller is never
+// switched to another model without a word.
+const HeaderModelSuccessor = "X-Model-Successor"
+
 type chatRoute struct {
 	catalog.ChatTerms
 	Upstream             ChatUpstream
@@ -116,6 +120,7 @@ type openedChat struct {
 	reply       func() dialect.Encoder
 	relayNamed  bool
 	ownCacheKey func(catalog.EndpointID) string
+	successor   string
 }
 
 // played is the character the chat plays: the launch the proxy checked, the user's own character whose rules it
@@ -203,7 +208,7 @@ func (w *InProcess) openChat(o Opening, d dialect.Dialect, compaction bool) (Adm
 	}
 	route := routes[0]
 	oc := &openedChat{cuts: newCuts(), routes: routes, first: route, protocol: p, call: chat.Call{Request: req, RouteEffort: route.DefaultReasoningEffort, Efforts: route.ReasoningEfforts, Settings: settings, CarryReasoning: !o.KeyCaller && p.scheme == nil && req.CarriesReasoning()}, launch: o.Launch, own: o.Own, writing: o.Writing, dialect: d, reply: reply,
-		relayNamed: o.inTheClear(ask), ownCacheKey: w.ownCacheKey(o, ask, name.model, req)}
+		relayNamed: o.inTheClear(ask), ownCacheKey: w.ownCacheKey(o, ask, name.model, req), successor: w.retired[req.Model]}
 	if compaction {
 		err = oc.compact(o.Cast)
 	} else {
@@ -529,6 +534,7 @@ func (o *openedChat) run(called context.Context, w *InProcess, h Handle, g Grant
 		defer o.afterCut.stop()
 		ctx = o.afterCut.ctx
 	}
+	announceSuccessor(reply, o.successor)
 	rw := newReplyWriter(o.dialect.Errors(reply))
 	o.runStart = runStartOf(called)
 	if o.veil != nil {

@@ -1,5 +1,5 @@
 // Package vendorpins keeps the enclave's vendor pins (Phala, NEAR, Tinfoil) current without a rebuild. The
-// enclave boots with the pins compiled into it and, while it runs, polls vendor/index.json on the
+// enclave boots with the pins compiled into it and, while it runs, polls the
 // statements/images branch of the public pins repository, with no credentials. It walks the index's
 // candidates in order and takes the first whose vendor statement verifies offline under the pinned Sigstore
 // signer, its Rekor v2 entry cosigned by enough witnesses, was signed within the age limit by a clock the
@@ -50,7 +50,7 @@ func ParseMode(s string) (Mode, error) {
 }
 
 const (
-	vendorDir = "vendor"
+	vendorDir = "vendor-v5"
 
 	maxStatement = 128 << 10
 	maxFile      = 4 << 20
@@ -292,16 +292,16 @@ func (l *Loader) take(ctx context.Context, branch pinsbranch.Reader, commit stri
 	return seen, nil
 }
 
-// publicPath is where trymorse/morse-pins holds the file a vendor statement lists under key. As its sign.yml
-// says, the vendor statement names each file by its path in the private pins repository, v4/<name>, the key
-// every reader of the statement (pinsig.VendorFiles and the check in Morse's apps) expects, and morse-pins
-// holds that file at its root. A key without the v4/ prefix is refused rather than guessed at.
+// why: the signed keys name the private pins repository's paths; trymorse/morse-pins flattens its v4 files to the
+// root and keeps v5/phala_pins.json under v5/.
 func publicPath(key string) (string, error) {
-	name, ok := strings.CutPrefix(key, "v4/")
-	if !ok {
-		return "", fmt.Errorf("vendor statement key %q is not v4/<name>", key)
+	if name, ok := strings.CutPrefix(key, "v4/"); ok && name != "" && !strings.Contains(name, "/") {
+		return name, nil
 	}
-	return name, nil
+	if name, ok := strings.CutPrefix(key, "v5/"); ok && name != "" && !strings.Contains(name, "/") {
+		return key, nil
+	}
+	return "", fmt.Errorf("vendor statement key %q is not v4/<name> or v5/<name>", key)
 }
 
 func (l *Loader) observe(e Event) {

@@ -38,6 +38,7 @@ var sentinelOutcomes = map[string]struct {
 	"ErrPromptCheckDown":       {apierr.ErrPromptCheckDown, ClientError},
 	"ErrUnavailable":           {apierr.ErrUnavailable, Shutdown},
 	"ErrShuttingDown":          {apierr.ErrShuttingDown, Shutdown},
+	"ErrUnavailableHere":       {apierr.ErrUnavailableHere, ClientError},
 }
 
 func apierrSentinels(t *testing.T) []string {

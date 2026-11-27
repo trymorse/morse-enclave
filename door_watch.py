@@ -44,6 +44,9 @@ class Run:
     retryable: bool = False
     failed: tuple = ()
     ct: tuple = ()
+    hosts: tuple = ()
+    certificate_hosts: tuple = ()
+    ct_hosts: tuple = ()
 
 
 @dataclass(frozen=True)
@@ -57,7 +60,11 @@ class Alert:
 def judge(code, output, verdict):
     if verdict is None or verdict.get("exit") != code:
         return Run(code, output, "unread")
-    return Run(code, output, verdict["kind"], tuple(verdict["unenforced"]), verdict["retryable"], tuple(verdict["failed"]), tuple((verdict.get("ct") or {}).items()))
+    hosts = tuple(verdict.get("hosts") or ())
+    check1 = {h for c in verdict.get("checks") or () if c.get("check") == 1 for m in c.get("messages") or () if m.get("level") == "FAIL" for h in m.get("hosts") or ()}
+    ct_hosts = tuple((source, tuple(h.get("read") or ()), tuple(h.get("unread") or ())) for source, h in (verdict.get("ct_hosts") or {}).items())
+    return Run(code, output, verdict["kind"], tuple(verdict["unenforced"]), verdict["retryable"], tuple(verdict["failed"]), tuple((verdict.get("ct") or {}).items()), hosts,
+               tuple(h for h in hosts if h in check1), ct_hosts)
 
 
 def read_verdict(path):
@@ -89,18 +96,27 @@ def streak(path, kind):
     return count
 
 
-def ct_streaks(path, ct, now):
+def ct_streaks(path, ct, now, ct_hosts=()):
     try:
         kept = json.loads(path.read_text())
     except (OSError, ValueError):
         kept = {}
     kept = kept if isinstance(kept, dict) else {}
+    hosts = {source: (read, unread) for source, read, unread in ct_hosts}
     for source, why in ct:
         if why is None:
             kept.pop(source, None)
             continue
         was = kept.get(source) if isinstance(kept.get(source), dict) else {}
-        kept[source] = {**was, "count": int(was.get("count") or 0) + 1, "since": was.get("since") or now.isoformat(timespec="seconds"), "why": why}
+        read, unread = hosts.get(source, ((), ()))
+        entry = {**was, "count": int(was.get("count") or 0) + 1, "since": was.get("since") or now.isoformat(timespec="seconds"), "why": why}
+        # A source read for some names and not others on any run of the streak covered the door only in part, and the
+        # alert names every name it missed on some run, not just the last.
+        if unread:
+            entry["hosts"] = list(dict.fromkeys([*(was.get("hosts") or []), *unread]))
+        if read or was.get("partial"):
+            entry["partial"] = True
+        kept[source] = entry
     path.write_text(json.dumps(kept, sort_keys=True) + "\n")
     return kept
 
@@ -109,11 +125,36 @@ def ct_down(streaks, run):
     return {source: streaks[source] for source, why in run.ct if why is not None and streaks[source]["count"] >= CT_ALERT_AFTER and not streaks[source].get("alerted")}
 
 
+def other_reads(source, run):
+    """What the other CT sources read and parsed on the last run, by name. Which names check 1 enforced is its own verdict,
+    since a name one source read is still not enforced when another answered for it with an entry that does not parse."""
+    if not run.ct_hosts:
+        read = [s for s, why in run.ct if why is None]
+        return f"on the last of those runs {' and '.join(read)} could be read" if read else "on the last of those runs no other source could be read"
+    names = list(dict.fromkeys(n for _, read, unread in run.ct_hosts for n in (*read, *unread)))
+    others = [(s, read) for s, read, _ in run.ct_hosts if s != source and read]
+    said = [f"{s} read {' and '.join(read)}" for s, read in others]
+    if uncovered := [n for n in names if not any(n in read for _, read in others)]:
+        said.append(f"no other source read {' or '.join(uncovered)}")
+    return "on the last of those runs " + ", and ".join(said)
+
+
 def compose_ct(down, run, run_url):
-    read = ", ".join(source for source, why in run.ct if why is None) or "the other sources"
-    lines = [f"{source} could not be read on {kept['count']} door-watch runs in a row, since {kept['since']}, so check 1 has judged the door's certificates from {read} alone, "
-             f"and a certificate that only {source} returns goes unseen until it reads again. Its last error: {kept['why']}" for source, kept in down.items()]
-    title = f"The inference door's watcher could not read {', '.join(down)} on {CT_ALERT_AFTER} or more runs in a row"
+    lines, labels = [], []
+    for source, kept in down.items():
+        if kept.get("partial"):
+            hosts = " and ".join(kept.get("hosts") or ["some of the door's names"])
+            labels.append(f"{source} for some of the door's names ({hosts} missed at least once)")
+            lines.append(f"{source} could not be read or parsed for at least one of the door's names on {kept['count']} door-watch runs in a row, since {kept['since']}, "
+                         f"though it read some of them on some of those runs. The names it missed at least once are {hosts}. "
+                         f"{source}'s coverage of the door was incomplete on those runs, not wholly unavailable, and a certificate for a name it missed that only {source} returns "
+                         f"may have gone unseen until it reads every name again. Check 1's NOT ENFORCED lines in the run below say which names it could not judge. Its last error: {kept['why']}")
+        else:
+            labels.append(source)
+            lines.append(f"{source} could not be read on {kept['count']} door-watch runs in a row, since {kept['since']}, and {other_reads(source, run)}. "
+                         f"A certificate that only {source} returns goes unseen until it reads again. Check 1's NOT ENFORCED lines in the run below say which names it could not judge. "
+                         f"Its last error: {kept['why']}")
+    title = f"The inference door's watcher could not read {', '.join(labels)} on {CT_ALERT_AFTER} or more runs in a row"
     return Alert("door-watch-ct", title, 0, "\n\n".join(lines) + f"\n\nThe last of those runs is {run_url}\n\n```\n{run.output}```\n")
 
 
@@ -129,14 +170,15 @@ def alert_for(kind, count, restored):
 
 def compose(alert, run, restored, run_url):
     label, hours = "door-watch", 1
+    hosts = " and ".join(run.hosts)
     match alert:
         case "failed":
             label, hours = "door-watch-failed", 0
-            title = "The inference door's watcher failed a check"
+            title = "The inference door's watcher failed a check" + (f" for {hosts}" if hosts else "")
             failed = sorted(set(run.failed))
             what = f"failed {', '.join(f'check {n}' for n in failed) or 'a check'}"
             if 1 in failed:
-                what += ". A certificate for inference.trymorse.ai whose key no verified record attests can be a rogue certificate: read check 1 first"
+                what += f". A certificate for {' and '.join(run.certificate_hosts) or 'a name of the door'} whose key no verified record attests can be a rogue certificate: read check 1 first"
             if 6 in failed:
                 what += ". Check 6 failing usually means /v1/attestation listed a boot that has no verified record of a key it held 2 hours after this watcher first saw it, or one from an image no record can admit. The FAIL lines below give the cause, which can also be a bad or stale --ack-boot, a clock behind the last run, or a live document that could not be read. A boot that died before it could log its record never will, and once its entry is in UNRECORDED-BOOTS.md, --ack-boot acknowledges it"
             if not restored:
@@ -146,7 +188,7 @@ def compose(alert, run, restored, run_url):
             what = "could not read its evidence on three runs in a row, so it checked nothing for about 15 minutes"
         case "unenforced":
             checks = ", ".join(f"check {n}" for n in sorted(set(run.unenforced)))
-            title = f"The inference door's watcher has not enforced {checks}"
+            title = f"The inference door's watcher has not enforced {checks}" + (f" for {hosts}" if hosts else "")
             what = f"left {checks} unenforced on three runs in a row, as its NOT ENFORCED lines say"
             if 6 in run.unenforced:
                 what += ". Check 6 unenforced means runs are more than 7 minutes apart and a boot listed only between two of them without a record cannot show. Check that EventBridge's ClockEvery5Minutes starts the clock workflow, which dispatches this one"
@@ -183,8 +225,9 @@ def main(argv=None):
     state = Path(args.state)
     state.mkdir(parents=True, exist_ok=True)
     count = streak(state / "streak", run.kind)
-    streaks = ct_streaks(state / "ct-streak", run.ct, datetime.now(timezone.utc))
-    unread = "".join(f" {source} could not be read on {kept['count']} run(s) in a row." for source, kept in sorted(streaks.items()))
+    streaks = ct_streaks(state / "ct-streak", run.ct, datetime.now(timezone.utc), run.ct_hosts)
+    unread = "".join(f" {source} could not be read or parsed for at least one of the door's names on {kept['count']} run(s) in a row"
+                     + (f", missing {' and '.join(kept['hosts'])} at least once." if kept.get("partial") and kept.get("hosts") else ".") for source, kept in sorted(streaks.items()))
     append(os.environ.get("GITHUB_STEP_SUMMARY"), f"check-door.py exited {run.code}: {run.kind}, {count} run(s) in a row.{unread}\n\n```\n{run.output}```\n")
     if not args.alerts:
         return 0

@@ -434,7 +434,11 @@ type PhalaPinFiles struct {
 var ErrFormatsDiffer = errors.New("attestation: v5 Phala pins are not the v4 pins plus kms_k256_pubkey")
 
 func LoadPhalaPinPair(files PhalaPinFiles) (pins IdentityPins, root string, err error) {
-	if pins, err = LoadPhalaPins(files.V4); err != nil || files.V5 == "" {
+	if files.V4 == "" {
+		v5, err := LoadPhalaPinsV5(files.V5)
+		return v5.IdentityPins, v5.KMSRoot, err
+	}
+	if pins, err = readPins(files.V4, ParseIdentityPins); err != nil || files.V5 == "" {
 		return pins, "", err
 	}
 	v5, err := LoadPhalaPinsV5(files.V5)
@@ -458,8 +462,10 @@ func WritePhalaPinPair(files PhalaPinFiles, pins IdentityPins, root string) erro
 			return err
 		}
 	}
-	if err := os.WriteFile(files.V4, v4, 0o644); err != nil {
-		return err
+	if files.V4 != "" {
+		if err := os.WriteFile(files.V4, v4, 0o644); err != nil {
+			return err
+		}
 	}
 	if v5 == nil {
 		return nil
