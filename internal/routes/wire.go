@@ -9,29 +9,28 @@ import (
 )
 
 type common struct {
-	Model         string             `json:"model"`
-	Tier          string             `json:"tier"`
-	Attester      string             `json:"attester"`
-	BaseURL       string             `json:"base_url"`
-	UpstreamModel string             `json:"upstream_model"`
-	APIKeyEnv     string             `json:"api_key_env"`
-	Provider      string             `json:"provider"`
-	ProviderName  string             `json:"provider_name"`
-	Label         string             `json:"label"`
-	OwnedBy       string             `json:"owned_by"`
-	Lab           string             `json:"lab"`
-	OpenWeights   bool               `json:"open_weights"`
-	Uncensored    bool               `json:"uncensored"`
-	Adult         bool               `json:"adult"`
-	Retention     string             `json:"retention"`
-	Kind          catalog.Kind       `json:"kind"`
-	Included      *Included          `json:"included"`
-	RequiresPlan  string             `json:"requires_plan"`
-	AppOnly       bool               `json:"app_only"`
-	Picks         []string           `json:"picks"`
-	Flag          string             `json:"flag"`
-	RebateShare   *int64             `json:"rebate_share_bps"`
-	OnBehalfOf    catalog.EndpointID `json:"on_behalf_of"`
+	Model         string       `json:"model"`
+	Tier          string       `json:"tier"`
+	Attester      string       `json:"attester"`
+	BaseURL       string       `json:"base_url"`
+	UpstreamModel string       `json:"upstream_model"`
+	APIKeyEnv     string       `json:"api_key_env"`
+	Provider      string       `json:"provider"`
+	ProviderName  string       `json:"provider_name"`
+	Label         string       `json:"label"`
+	OwnedBy       string       `json:"owned_by"`
+	Lab           string       `json:"lab"`
+	OpenWeights   bool         `json:"open_weights"`
+	Uncensored    bool         `json:"uncensored"`
+	Adult         bool         `json:"adult"`
+	Retention     string       `json:"retention"`
+	Kind          catalog.Kind `json:"kind"`
+	Included      *Included    `json:"included"`
+	RequiresPlan  string       `json:"requires_plan"`
+	AppOnly       bool         `json:"app_only"`
+	Picks         []string     `json:"picks"`
+	Flag          string       `json:"flag"`
+	RebateShare   *int64       `json:"rebate_share_bps"`
 }
 
 type marked struct {

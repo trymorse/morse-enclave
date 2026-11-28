@@ -29,7 +29,7 @@ type Vendor struct {
 
 var Phala = &Vendor{Name: "phala", Gateway: "https://inference.phala.com", KeyEnv: "PHALA_API_KEY"}
 
-var Near = &Vendor{Name: "near", Gateway: "https://cloud-api.near.ai", KeyEnv: "NEAR_API_KEY", sealedChatOnly: true, transcribes: true, sealsTools: true}
+var Near = &Vendor{Name: "near", Gateway: "https://cloud-api.near.ai", KeyEnv: "NEAR_API_KEY", transcribes: true, sealsTools: true}
 
 // Tinfoil's router seals whole request and reply bodies (EHBP), so it carries native tool calls; it
 // serves only sealed chats.

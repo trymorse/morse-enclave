@@ -94,8 +94,7 @@ type Route struct {
 	Included      *Included
 	RequiresPlan  plankind.Kind
 	Place         catalog.Place
-	Beside        []Route            `json:",omitempty"`
-	OnBehalfOf    catalog.EndpointID `json:",omitempty"`
+	Beside        []Route `json:",omitempty"`
 	Order         int
 	AppOnly       bool
 	Pick          bool

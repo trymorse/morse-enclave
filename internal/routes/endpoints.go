@@ -84,8 +84,6 @@ func (m model) route(e endpoint) (fields, error) {
 type endpoint struct {
 	id          catalog.EndpointID
 	sealedModel string
-	// onBehalfOf makes the endpoint an on-behalf endpoint of the sealed endpoint it names.
-	onBehalfOf catalog.EndpointID
 	// unnamed keeps the endpoint off every list and request name: it serves in its model's candidate set at its tier,
 	// under the names of the named endpoint there.
 	unnamed bool
@@ -220,14 +218,6 @@ func parseModel(raw json.RawMessage) (model, error) {
 				return model{}, fmt.Errorf("model %q endpoint %q has sealed_model %s, which must be a non-empty string", m.id, e.id, raw)
 			}
 		}
-		if raw, ok := ef["on_behalf_of"]; ok {
-			if err := json.Unmarshal(raw, &e.onBehalfOf); err != nil || !endpointIDPattern.MatchString(string(e.onBehalfOf)) {
-				return model{}, fmt.Errorf("model %q endpoint %q has on_behalf_of %s, which must name an e2ee endpoint of the model", m.id, e.id, raw)
-			}
-			if err := e.checkOnBehalf(m.id); err != nil {
-				return model{}, err
-			}
-		}
 		if raw, ok := ef["unnamed"]; ok {
 			if err := json.Unmarshal(raw, &e.unnamed); err != nil || !e.unnamed {
 				return model{}, fmt.Errorf("model %q endpoint %q has unnamed %s; set it to true or leave it out", m.id, e.id, raw)
@@ -296,10 +286,6 @@ func (m model) checkPrices() error {
 	tiers := map[string]bool{}
 	for _, e := range m.endpoints {
 		_, hasPrice := e.fields["price"]
-		if e.onBehalfOf != "" {
-			tiers[e.tier()] = true
-			continue
-		}
 		if !m.media() && hasPrice {
 			return fmt.Errorf("model %q endpoint %q sets price; the model's prices set what a customer pays at each tier, and relay.json what the endpoint costs Morse", m.id, e.id)
 		}
@@ -345,8 +331,6 @@ func aliasNames(aliases []Alias, models []model) (map[catalog.ModelID]map[catalo
 			return nil, fmt.Errorf("alias %q names endpoint %q, which model %q does not list", a.Name, a.Endpoint, a.Model)
 		case slices.ContainsFunc(models[i].endpoints, func(e endpoint) bool { return e.id == a.Endpoint && e.unnamed }):
 			return nil, fmt.Errorf("alias %q names endpoint %q, which is unnamed", a.Name, a.Endpoint)
-		case slices.ContainsFunc(models[i].endpoints, func(e endpoint) bool { return e.id == a.Endpoint && e.onBehalfOf != "" }):
-			return nil, fmt.Errorf("alias %q names endpoint %q, which is on behalf of another and serves under that endpoint's name", a.Name, a.Endpoint)
 		}
 		seen[a.Name] = true
 		if names[a.Model] == nil {
@@ -367,12 +351,8 @@ func (m model) endpointsServed(names map[catalog.EndpointID]string, firstFileOrd
 	var sealedBy endpoint
 	sealedAt := -1
 	var underID catalog.EndpointID
-	var unnamed, onBehalf []int
+	var unnamed []int
 	for i, e := range m.endpoints {
-		if e.onBehalfOf != "" {
-			onBehalf = append(onBehalf, i)
-			continue
-		}
 		if e.unnamed {
 			if e.sealed() {
 				return nil, fmt.Errorf("endpoint %q is unnamed and e2ee; a later e2ee endpoint is already a fallback of the first, so leave unnamed out", e.id)
@@ -441,14 +421,6 @@ func (m model) endpointsServed(names map[catalog.EndpointID]string, firstFileOrd
 		rt["model"] = out[at].named.object["model"]
 		out[at].beside = append(out[at].beside, flatEndpoint{object: rt, model: m.id, id: e.id, fileOrder: firstFileOrder + i, place: catalog.PlaceUnnamed})
 	}
-	for _, i := range onBehalf {
-		e := m.endpoints[i]
-		rt, at, err := m.onBehalfRoute(e, out)
-		if err != nil {
-			return nil, err
-		}
-		out[at].beside = append(out[at].beside, flatEndpoint{object: rt, model: m.id, id: e.id, fileOrder: firstFileOrder + i, place: catalog.PlaceOnBehalf})
-	}
 	return out, nil
 }
 
@@ -463,62 +435,6 @@ func oneAttesterEach(e endpoint, sealed *served) error {
 		}
 	}
 	return nil
-}
-
-// OnBehalfFields are the only fields an on-behalf endpoint sets besides its id: everything else it takes from the
-// sealed endpoint it names, so the two cannot drift.
-var OnBehalfFields = []string{"on_behalf_of", "tier", "default_max_tokens", "default_reasoning_effort", "included", "requires_plan"}
-
-// ownTerms are the fields of a sealed endpoint that an on-behalf endpoint sets for itself.
-var ownTerms = []string{"tier", "default_max_tokens", "default_reasoning_effort", "included", "requires_plan"}
-
-func (e endpoint) checkOnBehalf(model catalog.ModelID) error {
-	for _, k := range slices.Sorted(maps.Keys(e.fields)) {
-		if k != "id" && !slices.Contains(OnBehalfFields, k) {
-			return fmt.Errorf("model %q endpoint %q is on behalf of endpoint %q and sets %q; it takes its host, upstream model, key, attester, window, retention, and quantization from that endpoint and sets only %s", model, e.id, e.onBehalfOf, k, strings.Join(OnBehalfFields, ", "))
-		}
-	}
-	if e.tier() != catalog.OnBehalfTier.String() {
-		return fmt.Errorf("model %q endpoint %q is on behalf of endpoint %q and must be tier %s, the tier of a plaintext chat the worker seals for its client", model, e.id, e.onBehalfOf, catalog.OnBehalfTier)
-	}
-	return nil
-}
-
-// onBehalfRoute builds the object an on-behalf endpoint loads as: the sealed endpoint's fields, with the endpoint's own
-// terms and defaults over them, at the model's tee price. The int is the route that serves the sealed endpoint.
-func (m model) onBehalfRoute(e endpoint, out []served) (fields, int, error) {
-	i := slices.IndexFunc(m.endpoints, func(o endpoint) bool { return o.id == e.onBehalfOf })
-	if i < 0 {
-		return nil, 0, fmt.Errorf("endpoint %q is on behalf of endpoint %q, which model %q does not list", e.id, e.onBehalfOf, m.id)
-	}
-	sealed := m.endpoints[i]
-	if !sealed.sealed() {
-		return nil, 0, fmt.Errorf("endpoint %q is on behalf of endpoint %q, which is tier %s; only an e2ee endpoint is sealed to", e.id, sealed.id, sealed.tier())
-	}
-	var name string
-	json.Unmarshal(sealed.fields["attester"], &name)
-	if v, err := attester.Parse(name); err != nil || v.SealsBody() {
-		return nil, 0, fmt.Errorf("endpoint %q is on behalf of endpoint %q, whose attester %s seals a request whole, so it has no seal for a plaintext chat", e.id, sealed.id, name)
-	}
-	at := slices.IndexFunc(out, func(s served) bool {
-		return s.named.id == sealed.id || slices.ContainsFunc(s.beside, func(b flatEndpoint) bool { return b.id == sealed.id })
-	})
-	if at < 0 {
-		return nil, 0, fmt.Errorf("endpoint %q is on behalf of endpoint %q, which serves no route", e.id, sealed.id)
-	}
-	rt := maps.Clone(m.fields)
-	maps.Copy(rt, sealed.fields)
-	for _, k := range ownTerms {
-		delete(rt, k)
-	}
-	maps.Copy(rt, e.fields)
-	price, ok := m.prices[e.tier()]
-	if !ok {
-		return nil, 0, fmt.Errorf("endpoint %q serves tier %s, which the model's prices do not list", e.id, e.tier())
-	}
-	rt["price"] = price
-	rt["model"] = out[at].named.object["model"]
-	return rt, at, nil
 }
 
 func sealsAs(m model, e endpoint, rt fields) error {

@@ -24,8 +24,8 @@ func (m model) checkPicks() error {
 		if slices.Contains(picks[:i], p) {
 			return fmt.Errorf("model %q picks tier %s twice", m.id, p)
 		}
-		if !slices.ContainsFunc(m.endpoints, func(e endpoint) bool { return e.tier() == p && e.onBehalfOf == "" && !e.unnamed }) {
-			return fmt.Errorf("model %q picks tier %s, which none of its named endpoints serves; GET /v1/models lists a model only at the tiers of its named endpoints, and an on-behalf endpoint only on the entry of the sealed endpoint it seals to", m.id, p)
+		if !slices.ContainsFunc(m.endpoints, func(e endpoint) bool { return e.tier() == p && !e.unnamed }) {
+			return fmt.Errorf("model %q picks tier %s, which none of its named endpoints serves; GET /v1/models lists a model only at the tiers of its named endpoints", m.id, p)
 		}
 	}
 	return nil

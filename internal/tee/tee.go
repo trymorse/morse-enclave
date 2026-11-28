@@ -273,11 +273,13 @@ type nearGate struct {
 	observe func(attested.Event)
 }
 
-func (g nearGate) Route(up attester.Upstream) chat.VerbatimRoute {
+func (g nearGate) Route(up attester.Upstream) chat.VerbatimRoute { return g.route(up) }
+
+func (g nearGate) route(up attester.Upstream) *near.Route {
 	return near.New(up.BaseURL, up.Model, up.APIKey, g.Client(), g, g.gpuVerdicts)
 }
 
-func (nearGate) Plain(attester.Upstream) (Plain, bool) { return nil, false }
+func (g nearGate) Plain(up attester.Upstream) (Plain, bool) { return g.route(up), true }
 
 func (g nearGate) Transcriber(up attester.Upstream) Transcriber {
 	return near.NewTranscriber(up.BaseURL, up.Model, up.APIKey, g.Client(), g, g.gpuVerdicts)

@@ -19,12 +19,9 @@ const (
 	// PlaceUnnamed is an endpoint of the named endpoint's tier with no name of its own, serving on the named
 	// endpoint's terms.
 	PlaceUnnamed
-	// PlaceOnBehalf is a tee endpoint through which the worker seals a plaintext chat to the named sealed endpoint's
-	// vendor for its client.
-	PlaceOnBehalf
 )
 
-var placeNames = enum.Names[Place]{PlaceNamed: "named", PlaceFallback: "fallback", PlaceUnnamed: "unnamed", PlaceOnBehalf: "on-behalf"}
+var placeNames = enum.Names[Place]{PlaceNamed: "named", PlaceFallback: "fallback", PlaceUnnamed: "unnamed"}
 
 func (p Place) String() string { return placeNames.String(p) }
 

@@ -254,7 +254,7 @@ func attestedCapability(v *attester.Vendor) capability {
 	// A zero-balance Phala account answered a plaintext chat 402 insufficient_quota on 2026-11-04, which
 	// apierr.SanitizedUpstreamError maps to upstream_unavailable, and phala's refuseSealed maps the documented "Balance
 	// is too low" 403 the same way. internal/phala/phalatest/testdata/dry-account-402.http replays the capture.
-	return capability{kinds: kinds, refusesDryAccount: v == attester.Phala, sendsSettings: v == attester.Phala}
+	return capability{kinds: kinds, refusesDryAccount: v == attester.Phala, sendsSettings: v == attester.Phala || v == attester.Near}
 }
 
 // RefusesDryAccount is whether rt's provider maps a dry account at the vendor to an account refusal.
@@ -321,9 +321,6 @@ func (p Provider) Reasoning(efforts []string) chat.Reasoning {
 }
 
 func (v Vendor) check(rt Route) error {
-	if rt.OnBehalfOf != "" {
-		return fmt.Errorf("is on behalf of endpoint %q and uses %s; only an attested endpoint is sealed to", rt.OnBehalfOf, v)
-	}
 	if c, chats := ChatOf(rt.Serves); chats {
 		if err := c.checkNativeTools(rt.Tier); err != nil {
 			return err
@@ -454,9 +451,6 @@ func (c Chat) thinkingTerms() error {
 }
 
 func (a Attested) check(rt Route) error {
-	if rt.OnBehalfOf != "" {
-		return a.checkOnBehalf(rt)
-	}
 	if err := attestedCapability(a.Attester).check(a, rt); err != nil {
 		return err
 	}
@@ -478,23 +472,6 @@ func (a Attested) check(rt Route) error {
 		return fmt.Errorf("is tier %s, so model must equal upstream_model %q: the body is forwarded verbatim and its receipt binds model", rt.Tier, rt.UpstreamModel)
 	}
 	return nil
-}
-
-// checkOnBehalf holds an on-behalf route to what the worker can do for it: a plaintext chat at tee, sealed to a vendor
-// that seals each message and not the whole body.
-func (a Attested) checkOnBehalf(rt Route) error {
-	c, chats := ChatOf(rt.Serves)
-	switch {
-	case !chats:
-		return fmt.Errorf("is on behalf of endpoint %q and serves %s; only a chat is sealed on its client's behalf", rt.OnBehalfOf, rt.Serves.Kind())
-	case rt.Tier != catalog.OnBehalfTier:
-		return fmt.Errorf("is on behalf of endpoint %q at tier %s, and a chat sealed on its client's behalf is tier %s", rt.OnBehalfOf, rt.Tier, catalog.OnBehalfTier)
-	case a.Attester.SealsBody():
-		return fmt.Errorf("is on behalf of endpoint %q, whose attester %s seals a request whole, so it has no seal for a plaintext chat", rt.OnBehalfOf, a)
-	case c.Tokenizer != "":
-		return fmt.Errorf("names a tokenizer, but %s relays its stream verbatim and the proxy counts only what it parses", a)
-	}
-	return attestedCapability(a.Attester).reasoningShown(a, c)
 }
 
 func (c capability) checkEfforts(up Upstream, ch Chat) error {

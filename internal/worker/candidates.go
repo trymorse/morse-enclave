@@ -36,9 +36,6 @@ func indexChats(models map[string]Model) map[string]chatName {
 			switch vendor.Place {
 			case catalog.PlaceUnnamed:
 				plaintext[m.ID] = append(plaintext[m.ID], r)
-			case catalog.PlaceOnBehalf:
-				r.seals = true
-				plaintext[m.ID] = append(plaintext[m.ID], r)
 			default:
 				r.aliased = name != string(m.ID)
 				named[name] = append(named[name], r)

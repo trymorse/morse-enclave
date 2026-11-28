@@ -56,11 +56,8 @@ type chatRoute struct {
 	retention            catalog.Retention
 	order                int
 	aliased              bool
-	// onBehalf marks a route derived from a sealed one for a key's plaintext chat, which the relay re-derives. seals marks
-	// a declared on-behalf endpoint, a route of its own whose plaintext chat the worker seals to its sealed endpoint's
-	// vendor.
+	// onBehalf marks a route derived from a sealed one for a key's plaintext chat, which the relay re-derives.
 	onBehalf bool
-	seals    bool
 }
 
 func (c Chat) route(model catalog.ModelID, vendor Model) chatRoute {
@@ -642,7 +639,7 @@ var (
 // when no endpoint is left.
 func withoutUnsealable(req *chat.Request) narrowing {
 	plain, tools := openaicompat.Unsealable(req, false), openaicompat.Unsealable(req, true)
-	sealing := func(r chatRoute) bool { return r.seals || r.onBehalf }
+	sealing := func(r chatRoute) bool { return r.onBehalf }
 	carries := func(r chatRoute) bool { return !sealing(r) || r.NativeTools && tools == nil }
 	return keeping(plain != nil, carries, func(routes []chatRoute) error {
 		if tools != nil && slices.ContainsFunc(routes, func(r chatRoute) bool { return sealing(r) && r.NativeTools }) {

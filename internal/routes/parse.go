@@ -259,7 +259,6 @@ func (c common) route(serves Serves) (Route, error) {
 		Pick:          slices.Contains(c.Picks, tier.String()),
 		Flag:          c.Flag,
 		RebateShare:   share,
-		OnBehalfOf:    c.OnBehalfOf,
 	}
 	if err := up.check(rt); err != nil {
 		return Route{}, err
@@ -409,7 +408,10 @@ func samePromiseAtATier(served []Route) error {
 		if _, seen := first[k]; !seen {
 			first[k] = rt
 		}
-		if p, seen := promised[k]; !seen || p.OnBehalfOf != "" && rt.OnBehalfOf == "" {
+		c, _ := ChatOf(rt.Serves)
+		p, seen := promised[k]
+		pc, _ := ChatOf(p.Serves)
+		if !seen || c.DefaultMaxTokens > pc.DefaultMaxTokens {
 			promised[k] = rt
 		}
 	}
@@ -428,9 +430,7 @@ func samePromiseAtATier(served []Route) error {
 			differs = "retention, which GET /v1/models shows"
 		case rt.Endpoint != f.Endpoint && c.DefaultReasoningEffort != fc.DefaultReasoningEffort:
 			differs = "default_reasoning_effort, the effort a request that names none reasons at"
-		case rt.OnBehalfOf != "" && c.DefaultMaxTokens != min(pc.DefaultMaxTokens, c.MaxOutputTokens):
-			return fmt.Errorf("endpoint %q serves model %q at tier %s on behalf of endpoint %q with default_max_tokens %d; give it %d, endpoint %q's %d cut to its max_output_tokens %d", rt.Endpoint, rt.ID, rt.Tier, rt.OnBehalfOf, c.DefaultMaxTokens, min(pc.DefaultMaxTokens, c.MaxOutputTokens), p.Endpoint, pc.DefaultMaxTokens, c.MaxOutputTokens)
-		case rt.OnBehalfOf == "" && c.DefaultMaxTokens != pc.DefaultMaxTokens:
+		case c.DefaultMaxTokens != min(pc.DefaultMaxTokens, c.MaxOutputTokens):
 			against, differs = p.Endpoint, "default_max_tokens, the output limit a request that names none is held for and sent"
 		default:
 			continue

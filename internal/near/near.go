@@ -16,6 +16,7 @@ import (
 
 	"morse/backend/internal/apierr"
 	"morse/backend/internal/attestation"
+	"morse/backend/internal/catalog"
 	"morse/backend/internal/chat"
 	"morse/backend/internal/e2ee"
 	wire "morse/backend/internal/e2ee/near"
@@ -58,6 +59,7 @@ type GPUVerdicts func(ctx context.Context, report []byte, nonce attestation.Nonc
 type Gateway struct{ upstream.Endpoint }
 
 type Route struct {
+	openaicompat.Provider
 	Gateway
 	model    string
 	gate     Gate
@@ -67,6 +69,7 @@ type Route struct {
 }
 
 var (
+	_ chat.Provider  = (*Route)(nil)
 	_ chat.Attester  = (*Route)(nil)
 	_ chat.Relayer   = (*Route)(nil)
 	_ chat.Receipter = (*Route)(nil)
@@ -80,13 +83,17 @@ func New(baseURL, upstreamModel, apiKey string, client *http.Client, gate Gate, 
 	gateway := NewGateway(baseURL, apiKey, client)
 	sealed := gateway.Endpoint
 	sealed.Refuse = refuseSealed
+	// why: NEAR AI finished GLM 5.3 Flash's reply to a named tool_choice "stop" while it carried the tool call, whole and
+	// streamed (2026-11-28); a client that reads the finish reason would end its turn and never run the tool.
+	fixes := catalog.Fixes{ToolCallsFinishStop: true}
 	return &Route{
+		Provider: openaicompat.Provider{Sender: openaicompat.HTTPSender{Endpoint: gateway.Endpoint}, Model: upstreamModel, LimitField: openaicompat.MaxTokens, ContinuousUsage: true, ReasoningKeys: []string{"reasoning_content"}, Fixes: fixes},
 		Gateway:  gateway,
 		model:    upstreamModel,
 		gate:     gate,
 		gpu:      gpu,
 		relay:    openaicompat.Relay{Endpoint: sealed, Model: upstreamModel, Receipt: openaicompat.ReceiptFromReplyID},
-		onBehalf: openaicompat.Provider{Sender: openaicompat.SealedSender{Endpoint: sealed, Sealer: sealer{gate}}, Model: upstreamModel, LimitField: openaicompat.MaxTokens},
+		onBehalf: openaicompat.Provider{Sender: openaicompat.SealedSender{Endpoint: sealed, Sealer: sealer{gate}}, Model: upstreamModel, LimitField: openaicompat.MaxTokens, Fixes: fixes},
 	}
 }
 

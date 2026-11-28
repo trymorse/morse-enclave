@@ -121,7 +121,7 @@ func withChat(m map[routes.Provider]map[catalog.Kind]build) map[routes.Provider]
 func ChatProvider(rt routes.Route, key string, client *http.Client) (chat.Provider, error) {
 	if up, attested := rt.Upstream.(routes.Attested); attested {
 		if up.Attester != attester.Phala {
-			return nil, fmt.Errorf("route %q: %s serves no plaintext chat", rt.Model, up.Attester.Name)
+			return nil, fmt.Errorf("route %q: a probe sends %s no plaintext chat", rt.Model, up.Attester.Name)
 		}
 		return phala.New(rt.BaseURL, rt.UpstreamModel, key, phala.Clients{Chats: client, Objects: client}, nil), nil
 	}
@@ -295,15 +295,6 @@ func attestedChat(rt routes.Route, attested routes.Attested, key string, d Deps)
 	served, err := chatServed(rt, rt.Serves.(routes.Chat))
 	if err != nil {
 		return nil, err
-	}
-	if rt.OnBehalfOf != "" {
-		sealed := gate.Route(up)
-		provider := sealed.OnBehalf()
-		if provider == nil {
-			return nil, fmt.Errorf("route %q is on behalf of endpoint %q, and %s seals no plaintext chat for its client", rt.Model, rt.OnBehalfOf, attested.Attester.Name)
-		}
-		served.Upstream = worker.Plain{Provider: provider, Attester: sealed}
-		return served, nil
 	}
 	if !rt.Tier.Sealed() {
 		plain, serves := gate.Plain(up)
