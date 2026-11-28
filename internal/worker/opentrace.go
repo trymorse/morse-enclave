@@ -38,19 +38,22 @@ func openTraceOf(ctx context.Context) *OpenTrace {
 }
 
 // why: net/http sends a body of unknown length chunked, headers first and a chunk per write, and a byte slice with its
-// length in one write.
+// length in one write. A *bytes.Reader already has its length, which net/http reads, so it is sent as it is, uncopied.
 func wholeBody(ctx context.Context, body io.Reader) (io.Reader, error) {
 	if body == nil {
 		return http.NoBody, nil
 	}
-	read, err := io.ReadAll(body)
-	if err != nil {
-		return nil, err
+	if _, sized := body.(*bytes.Reader); !sized {
+		read, err := io.ReadAll(body)
+		if err != nil {
+			return nil, err
+		}
+		body = bytes.NewReader(read)
 	}
 	if t := openTraceOf(ctx); t != nil {
 		t.Ended = time.Now()
 	}
-	return bytes.NewReader(read), nil
+	return body, nil
 }
 
 func (t *OpenTrace) took(h http.Header) {
