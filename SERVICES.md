@@ -8,14 +8,14 @@ Model and media vendors that serve the developer API, and the Morse Chat app too
 - DeepInfra, `api.deepinfra.com`
 - Heabsy, `api.heabsy.com`
 - Isoquant, `api.isoquant.ai`
+- Lyber, `api.lyber.ai`
 - Morph, `api.morphllm.com`
 - NEAR AI, `cloud-api.near.ai`
 - Novita AI, `api.novita.ai`
 - Phala, `inference.phala.com`
-- Silk Compute, `api.silkcompute.com`
 - Tinfoil, `inference.tinfoil.sh`
 - Tinfoil's privacy filter, `pii-filter.tinfoil.sh`, which reads the text of a chat that asks for the Privacy Veil, over TLS pinned to the key its attested report binds
-- Tinfoil's decision model, at `inference.tinfoil.sh`, which scores the prompt of an image or video asked of an uncensored model while the prompt check is on, sealed to the key its attested report binds, and never sees an uploaded picture
+- Tinfoil's decision model, at `inference.tinfoil.sh`, which scores the prompt of an image or video asked of an uncensored model while the prompt check is on, and always the prompt of an image whose request asks for the check itself, as the Morse app's typed outfit does, sealed to the key its attested report binds, and never sees an uploaded picture
 - Wafer, `pass.wafer.ai`
 
 Model and media vendors that only the Morse Chat app reaches. An API key cannot list or call their models:

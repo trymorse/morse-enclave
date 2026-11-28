@@ -66,6 +66,7 @@ type Reporter interface {
 	VendorRefused(model string, status int, code string)
 	UpstreamErrorChunk(model string, code chat.ErrorCode)
 	VendorUsageMissing(model string)
+	VideoRefused(model, reason string)
 }
 
 type NopReporter struct{}
@@ -76,6 +77,7 @@ func (NopReporter) LookupBusy(string)                         {}
 func (NopReporter) VendorRefused(string, int, string)         {}
 func (NopReporter) UpstreamErrorChunk(string, chat.ErrorCode) {}
 func (NopReporter) VendorUsageMissing(string)                 {}
+func (NopReporter) VideoRefused(string, string)               {}
 
 type Config struct {
 	Models         map[string]Model
@@ -202,7 +204,11 @@ func (w *InProcess) Unpinned(context.Context) (Unpinned, error) {
 
 func (w *InProcess) Poll(ctx context.Context, route, vendorID string) (jobs.Poll, error) {
 	if videos, known := w.videos[route]; known {
-		return videos.PollVideo(ctx, vendorID)
+		p, err := videos.PollVideo(ctx, vendorID)
+		if err == nil && p.Why != "" {
+			w.reports.VideoRefused(route, p.Why)
+		}
+		return p, err
 	}
 	if vendor, known := w.researchers[route]; known {
 		return vendor.Check(ctx, vendorID)

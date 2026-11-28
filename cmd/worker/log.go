@@ -35,6 +35,7 @@ const (
 	upstreamErrorChunk
 	unknownReplyField
 	vendorUsageMissing
+	videoRefused
 	researchUnwrapped
 	upstreamAttested
 	upstreamDrifted
@@ -74,6 +75,7 @@ var messages = [...]struct {
 	upstreamErrorChunk:        {"upstream error chunk", slog.LevelWarn},
 	unknownReplyField:         {"e2ee reply carried a field the gate does not know", slog.LevelWarn},
 	vendorUsageMissing:        {"sealed reply ended with no vendor usage, billed on its frames", slog.LevelWarn},
+	videoRefused:              {"video refused", slog.LevelWarn},
 	researchUnwrapped:         {"parallel research report unwrapped from its answer object", slog.LevelWarn},
 	upstreamAttested:          {"upstream attested", slog.LevelInfo},
 	upstreamDrifted:           {"upstream attested with drift", slog.LevelWarn},
@@ -226,6 +228,10 @@ func (l *logger) routesData(e routesdata.Event) {
 
 func (l *logger) configFailed(err error) {
 	l.out.LogAttrs(context.Background(), messages[configInvalid].level, messages[configInvalid].text, slog.String("err", err.Error()))
+}
+
+func (l *logger) VideoRefused(model, reason string) {
+	l.log(videoRefused, fields{Route: model, Reason: reason})
 }
 
 func (l *logger) Failed(route string, err error) {

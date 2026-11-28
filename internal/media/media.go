@@ -67,6 +67,7 @@ type ImageRequest struct {
 	dims          []Dims
 	digests       []frameconsent.Digest
 	negative      string
+	promptCheck   bool
 	mask          dataurl.URL
 	sizedByClient Size
 }
@@ -75,6 +76,10 @@ func (r ImageRequest) ModelName() string              { return r.Model }
 func (r ImageRequest) Prompt() string                 { return r.prompt }
 func (r ImageRequest) NegativePrompt() string         { return r.negative }
 func (r ImageRequest) ReferenceImages() []dataurl.URL { return r.images }
+
+// why: a filtered route's prompt reaches Morse's prompt check only when the person's own app asks for it in the
+// sealed body, so the relay alone can never send a filtered prompt to the checker.
+func (r ImageRequest) AsksPromptCheck() bool { return r.promptCheck }
 
 func (r ImageRequest) ReferenceDigests() []frameconsent.Digest { return slices.Clone(r.digests) }
 
@@ -108,17 +113,19 @@ func ParseImageRequest(body io.Reader) (*ImageRequest, error) {
 		Model, Prompt, NegativePrompt, AspectRatio, Resolution, Quality, ResponseFormat, Mask string
 		N                                                                                     *int
 		Seed                                                                                  *int64
+		PromptCheck                                                                           bool
 		Images                                                                                []string
 	}
 	if err := strictjson.Decode(body, map[string]any{
 		"model": &wire.Model, "prompt": &wire.Prompt, "n": &wire.N, "aspect_ratio": &wire.AspectRatio, "resolution": &wire.Resolution,
 		"quality": &wire.Quality, "images": &wire.Images, "response_format": &wire.ResponseFormat, "seed": &wire.Seed,
-		"negative_prompt": &wire.NegativePrompt, "mask": &wire.Mask,
+		"negative_prompt": &wire.NegativePrompt, "mask": &wire.Mask, "prompt_check": &wire.PromptCheck,
 	}); err != nil {
 		return nil, err
 	}
 	req := &ImageRequest{
 		Model: wire.Model, N: 1, Quality: wire.Quality, Seed: wire.Seed, prompt: wire.Prompt, negative: wire.NegativePrompt,
+		promptCheck:   wire.PromptCheck,
 		Size:          Size{AspectRatio: cmp.Or(wire.AspectRatio, "1:1"), Resolution: cmp.Or(wire.Resolution, "1k")},
 		sizedByClient: Size{AspectRatio: wire.AspectRatio, Resolution: wire.Resolution},
 	}

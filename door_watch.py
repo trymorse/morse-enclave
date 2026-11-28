@@ -8,7 +8,8 @@ GitHub read that still fails ends as a check 7 or check 9 result, so this does n
 verdict, or one whose exit code is not the verdict's, could not watch the door. It keeps the last kind and how many
 runs in a row had it in <dir>/streak. It also keeps, in <dir>/ct-streak, how many runs in a row each CT source could
 not be read and since when: a run that read the source restarts it, and a run that read no evidence leaves it as it
-was. With --alerts it writes the alert's label, title and comment hours to GITHUB_OUTPUT and its body to
+was. A run that read evidence drops the count of a source it did not ask. With --alerts it writes the alert's label,
+title and comment hours to GITHUB_OUTPUT and its body to
 --alert-body, and exits 1 when the run failed a check or could not read its evidence. On each run that finds a CT
 source's count at CT_ALERT_AFTER or more and its entry not marked "alerted" it also writes ct_alert and ct_title to
 GITHUB_OUTPUT and that alert's body to --ct-alert-body. The workflow's step that sends that alert marks the entry
@@ -103,6 +104,9 @@ def ct_streaks(path, ct, now, ct_hosts=()):
         kept = {}
     kept = kept if isinstance(kept, dict) else {}
     hosts = {source: (read, unread) for source, read, unread in ct_hosts}
+    # A source this run did not ask can never be read again, so its kept count would be reported on every run after.
+    if ct:
+        kept = {source: entry for source, entry in kept.items() if source in dict(ct)}
     for source, why in ct:
         if why is None:
             kept.pop(source, None)

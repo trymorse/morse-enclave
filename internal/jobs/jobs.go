@@ -101,6 +101,7 @@ type Poll struct {
 	Failure   Failure
 	Cost      money.Reported
 	OutputURL string
+	Why       string `json:"-"`
 }
 
 var Unserved = Poll{Status: Failed, Failure: UpstreamError}

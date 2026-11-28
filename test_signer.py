@@ -758,7 +758,7 @@ class GitHubBlipTest(unittest.TestCase):
             reply.read.return_value = answer
             return reply
 
-        with unittest.mock.patch("urllib.request.urlopen", urlopen), unittest.mock.patch.object(check_door.time, "sleep") as slept:
+        with unittest.mock.patch("urllib.request.urlopen", urlopen), unittest.mock.patch("github_read.time.sleep") as slept:
             try:
                 return read(), len(calls), [c.args[0] for c in slept.call_args_list]
             except Exception as e:

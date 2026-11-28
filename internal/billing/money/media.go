@@ -84,6 +84,14 @@ func (p MediaPrice) Settle(o measure.Outcome, r Reported, delivered int, hold Mi
 	return Unbilled(o)
 }
 
+func Absorbed(o measure.Outcome, r Reported) Settlement {
+	s := Unbilled(o)
+	if r.known == costKnown {
+		s.EndpointCost = EndpointCost{Micros: r.micros, Source: CostReported}
+	}
+	return s
+}
+
 func minimumFor(outputs int) Micros { return Micros(max(outputs, 0)) * MinMicrosPerOutput }
 
 func ReportedUSD(usd string) Reported { return ReportedUnits(usd, microsPerUSD) }

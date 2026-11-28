@@ -24,7 +24,7 @@ type PromptCheck struct {
 type Screened struct{ Uncensored, Adult bool }
 
 func (w *InProcess) screen(ctx context.Context, asked bool, s Screened, kind promptcheck.Kind, prompt string) error {
-	if !asked || !s.Uncensored {
+	if !asked {
 		return nil
 	}
 	check := w.promptCheck

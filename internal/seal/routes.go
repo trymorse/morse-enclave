@@ -38,6 +38,7 @@ var Routes = []Route{
 	{Pattern: "GET /v1/key"},
 	{Pattern: "GET /v1/models"},
 	{Pattern: "GET /v1/models/{id...}"},
+	{Pattern: "GET /v1/catalog"},
 	{Pattern: "GET /v1/attestation"},
 	{Pattern: "GET /v1/receipts/{id}"},
 	{Pattern: "GET /v1/videos/{id}"},

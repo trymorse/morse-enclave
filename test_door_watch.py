@@ -313,6 +313,15 @@ class WatchTest(unittest.TestCase):
         later = self.runs(passed()) + self.crtsh_down(door_watch.CT_ALERT_AFTER + 2)
         self.assertEqual(([i for i, w in enumerate(first, 1) if w.ct_alert], [i for i, w in enumerate(later) if w.ct_alert]), ([door_watch.CT_ALERT_AFTER], [door_watch.CT_ALERT_AFTER]))
 
+    def test_a_source_the_watch_no_longer_asks_is_dropped_from_the_counts_once_a_run_reads_evidence(self):
+        self.crtsh_down(door_watch.CT_ALERT_AFTER)
+        without = passed({"certspotter": None})
+        runs = self.runs([unread()] * 3)
+        self.assertIn("crt.sh could not be read or parsed", runs[0].summary)
+        w = self.watcher.run(without)
+        self.assertEqual((w.ct_alert, json.loads(self.watcher.read("door-state/ct-streak")), w.outputs.get("ct_resolved")), ("", {}, "true"))
+        self.assertNotIn("crt.sh", w.summary)
+
     def test_a_passing_run_with_its_state_resolves_the_check_alerts_and_one_that_read_every_ct_source_the_ct_alert(self):
         resolved = lambda w: (w.outputs.get("resolved"), w.outputs.get("ct_resolved"))
         self.assertEqual(resolved(self.watcher.run(passed())), ("true", "true"))
@@ -366,10 +375,10 @@ class VerdictTest(Fixture):
         self.assertTrue(found["error"].startswith("could not read the evidence: FileNotFoundError("), found["error"])
 
     def test_a_ct_source_that_cannot_be_read_is_named_with_why_and_the_one_read_is_null(self):
-        self.door.crtsh = {check_door.CRTSH_URL.format("trymorse.ai"): urllib.error.URLError(OSError(101, "Network is unreachable"))}
+        self.door.certspotter_answers("inference.trymorse.ai", urllib.error.URLError(OSError(101, "Network is unreachable")))
         ct = str(self.door.root / "ct.json")
-        found, run = self.verdict("--ct", "crt.sh", "--ct", ct)
-        self.assertEqual((run.kind, found["ct"]), ("passed", {"crt.sh": "URLError(OSError(101, 'Network is unreachable'))", ct: None}))
+        found, run = self.verdict("--ct", "certspotter", "--ct", ct)
+        self.assertEqual((run.kind, found["ct"]), ("passed", {"certspotter": "URLError(OSError(101, 'Network is unreachable'))", ct: None}))
         self.assertEqual(dict(run.ct), found["ct"])
 
     def test_a_rogue_certificate_for_the_second_host_names_that_host_in_the_alert(self):
@@ -411,18 +420,16 @@ class VerdictTest(Fixture):
         second = "api.morseinference.com"
         self.door.ct[0] = certificate(self.door.tls, self.door.ca, "inference.trymorse.ai", ["inference.trymorse.ai", second], issuer_cn="test ca")
         self.door.caa.append({"name": second, "caa": CAA})
-        rows = [{"id": 0, "name_value": "inference.trymorse.ai\n" + second, "entry_timestamp": None}]
-        self.door.crtsh = {check_door.CRTSH_URL.format("trymorse.ai"): json.dumps(rows).encode(),
-                           check_door.CRTSH_CERT_URL.format(0): self.door.ct[0].public_bytes(serialization.Encoding.PEM),
-                           check_door.CRTSH_URL.format("morseinference.com"): json.dumps([{"id": 7, "entry_timestamp": None}]).encode()}
+        self.door.certspotter_answers("inference.trymorse.ai", [self.door.ct[0]])
+        self.door.certspotter_answers(second, [{"id": "7"}])
         gone = str(self.door.root / "gone.json")
-        found, run = self.verdict("--name", "inference.trymorse.ai", "--name", second, "--ct", "crt.sh", "--ct", gone)
-        self.assertEqual((found["ct_hosts"]["crt.sh"], found["unenforced"]), ({"read": ["inference.trymorse.ai"], "unread": [second]}, [1]))
+        found, run = self.verdict("--name", "inference.trymorse.ai", "--name", second, "--ct", "certspotter", "--ct", gone)
+        self.assertEqual((found["ct_hosts"]["certspotter"], found["unenforced"]), ({"read": ["inference.trymorse.ai"], "unread": [second]}, [1]))
         alert = door_watch.compose_ct({gone: {"count": door_watch.CT_ALERT_AFTER, "since": "then", "why": found["ct"][gone]}}, run, RUN_URL)
-        self.assertIn(f"{gone} could not be read on {door_watch.CT_ALERT_AFTER} door-watch runs in a row, since then, and on the last of those runs crt.sh read inference.trymorse.ai, "
+        self.assertIn(f"{gone} could not be read on {door_watch.CT_ALERT_AFTER} door-watch runs in a row, since then, and on the last of those runs certspotter read inference.trymorse.ai, "
                       f"and no other source read {second}. ", alert.body)
         self.assertNotIn("judged", alert.body)
-        self.assertIn(f"NOT ENFORCED: check 1 not enforced for {second} on this run: crt.sh answered with an entry this watcher could not parse", alert.body)
+        self.assertIn(f"NOT ENFORCED: check 1 not enforced for {second} on this run: certspotter answered with an entry this watcher could not parse", alert.body)
 
     def test_a_github_outage_is_a_result_and_not_evidence_to_read_again(self):
         def down(url, *_):

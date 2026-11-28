@@ -20,7 +20,6 @@ import json
 import re
 import subprocess
 import sys
-import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
@@ -28,7 +27,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from cryptography import x509
-from cryptography.hazmat.primitives import serialization
 from cryptography.x509.oid import NameOID
 
 import door_checks as checks
@@ -44,8 +42,6 @@ from rekor import Refusal
 
 
 NAME = checks.FIRST_NAME
-CRTSH_URL = "https://crt.sh/?q=%25.{}&output=json"
-CRTSH_CERT_URL = "https://crt.sh/?d={}"
 CERTSPOTTER_URL = "https://api.certspotter.com/v1/issuances?domain={}&match_wildcards=true&expand=dns_names&expand=cert_der"
 ATTESTATION_URL = "https://inference.trymorse.ai/v1/attestation"
 DOH_URL = "https://dns.google/resolve?name={}&type=CAA"
@@ -98,7 +94,7 @@ def fetch(url):
         return reply.read()
 
 
-def parse_certificate(source, der, logged):
+def parse_certificate(source, der):
     cert = x509.load_der_x509_certificate(der)
     try:
         names = cert.extensions.get_extension_for_class(x509.SubjectAlternativeName).value.get_values_for_type(x509.DNSName)
@@ -109,72 +105,35 @@ def parse_certificate(source, der, logged):
         scts = [s.timestamp.replace(tzinfo=timezone.utc) for s in cert.extensions.get_extension_for_class(x509.PrecertificateSignedCertificateTimestamps).value]
     except x509.ExtensionNotFound:
         scts = []
-    when = min(scts) if scts else logged or cert.not_valid_before_utc
+    when = min(scts) if scts else cert.not_valid_before_utc
     return Certificate(source, list(dict.fromkeys(names)), records.spki_sha256(cert.public_key()), cert.not_valid_before_utc, cert.not_valid_after_utc, when, der)
 
 
-def crtsh_time(row):
-    try:
-        return datetime.fromisoformat(row["entry_timestamp"]).replace(tzinfo=timezone.utc)
-    except (KeyError, TypeError, ValueError):
-        return None
-
-
 def read_ct(source, name):
-    if source == "crt.sh":
-        rows = json.loads(fetch(CRTSH_URL.format(name.split(".", 1)[1])))
-        logged = {}
-        for r in rows:
-            if any(checks.covers(n, name) for n in r["name_value"].split("\n")):
-                t = crtsh_time(r)
-                logged[r["id"]] = min(t, logged[r["id"]]) if t and logged.get(r["id"]) else t or logged.get(r["id"])
-        return [(f"crt.sh {i}", x509.load_pem_x509_certificate(fetch(CRTSH_CERT_URL.format(i))).public_bytes(serialization.Encoding.DER), logged[i]) for i in sorted(logged)]
     if source == "certspotter":
         entries, after = [], None
         while True:
             page = json.loads(fetch(CERTSPOTTER_URL.format(name) + (f"&after={after}" if after else "")))
             if not page:
                 return entries
-            entries += [(f"certspotter {i['id']}", base64.b64decode(i["cert_der"]), None) for i in page]
+            entries += [(f"certspotter {i['id']}", base64.b64decode(i["cert_der"])) for i in page]
             after = page[-1]["id"]
     with open(source) as f:
-        return [(f"{source} {i['id']}", base64.b64decode(i["cert_der"]), None) for i in json.load(f)]
+        return [(f"{source} {i['id']}", base64.b64decode(i["cert_der"])) for i in json.load(f)]
 
 
 CT_UNREAD = (OSError, http.client.HTTPException, json.JSONDecodeError)
 # A source's answer that reads but does not hold the certificates it should, such as a DER or PEM that does not parse
 # or an entry missing a field. Caught after CT_UNREAD, since json.JSONDecodeError is a ValueError.
 CT_MALFORMED = (ValueError, KeyError, TypeError, AttributeError)
-CRTSH_RETRY_DELAYS = (2, 5)
 
 
 def read_parsed(source, name):
-    return [(der, parse_certificate(label, der, logged)) for label, der, logged in read_ct(source, name)]
+    return [(der, parse_certificate(label, der)) for label, der in read_ct(source, name)]
 
 
 def covering(certs, name):
     return [(der, cert) for der, cert in certs if any(checks.covers(n, name) for n in cert.names)]
-
-
-def reread_crtsh(name, read, unread):
-    """crt.sh sometimes answers with none of the certificates another CT source returns, and has them again minutes
-    later."""
-    why = None
-    for delay in CRTSH_RETRY_DELAYS:
-        time.sleep(delay)
-        try:
-            again = read_parsed("crt.sh", name)
-        except CT_UNREAD as e:
-            why = e
-            continue
-        if covering(again, name):
-            return again, None
-        why = None
-    if why is None:
-        others = ", ".join(f"{s} returned {len(covering(c, name))}" for s, c in read.items() if covering(c, name))
-        why = LookupError(f"it returned no certificate covering {name} in {len(CRTSH_RETRY_DELAYS) + 1} reads, " +
-                          (f"though {others}" if others else f"and {', '.join(unread)} could not be read"))
-    return [], why
 
 
 def read_pins_history(pins_dir):
@@ -386,7 +345,7 @@ def gather(args):
     saved, last_run, boots = read_state(state_path)
     cache = Path(args.cache) if args.cache else state_path.with_name(state_path.name + ".cache")
 
-    sources = args.ct or ["crt.sh", "certspotter"]
+    sources = args.ct or ["certspotter"]
     names = args.name or [NAME]
     seen, certificates, ct_counts, ct_unread, ct_malformed, ct_inventory = set(), [], {}, {}, {}, {}
     for name in names:
@@ -398,17 +357,6 @@ def gather(args):
                 unread[source] = e
             except CT_MALFORMED as e:
                 malformed[source] = e
-        if "crt.sh" in read and not covering(read["crt.sh"], name) and (any(covering(c, name) for c in read.values()) or unread):
-            del read["crt.sh"]
-            try:
-                again, why = reread_crtsh(name, read, unread)
-            except CT_MALFORMED as e:
-                malformed["crt.sh"] = e
-            else:
-                if why is None:
-                    read["crt.sh"] = again
-                else:
-                    unread["crt.sh"] = why
         for source, e in unread.items():
             ct_unread.setdefault(source, {})[name] = e
         if malformed:
@@ -578,7 +526,7 @@ def main(argv=None):
     parser.add_argument("--enclave", required=True, help="a checkout of trymorse/morse-enclave with its tags, for check 8's reading of the newest pinned image's trust.go")
     signer_watch.add_arguments(parser)
     parser.add_argument("--ack-boot", action="append", default=[], metavar="KEY_ID=URL", help="the HPKE key id of a boot that held an SPKI live and died before it could log a record of it, and the URL of the public note that says so; check 6 prints a note for that boot on every run instead of failing, and fails if the boot it names is kept but holds nothing unrecorded")
-    parser.add_argument("--ct", action="append", metavar="SOURCE", help="crt.sh, certspotter, or a JSON file of certspotter issuances with cert_der; both CT services if omitted")
+    parser.add_argument("--ct", action="append", metavar="SOURCE", help="certspotter, or a JSON file of certspotter issuances with cert_der; certspotter if omitted")
     parser.add_argument("--attestation", default=ATTESTATION_URL, help="the door's /v1/attestation URL, or a file holding its answer")
     parser.add_argument("--no-caa-sample", action="store_true", help="check the CAA history without adding a sample")
     parser.add_argument("--since", type=lambda s: datetime.fromisoformat(s).replace(tzinfo=timezone.utc), help="skip certificates that expired before this date")

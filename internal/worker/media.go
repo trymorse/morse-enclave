@@ -48,7 +48,7 @@ func (w *InProcess) openImages(o Opening) (Admission, error) {
 		return nil, apierr.InvalidParameter(err.Error())
 	}
 	oi := &openedImages{cuts: newCuts(), endpoint: w.endpoints[req.Model], generator: generator, screened: w.screened[req.Model], req: req, successor: w.retired[req.Model]}
-	return MediaAdmission{admitted: admitted{w.keep(o, oi)}, Route: req.Model, Units: req.N, References: len(req.References()), Resolution: req.Size.Resolution, Frames: req.ReferenceDigests()}, nil
+	return MediaAdmission{admitted: admitted{w.keep(o, oi)}, Route: req.Model, Units: req.N, References: len(req.References()), Resolution: req.Size.Resolution, Frames: req.ReferenceDigests(), PromptAsk: req.AsksPromptCheck()}, nil
 }
 
 func asRetiredImageNameWasServed(retired map[string]string, spec media.ImageSpec, req *media.ImageRequest) error {
@@ -83,7 +83,7 @@ func (o *openedImages) run(_ context.Context, w *InProcess, h Handle, g Grant, r
 	var imgs media.Images
 	err := o.unconsented(mg)
 	if err == nil {
-		err = w.screen(ctx, mg.PromptCheck, o.screened, promptcheck.Image, o.req.Prompt())
+		err = w.screen(ctx, mg.PromptCheck && (o.screened.Uncensored || o.req.AsksPromptCheck()), o.screened, promptcheck.Image, o.req.Prompt())
 	}
 	canceller, cancels := o.generator.(media.Canceller)
 	switch {

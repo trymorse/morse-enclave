@@ -64,6 +64,10 @@ type bucket struct {
 // only its own account, seen on every link of the first dev calls on 2026-11-17, is followed (docs.spicyapi.ai/docs/media).
 var spicyR2Accounts = []string{"fee727dd104ab86a982d8b79462c32a3"}
 
+// why: since 2026-11-27 spicyapi.ai links finished results on its own host (seen on a dev task), while uploads and
+// its documented result links stay on R2, so a result is followed on either.
+const spicyFilesHost = "files.spicyapi.ai"
+
 func PinsStorage() bool { return len(spicyR2Accounts) > 0 }
 
 func r2Accounts(ids []string) func(host string) bool {
@@ -76,6 +80,7 @@ func r2Accounts(ids []string) func(host string) bool {
 var (
 	resultsBucket = bucket{host: r2Accounts(spicyR2Accounts), path: "/spicy-production-results/"}
 	inputsBucket  = bucket{host: r2Accounts(spicyR2Accounts), path: "/spicy-production-inputs/"}
+	resultsHost   = bucket{host: func(host string) bool { return host == spicyFilesHost }, path: "/r/tasks/"}
 )
 
 func (b bucket) holds(raw string) bool {
@@ -90,14 +95,17 @@ type client struct {
 	api     upstream.Endpoint
 	storage *http.Client
 	results bucket
+	files   bucket
 	inputs  bucket
 	Poll    time.Duration
 }
 
 func newClient(baseURL, apiKey string, httpClient *http.Client) client {
 	api := upstream.Endpoint{BaseURL: baseURL, Auth: upstream.Bearer(apiKey), HTTP: httpClient, Refuse: refusal}
-	return client{api: api, storage: httpClient, results: resultsBucket, inputs: inputsBucket}
+	return client{api: api, storage: httpClient, results: resultsBucket, files: resultsHost, inputs: inputsBucket}
 }
+
+func (c client) holdsResult(link string) bool { return c.results.holds(link) || c.files.holds(link) }
 
 type envelope struct {
 	Code int             `json:"code"`
@@ -292,7 +300,7 @@ func (c client) storageAt(link string) upstream.Endpoint {
 // why: a result link is signed and carries its own credential, so it is fetched with no key
 // (https://docs.spicyapi.ai/docs/media#download).
 func (c client) fetch(ctx context.Context, link string) (media.Image, error) {
-	if !c.results.holds(link) {
+	if !c.holdsResult(link) {
 		return media.Image{}, errOffBucket
 	}
 	reply, err := c.storageAt(link).JSON(ctx, upstream.Request{Method: http.MethodGet, Header: http.Header{"Accept": {"*/*"}}}, nil, media.MaxImagesBody)

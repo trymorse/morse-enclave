@@ -62,7 +62,7 @@ func (o *openedVideo) submit(w *InProcess, g JobGrant, reply http.ResponseWriter
 		if err := o.unconsented(g); err != nil {
 			return media.Submitted{}, err
 		}
-		if err := w.screen(ctx, g.PromptCheck, o.screened, promptcheck.Video, o.req.Prompt()); err != nil {
+		if err := w.screen(ctx, g.PromptCheck && o.screened.Uncensored, o.screened, promptcheck.Video, o.req.Prompt()); err != nil {
 			return media.Submitted{}, err
 		}
 		ctx, cancel := context.WithTimeout(ctx, w.videoSubmit)

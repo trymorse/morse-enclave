@@ -193,6 +193,7 @@ type MediaAdmission struct {
 	References int
 	Resolution string                `json:",omitempty"`
 	Frames     []frameconsent.Digest `json:",omitempty"`
+	PromptAsk  bool                  `json:",omitempty"`
 }
 
 func (MediaAdmission) kind() admissionKind { return admitsMedia }

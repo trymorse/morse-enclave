@@ -95,37 +95,34 @@ class TwoHostsTest(Fixture):
         written = [json.loads(line) for line in (self.door.root / "caa.jsonl").read_text().splitlines()[2:]]
         self.assertEqual([(w["name"], w["caa"]) for w in written], [("inference.trymorse.ai", CAA), (self.SECOND, CAA)])
 
-    def crtsh_for_the_first_host_only(self):
-        rows = [{"id": 0, "name_value": "inference.trymorse.ai", "entry_timestamp": None}]
-        self.door.crtsh = {check_door.CRTSH_URL.format("trymorse.ai"): json.dumps(rows).encode(),
-                           check_door.CRTSH_CERT_URL.format(0): self.door.ct[0].public_bytes(serialization.Encoding.PEM),
-                           check_door.CRTSH_URL.format("morseinference.com"): urllib.error.URLError(OSError(101, "Network is unreachable"))}
+    def certspotter_for_the_first_host_only(self):
+        self.door.certspotter_answers("inference.trymorse.ai", [self.door.ct[0]])
+        self.door.certspotter_answers(self.SECOND, urllib.error.URLError(OSError(101, "Network is unreachable")))
         return "URLError(OSError(101, 'Network is unreachable'))"
 
     def test_a_ct_source_unread_for_the_second_host_still_judges_the_first_from_it(self):
-        error = self.crtsh_for_the_first_host_only()
+        error = self.certspotter_for_the_first_host_only()
         ct = self.door.root / "ct.json"
         rogue = self.door.rogue(["inference.trymorse.ai"])
-        code, out, verdict = self.run_both("--ct", "crt.sh", "--ct", str(ct))
+        code, out, verdict = self.run_both("--ct", "certspotter", "--ct", str(ct))
         self.assertEqual(code, 1, out)
-        self.assertIn(f"NOTE: crt.sh could not be read for api.morseinference.com, so this run judges check 1 for api.morseinference.com from {ct} alone: {error}", out)
+        self.assertIn(f"NOTE: certspotter could not be read for api.morseinference.com, so this run judges check 1 for api.morseinference.com from {ct} alone: {error}", out)
         self.assertIn(f"FAIL: {ct} 2 names inference.trymorse.ai {self.unrecorded(rogue)}, and CT made it public at", out)
         self.assertNotIn("returned no certificate covering", out)
-        self.assertEqual((verdict["failed"], verdict["hosts"], verdict["ct"]), ([1], ["inference.trymorse.ai"], {"crt.sh": error, str(ct): None}))
-        self.assertEqual(verdict["ct_hosts"], {"crt.sh": {"read": ["inference.trymorse.ai"], "unread": [self.SECOND]}, str(ct): {"read": ["inference.trymorse.ai", self.SECOND], "unread": []}})
+        self.assertEqual((verdict["failed"], verdict["hosts"], verdict["ct"]), ([1], ["inference.trymorse.ai"], {"certspotter": error, str(ct): None}))
+        self.assertEqual(verdict["ct_hosts"], {"certspotter": {"read": ["inference.trymorse.ai"], "unread": [self.SECOND]}, str(ct): {"read": ["inference.trymorse.ai", self.SECOND], "unread": []}})
 
     def test_a_host_no_ct_source_could_be_read_for_is_not_enforced_while_the_other_is_judged(self):
-        error = self.crtsh_for_the_first_host_only()
-        code, out, verdict = self.run_both("--ct", "crt.sh")
+        error = self.certspotter_for_the_first_host_only()
+        code, out, verdict = self.run_both("--ct", "certspotter")
         self.assertEqual(code, 2, out)
-        self.assertEqual(self.section(out, "check 1"), f"  NOT ENFORCED: check 1 not enforced for api.morseinference.com on this run: no CT source could be read for it: crt.sh: {error}")
+        self.assertEqual(self.section(out, "check 1"), f"  NOT ENFORCED: check 1 not enforced for api.morseinference.com on this run: no CT source could be read for it: certspotter: {error}")
         self.assertEqual((verdict["kind"], verdict["unenforced"], verdict["hosts"]), ("unenforced", [1], [self.SECOND]))
         rogue = certificate(ec.generate_private_key(ec.SECP256R1()), self.door.ca, "inference.trymorse.ai", ["inference.trymorse.ai"], issuer_cn="test ca")
-        self.door.crtsh[check_door.CRTSH_URL.format("trymorse.ai")] = json.dumps([{"id": n, "name_value": "inference.trymorse.ai", "entry_timestamp": None} for n in (0, 1)]).encode()
-        self.door.crtsh[check_door.CRTSH_CERT_URL.format(1)] = rogue.public_bytes(serialization.Encoding.PEM)
-        code, out, verdict = self.run_both("--ct", "crt.sh")
+        self.door.certspotter_answers("inference.trymorse.ai", [self.door.ct[0], rogue])
+        code, out, verdict = self.run_both("--ct", "certspotter")
         self.assertEqual(code, 1, out)
-        self.assertIn(f"FAIL: crt.sh 1 names inference.trymorse.ai {self.unrecorded(rogue)}, and CT made it public at", out)
+        self.assertIn(f"FAIL: certspotter 1 names inference.trymorse.ai {self.unrecorded(rogue)}, and CT made it public at", out)
         self.assertEqual((verdict["failed"], verdict["hosts"]), ([1], ["inference.trymorse.ai"]))
 
     def test_a_revoked_wildcard_for_the_second_domain_leaves_the_second_host_out_of_a_first_host_failure(self):
@@ -148,26 +145,24 @@ class TwoHostsTest(Fixture):
         self.assertEqual(verdict["unjudged"], [])
 
     def test_a_certificate_that_does_not_parse_for_the_second_host_leaves_it_not_enforced_while_the_first_is_judged(self):
-        self.crtsh_for_the_first_host_only()
-        rows = [{"id": 7, "name_value": self.SECOND, "entry_timestamp": None}]
-        self.door.crtsh[check_door.CRTSH_URL.format("morseinference.com")] = json.dumps(rows).encode()
-        self.door.crtsh[check_door.CRTSH_CERT_URL.format(7)] = b"not a certificate"
+        self.certspotter_for_the_first_host_only()
+        self.door.certspotter_answers(self.SECOND, [{"id": "7", "cert_der": base64.b64encode(b"not a certificate").decode()}])
         ct = self.door.root / "ct.json"
         rogue = self.door.rogue(["inference.trymorse.ai"])
-        code, out, verdict = self.run_both("--ct", "crt.sh", "--ct", str(ct))
+        code, out, verdict = self.run_both("--ct", "certspotter", "--ct", str(ct))
         self.assertEqual(code, 1, out)
-        self.assertIn("NOT ENFORCED: check 1 not enforced for api.morseinference.com on this run: crt.sh answered with an entry this watcher could not parse, so a certificate for api.morseinference.com may have gone unread: ValueError(", out)
+        self.assertIn("NOT ENFORCED: check 1 not enforced for api.morseinference.com on this run: certspotter answered with an entry this watcher could not parse, so a certificate for api.morseinference.com may have gone unread: ValueError(", out)
         self.assertIn(f"FAIL: {ct} 2 names inference.trymorse.ai {self.unrecorded(rogue)}", out)
         self.assertEqual((verdict["failed"], verdict["unenforced"], verdict["hosts"]), ([1], [1], ["inference.trymorse.ai"]))
 
-    def test_a_ct_entry_missing_its_names_for_the_second_host_leaves_it_not_enforced_while_the_first_is_judged(self):
-        self.crtsh_for_the_first_host_only()
-        self.door.crtsh[check_door.CRTSH_URL.format("morseinference.com")] = json.dumps([{"id": 7, "entry_timestamp": None}]).encode()
-        code, out, verdict = self.run_both("--ct", "crt.sh")
+    def test_a_ct_entry_missing_its_certificate_for_the_second_host_leaves_it_not_enforced_while_the_first_is_judged(self):
+        self.certspotter_for_the_first_host_only()
+        self.door.certspotter_answers(self.SECOND, [{"id": "7"}])
+        code, out, verdict = self.run_both("--ct", "certspotter")
         self.assertEqual(code, 2, out)
-        self.assertEqual(self.section(out, "check 1"), f"  NOT ENFORCED: check 1 not enforced for {self.SECOND} on this run: crt.sh answered with an entry this watcher could not parse, so a certificate for {self.SECOND} may have gone unread: KeyError('name_value')")
-        self.assertEqual((verdict["unenforced"], verdict["hosts"], verdict["ct_hosts"]), ([1], [self.SECOND], {"crt.sh": {"read": ["inference.trymorse.ai"], "unread": [self.SECOND]}}))
-        self.assertEqual(verdict["ct"], {"crt.sh": "KeyError('name_value')"})
+        self.assertEqual(self.section(out, "check 1"), f"  NOT ENFORCED: check 1 not enforced for {self.SECOND} on this run: certspotter answered with an entry this watcher could not parse, so a certificate for {self.SECOND} may have gone unread: KeyError('cert_der')")
+        self.assertEqual((verdict["unenforced"], verdict["hosts"], verdict["ct_hosts"]), ([1], [self.SECOND], {"certspotter": {"read": ["inference.trymorse.ai"], "unread": [self.SECOND]}}))
+        self.assertEqual(verdict["ct"], {"certspotter": "KeyError('cert_der')"})
 
     def test_a_dns_answer_that_is_not_an_object_for_the_second_host_leaves_its_check_5_not_enforced(self):
         def doh(url):
@@ -184,12 +179,12 @@ class TwoHostsTest(Fixture):
     def test_a_rogue_certificate_still_fails_when_every_name_has_a_source_that_does_not_parse(self):
         broken = self.door.root / "broken.json"
         broken.write_text(json.dumps([{"id": "0"}]))
-        self.crtsh_for_the_first_host_only()
         rogue = self.door.rogue(["inference.trymorse.ai"])
-        self.door.crtsh[check_door.CRTSH_CERT_URL.format(0)] = self.door.ct[-1].public_bytes(serialization.Encoding.PEM)
-        code, out, verdict = self.run_both("--ct", "crt.sh", "--ct", str(broken))
+        self.certspotter_for_the_first_host_only()
+        self.door.certspotter_answers("inference.trymorse.ai", [self.door.ct[-1]])
+        code, out, verdict = self.run_both("--ct", "certspotter", "--ct", str(broken))
         self.assertEqual(code, 1, out)
-        self.assertIn(f"FAIL: crt.sh 0 names inference.trymorse.ai {self.unrecorded(rogue)}", out)
+        self.assertIn(f"FAIL: certspotter 0 names inference.trymorse.ai {self.unrecorded(rogue)}", out)
         for name in ("inference.trymorse.ai", self.SECOND):
             self.assertIn(f"NOT ENFORCED: check 1 not enforced for {name} on this run: {broken} answered with an entry this watcher could not parse", out)
         self.assertEqual((verdict["failed"], verdict["hosts"]), ([1], ["inference.trymorse.ai"]))

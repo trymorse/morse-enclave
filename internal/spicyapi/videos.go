@@ -20,6 +20,12 @@ import (
 
 const expired = "expired"
 
+const (
+	noAsset          = "no_asset"
+	assetUnavailable = "asset_unavailable"
+	untrustedLink    = "untrusted_link"
+)
+
 type videoModel struct {
 	media.VideoSpec
 	sendsExpansion bool
@@ -189,9 +195,10 @@ func (p *Videos) PollVideo(ctx context.Context, vendorID string) (jobs.Poll, err
 	case !rec.done() || !rec.Settled:
 		return jobs.Poll{Status: jobs.Running}, nil
 	case rec.State != succeeded:
-		return jobs.Poll{Status: jobs.Failed, Failure: videoFailure(rec), Cost: rec.cost()}, nil
-	case p.result(rec) == "":
-		return jobs.Poll{Status: jobs.Failed, Failure: jobs.UpstreamError, Cost: rec.cost()}, nil
+		return jobs.Poll{Status: jobs.Failed, Failure: videoFailure(rec), Cost: rec.cost(), Why: stateReason(rec)}, nil
+	}
+	if _, why := p.result(rec); why != "" {
+		return jobs.Poll{Status: jobs.Failed, Failure: jobs.UpstreamError, Cost: rec.cost(), Why: why}, nil
 	}
 	return jobs.Poll{Status: jobs.Completed, Cost: rec.cost()}, nil
 }
@@ -206,13 +213,29 @@ func videoFailure(rec record) jobs.Failure {
 	return jobs.UpstreamError
 }
 
-func (p *Videos) result(rec record) string {
+func stateReason(rec record) string {
+	switch {
+	case rec.ErrorCode == contentRejected:
+		return contentRejected
+	case rec.State == "failed", rec.State == expired, rec.State == "canceled":
+		return "state_" + rec.State
+	}
+	return "state_unknown"
+}
+
+func (p *Videos) result(rec record) (link, why string) {
+	why = noAsset
 	for _, a := range rec.Output.Assets {
-		if !a.Unavailable && p.results.holds(a.URL) {
-			return a.URL
+		switch {
+		case a.Unavailable:
+			why = assetUnavailable
+		case !p.holdsResult(a.URL):
+			why = untrustedLink
+		default:
+			return a.URL, ""
 		}
 	}
-	return ""
+	return "", why
 }
 
 // why: a result link lasts about 20 minutes and Morse keeps a video for an hour, so each download reads the task
@@ -225,8 +248,8 @@ func (p *Videos) OpenVideo(ctx context.Context, out media.Output) (io.ReadCloser
 		}
 		return nil, 0, err
 	}
-	link := p.result(rec)
-	if rec.State != succeeded || link == "" {
+	link, why := p.result(rec)
+	if rec.State != succeeded || why != "" {
 		return nil, 0, media.ErrVideoGone
 	}
 	return media.Stream(ctx, p.storage, link, []int{http.StatusNotFound, http.StatusForbidden, http.StatusGone})

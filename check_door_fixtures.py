@@ -456,7 +456,7 @@ class Door:
         self.visibility = "public"
         self.doh = None
         self.tuf = None
-        self.crtsh = None
+        self.certspotter = None
         self.revoking = CA()
         self.tags = {"v0": trust_go(WITNESSES, 3), "v1": trust_go(WITNESSES, 3)}
         self.built, self.committed, self.pinned = None, None, None
@@ -663,10 +663,10 @@ class Door:
             if url not in self.tuf:
                 raise not_found(url)
             return self.tuf[url]
-        if self.crtsh is not None and url in self.crtsh:
-            if isinstance(self.crtsh[url], Exception):
-                raise self.crtsh[url]
-            return self.crtsh[url]
+        if self.certspotter is not None and url in self.certspotter:
+            if isinstance(self.certspotter[url], Exception):
+                raise self.certspotter[url]
+            return self.certspotter[url]
         served = self.revoking.serve(url)
         if served is not None:
             return served
@@ -684,7 +684,20 @@ class Door:
                 for tag, when in self.revocations.items():
                     self.commit_pins(self.revoked(tag), when, self.authored.get(tag))
 
-    def run(self, *extra, sample=False, trusted_root=True):
+    def certspotter_answers(self, name, answer):
+        """certspotter answers for name with one page of the certificates in answer, or with the page of entries given as
+        dicts, or raises the exception given."""
+        url = check_door.CERTSPOTTER_URL.format(name)
+        self.certspotter = self.certspotter or {}
+        if isinstance(answer, Exception):
+            self.certspotter[url] = answer
+            return
+        page = [c if isinstance(c, dict) else {"id": str(n), "cert_der": b64(c.public_bytes(DER))} for n, c in enumerate(answer)]
+        self.certspotter[url] = json.dumps(page).encode()
+        if page:
+            self.certspotter[f"{url}&after={page[-1]['id']}"] = b"[]"
+
+    def run(self, *extra, sample=False, trusted_root=True, default_ct=False):
         self.build_pins()
         self.commit_statements()
         self.commit_records()
@@ -695,7 +708,7 @@ class Door:
         argv = ["--pins", str(self.root / "pins"), "--records", str(self.root / "records"), "--enclave", str(self.root / "enclave"),
                 "--attestation", str(self.root / "attestation.json"), "--caa-history", str(self.root / "caa.jsonl"),
                 "--sequence-state", str(self.root / "sequence.json"), *extra]
-        if not any(a == "--ct" for a in extra):
+        if not default_ct and not any(a == "--ct" for a in extra):
             argv += ["--ct", str(self.root / "ct.json")]
         if not sample:
             argv.append("--no-caa-sample")

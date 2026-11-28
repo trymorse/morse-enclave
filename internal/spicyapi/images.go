@@ -28,7 +28,6 @@ type imageModel struct {
 	sendsThinking  bool
 	sizes          map[media.Size]media.Dims
 	editsOne       bool
-	adult          bool
 }
 
 // why: spicyapi.ai's catalog (GET /console/v1/catalog/models/{model}, inputSchema, 2026-11-17) refuses a field a schema
@@ -56,13 +55,13 @@ var imageModels = map[string]imageModel{
 	// height, at most 1536 on Z-Image Spicy and 2560 on its Pro, and Qwen Image Edit Spicy one image_url and no size, so
 	// its edit keeps the shape of the image it edits.
 	"alibaba/z-image-spicy/text-to-image": {
-		ImageSpec: media.ImageSpec{AspectRatios: media.SevenRatios, Resolutions: []string{"1k"}}, sizes: media.StandardSizes, sendsExpansion: true, adult: true,
+		ImageSpec: media.ImageSpec{AspectRatios: media.SevenRatios, Resolutions: []string{"1k"}}, sizes: media.StandardSizes, sendsExpansion: true,
 	},
 	"alibaba/z-image-spicy-pro/text-to-image": {
-		ImageSpec: media.ImageSpec{AspectRatios: media.AspectRatios, Resolutions: media.UpTo2K}, sizes: media.StandardSizes, sendsExpansion: true, adult: true,
+		ImageSpec: media.ImageSpec{AspectRatios: media.AspectRatios, Resolutions: media.UpTo2K}, sizes: media.StandardSizes, sendsExpansion: true,
 	},
 	"alibaba/qwen-image-spicy-edit/edit": {
-		ImageSpec: media.ImageSpec{AspectRatios: media.SevenRatios, Resolutions: []string{"1k"}, MaxReferences: 1}, editsOne: true, adult: true,
+		ImageSpec: media.ImageSpec{AspectRatios: media.SevenRatios, Resolutions: []string{"1k"}, MaxReferences: 1}, editsOne: true,
 	},
 }
 
@@ -84,7 +83,8 @@ func NewImages(baseURL, apiKey, model string, httpClient *http.Client) (*Images,
 	return &Images{client: newClient(baseURL, apiKey, httpClient), imageModel: info, model: model}, nil
 }
 
-func (p *Images) FramesNeedConsent() bool { return p.adult }
+// why: every spicyapi image route is uncensored, and each asks the photo promise before it takes an uploaded picture.
+func (p *Images) FramesNeedConsent() bool { return true }
 
 func (p *Images) CheckImages(req *media.ImageRequest) error {
 	if err := p.ImageSpec.CheckImages(req); err != nil {

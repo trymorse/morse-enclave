@@ -181,15 +181,15 @@ var capabilities = map[Provider]capability{
 		refusesDryAccount: true,
 		openAIHost:        true,
 	},
-	// why: Silk Compute names no legal entity in its terms (https://silkcompute.com/terms, read 2026-11-21), so its zero
-	// retention rests on its privacy policy alone. It answers a dry account with 402 insufficient_credits
-	// (https://silkcompute.com/docs/errors).
-	ProviderSilk: {
+	// why: Lyber's zero retention covers only the models it serves through Inference.net with ZDR on (Kimi, DeepSeek and
+	// HY4; HY4 Flash is not confirmed), so a route may name only a model lyberZDRModels in cmd/proxy lists. It answers
+	// a dry account with 402 insufficient_credit (https://lyber.ai/docs/api/errors).
+	ProviderLyber: {
 		kinds:             servedAt{catalog.KindChat: privateOnly},
 		zdrAt:             privateOnly,
-		zdrWhy:            "because Silk Compute's privacy policy (https://silkcompute.com/privacy, updated 2026-11-14) stores no prompt and no model answer, and says the infrastructure providers it uses store none either, which is zero data retention per Silk Compute's terms; no per-request header",
-		zdrLink:           "https://silkcompute.com/privacy",
-		zdrLinkChecked:    "2026-11-21",
+		zdrWhy:            "because Lyber's privacy policy (https://lyber.ai/privacy, updated 2026-11-24) serves its Kimi, DeepSeek and HY4 models through Inference.net with full zero data retention, processing prompts and outputs transiently with no content logging or retention, and its own usage ledger keeps no prompt or output, which is zero data retention per Lyber's terms (Tektonik Labs, LLC, https://lyber.ai/terms) only for those models; no per-request header",
+		zdrLink:           "https://lyber.ai/privacy",
+		zdrLinkChecked:    "2026-11-27",
 		zdrHeld:           HeldPublishedTerms,
 		needsKey:          true,
 		refusesDryAccount: true,

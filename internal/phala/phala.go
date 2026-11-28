@@ -87,12 +87,14 @@ var errSessionNotAccepted = apierr.Error{Status: http.StatusPreconditionFailed, 
 func refuseSealed(r upstream.Reply) error {
 	var body struct {
 		Error struct {
+			Type    string `json:"type"`
 			Code    any    `json:"code"`
 			Message string `json:"message"`
 		} `json:"error"`
 	}
 	parsed := json.Unmarshal(r.Body, &body) == nil
-	if parsed && r.Status == http.StatusPreconditionFailed && body.Error.Code == errSessionNotAccepted.Code {
+	// why: the gateway names this refusal in type and sends a null code.
+	if parsed && r.Status == http.StatusPreconditionFailed && (body.Error.Type == errSessionNotAccepted.Code || body.Error.Code == errSessionNotAccepted.Code) {
 		return errSessionNotAccepted
 	}
 	refusal := apierr.SanitizedUpstreamError(r.Status, r.Body)
@@ -117,6 +119,7 @@ type Route struct {
 	verbatim openaicompat.Relay
 	onBehalf openaicompat.Provider
 	keys     Keys
+	sealed   *pins
 }
 
 type Keys interface {
@@ -150,7 +153,10 @@ func New(baseURL, upstreamModel, apiKey string, clients Clients, keys Keys) *Rou
 	sealed.Refuse = refuseSealed
 	plaintext := sealed
 	plaintext.HTTP = clients.Plaintext
+	// why: a plain chat's list is read over the same verified TLS its prompt travels.
+	own := &pins{gateway: NewGateway(baseURL, apiKey, clients.Plaintext), model: upstreamModel}
 	provider := func(sender openaicompat.Sender) openaicompat.Provider {
+		sender = pinnedSender{next: sender, pins: own}
 		return openaicompat.Provider{Sender: sender, Model: upstreamModel, Force: maps.Clone(constraint), LimitField: openaicompat.MaxTokens, ContinuousUsage: true}
 	}
 	inTheClear := provider(openaicompat.HTTPSender{Endpoint: plaintext})
@@ -161,6 +167,7 @@ func New(baseURL, upstreamModel, apiKey string, clients Clients, keys Keys) *Rou
 		verbatim: openaicompat.Relay{Endpoint: sealed, Model: upstreamModel, Force: maps.Clone(constraint), Admits: map[string]func(json.RawMessage) bool{"provider": admitsProvider}, Receipt: openaicompat.ReceiptHeaders(chat.ReceiptHeaders...), Proves: objects.prover(upstreamModel, keys)},
 		onBehalf: provider(openaicompat.SealedSender{Endpoint: plaintext, Sealer: sealer{model: upstreamModel, keys: keys}}),
 		keys:     keys,
+		sealed:   &pins{gateway: objects, model: upstreamModel},
 	}
 }
 
@@ -169,6 +176,9 @@ func (*Route) Speaks() *chat.Scheme { return e2ee.Scheme }
 func (r *Route) Check(req *chat.Request) error { return r.verbatim.Check(req) }
 
 func (r *Route) Relay(ctx context.Context, c chat.Call, sealed chat.E2EE, begin func(chat.Relayed) io.Writer) (chat.Replied, error) {
+	if err := r.sealed.admitSealed(ctx, c.Verbatim()); err != nil {
+		return chat.Replied{}, err
+	}
 	return r.verbatim.Relay(ctx, c, sealed, begin)
 }
 
@@ -279,8 +289,10 @@ type Listed struct {
 
 // Sessions lists every session the gateway holds now, for every model. A phala-direct one with an id that
 // is not a session id fails the list, since a browser could never fetch its record.
-func (g Gateway) Sessions(ctx context.Context) ([]Listed, error) {
-	raw, err := g.Object(ctx, sessionListPath, maxSessionList)
+func (g Gateway) Sessions(ctx context.Context) ([]Listed, error) { return g.list(ctx, "") }
+
+func (g Gateway) list(ctx context.Context, query string) ([]Listed, error) {
+	raw, err := g.Object(ctx, sessionListPath+query, maxSessionList)
 	if err != nil {
 		return nil, err
 	}
@@ -311,14 +323,15 @@ func (g Gateway) Sessions(ctx context.Context) ([]Listed, error) {
 
 // ListSessions lists the phala-direct sessions the gateway holds for the route's upstream model: the ones a
 // browser can audit before it sends.
+// why: the gateway resolves the model's name; for some models it is not the id the session records carry.
 func (r *Route) ListSessions(ctx context.Context) ([]chat.ListedSession, error) {
-	all, err := r.Sessions(ctx)
+	all, err := r.list(ctx, "?model="+url.QueryEscape(r.Model))
 	if err != nil {
 		return nil, err
 	}
 	mine := []chat.ListedSession{}
 	for _, s := range all {
-		if s.Verifier == attestation.PhalaDirectVerifier && s.Model == r.Model {
+		if s.Verifier == attestation.PhalaDirectVerifier {
 			mine = append(mine, s.ListedSession)
 		}
 	}

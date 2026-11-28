@@ -79,6 +79,7 @@ type Provider struct {
 	SendsCacheKey   bool
 	CacheKeyHeader  string
 	Admit           func(chat.Call) error
+	StreamsOnly     bool
 	Headers         func(chat.Call) http.Header
 	ChargeFields    []string
 	Bill            func(usage json.RawMessage) (json.RawMessage, error)
@@ -295,6 +296,9 @@ func (a *reasoningAnswer) answerFromReasoning(d chat.Delta) (string, bool) {
 }
 
 func (p *Provider) Complete(ctx context.Context, c chat.Call) (chat.Chunk, chat.Usage, error) {
+	if p.StreamsOnly {
+		return p.completeByStream(ctx, c)
+	}
 	if err := p.admit(c); err != nil {
 		return chat.Chunk{}, chat.Usage{}, err
 	}
@@ -542,6 +546,29 @@ func pinned(model string, force map[string]json.RawMessage) map[string]json.RawM
 	}
 	set["model"], _ = json.Marshal(model)
 	return set
+}
+
+// why: a host may stream more after a reply's finish, and the reply sent whole carries one finish.
+func (p *Provider) completeByStream(ctx context.Context, c chat.Call) (chat.Chunk, chat.Usage, error) {
+	streamed := *c.Request
+	streamed.Stream, streamed.IncludeUsage = true, true
+	c.Request = &streamed
+	var chunks []chat.Chunk
+	finished := false
+	usage, err := p.Stream(ctx, c, func(ch chat.Chunk) error {
+		d := ch.Delta()
+		if finished && (d.Delivered() || d.Finish != chat.FinishNone) {
+			return nil
+		}
+		finished = finished || d.Finish != chat.FinishNone
+		chunks = append(chunks, ch)
+		return nil
+	})
+	if err != nil {
+		return chat.Chunk{}, usage, err
+	}
+	body, err := Whole(chunks)
+	return body, usage, err
 }
 
 func (p *Provider) encode(c chat.Call, stream bool) ([]byte, error) {

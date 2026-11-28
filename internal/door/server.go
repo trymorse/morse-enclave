@@ -35,6 +35,7 @@ type Config struct {
 	Reports        Reporter
 	DialRelay      func(ctx context.Context, network, addr string) (net.Conn, error)
 	Clips          *clip.Receiver
+	Now            func() time.Time
 }
 
 type Reporter interface {
@@ -79,6 +80,10 @@ type route struct {
 
 var browserRoutes = []string{worker.ChatPattern}
 
+// why: a page on another site reads the catalog with a plain GET, which a browser sends without a preflight, so the
+// door carries its Origin for the relay to answer and serves no OPTIONS for it.
+var plainBrowserRoutes = []string{"GET /v1/catalog"}
+
 func passages() (map[string]route, error) {
 	table := map[string]route{seal.Endpoint: {passage: carriedPassage, limit: seal.MaxBody + seal.Overhead}}
 	for _, rt := range seal.Routes {
@@ -100,6 +105,14 @@ func passages() (map[string]route, error) {
 		table[pattern] = rt
 		_, path, _ := strings.Cut(pattern, " ")
 		table[http.MethodOptions+" "+path] = route{passage: preflightPassage, browser: true}
+	}
+	for _, pattern := range plainBrowserRoutes {
+		rt, ok := table[pattern]
+		if !ok || rt.passage != plainPassage {
+			return nil, fmt.Errorf("door: the browser route %q is not a plain route", pattern)
+		}
+		rt.browser = true
+		table[pattern] = rt
 	}
 	return table, nil
 }
@@ -265,6 +278,7 @@ type Server struct {
 	client   *http.Client
 	server   *http.Server
 	limits   limits
+	now      func() time.Time
 	budget   budget
 	entrance *entrance
 	closed   chan struct{}
@@ -284,9 +298,12 @@ func NewServer(c Config) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Server{door: c.Door, sealTo: bytes.Clone(c.SealTo), relay: strings.TrimSuffix(c.Relay.String(), "/"), proxyV2: c.RequireProxyV2, peers: slices.Clone(c.ProxyPeers), reports: c.Reports, limits: defaultLimits, entrance: &entrance{}, closed: make(chan struct{})}
+	s := &Server{door: c.Door, sealTo: bytes.Clone(c.SealTo), relay: strings.TrimSuffix(c.Relay.String(), "/"), proxyV2: c.RequireProxyV2, peers: slices.Clone(c.ProxyPeers), reports: c.Reports, limits: defaultLimits, now: c.Now, entrance: &entrance{}, closed: make(chan struct{})}
 	if s.reports == nil {
 		s.reports = NopReporter{}
+	}
+	if s.now == nil {
+		s.now = time.Now
 	}
 	dial := c.DialRelay
 	if dial == nil {
@@ -550,7 +567,7 @@ func (s *Server) send(r *http.Request, rt route, client netip.Addr, inner seal.I
 	method, target, body := r.Method, r.URL.RequestURI(), inner.Body()
 	var cek *[32]byte
 	if rt.passage == sealedPassage {
-		head := seal.Head{Method: r.Method, Path: target, Headers: flatten(worker.ContentHeaders(r.Header)), TS: time.Now().Unix()}
+		head := seal.Head{Method: r.Method, Path: target, Headers: flatten(worker.ContentHeaders(r.Header)), TS: s.now().Unix()}
 		sealed, key, err := inner.Seal([][]byte{s.sealTo}, head)
 		if err != nil {
 			return nil, nil, err

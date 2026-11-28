@@ -31,7 +31,7 @@ const (
 	ProviderSpicyAPI
 	ProviderPhalaZDR
 	ProviderHeabsy
-	ProviderSilk
+	ProviderLyber
 	ProviderAbliteration
 	ProviderOpenAIImages
 )
@@ -53,7 +53,7 @@ var providerNames = enum.Names[Provider]{
 	ProviderSpicyAPI:        "spicyapi",
 	ProviderPhalaZDR:        "phala-zdr",
 	ProviderHeabsy:          "heabsy",
-	ProviderSilk:            "silk",
+	ProviderLyber:           "lyber",
 	ProviderAbliteration:    "abliteration",
 	ProviderOpenAIImages:    "openai-images",
 }

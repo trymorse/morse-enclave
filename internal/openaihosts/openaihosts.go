@@ -25,6 +25,8 @@ type Host struct {
 	force          map[string]json.RawMessage
 	usageEachChunk bool
 	reasoningKeys  []string
+	streamsOnly    bool
+	pinsPhala      bool
 }
 
 // why: each host's chat template reads an assistant message's earlier reasoning from reasoning_content, and Wafer's
@@ -46,16 +48,17 @@ var (
 	DeepInfra = Host{Name: "deepinfra", limitField: openaicompat.MaxTokens, sendsCacheKey: true, reasoningKeys: replaysReasoningContent}
 	// why: Phala's zero data retention is a field of the request body, so it is forced on every request as the
 	// attested Phala route forces it (internal/phala), with the usage on each chunk that route asks for.
-	PhalaZDR = Host{Name: "phala-zdr", limitField: openaicompat.MaxTokens, force: map[string]json.RawMessage{"provider": json.RawMessage(phala.Constraint)}, usageEachChunk: true, reasoningKeys: replaysReasoningContent}
+	PhalaZDR = Host{Name: "phala-zdr", limitField: openaicompat.MaxTokens, force: map[string]json.RawMessage{"provider": json.RawMessage(phala.Constraint)}, usageEachChunk: true, reasoningKeys: replaysReasoningContent, pinsPhala: true}
 	Heabsy   = Host{Name: "heabsy", limitField: openaicompat.MaxTokens, reasoningKeys: replaysReasoningContent}
-	Silk     = Host{Name: "silk", limitField: openaicompat.MaxTokens, reasoningKeys: replaysReasoningContent}
+	// why: Lyber is always sent a stream, even for a reply the client asked for whole, which the provider joins.
+	Lyber = Host{Name: "lyber", limitField: openaicompat.MaxTokens, reasoningKeys: replaysReasoningContent, streamsOnly: true}
 	// why: Abliteration documents prompt_cache_key as the routing hint that keeps a conversation's requests on a warm
 	// cache (https://docs.abliteration.ai/capabilities/prompt-caching.md).
 	Abliteration = Host{Name: "abliteration", limitField: openaicompat.MaxTokens, sendsCacheKey: true, reasoningKeys: replaysReasoningContent}
 )
 
 func Hosts() []Host {
-	return []Host{Wafer, Isoquant, Novita, Morph, DeepInfra, PhalaZDR, Heabsy, Silk, Abliteration}
+	return []Host{Wafer, Isoquant, Novita, Morph, DeepInfra, PhalaZDR, Heabsy, Lyber, Abliteration}
 }
 
 func (h Host) Endpoint(baseURL, key string, client *http.Client) upstream.Endpoint {
@@ -72,8 +75,12 @@ func (h Host) Endpoint(baseURL, key string, client *http.Client) upstream.Endpoi
 func (h Host) SwitchesThinking() bool { return h.thinkingField != "" }
 
 func (h Host) NewChat(baseURL, key, model string, fixes catalog.Fixes, client *http.Client) *openaicompat.Provider {
+	var sender openaicompat.Sender = openaicompat.HTTPSender{Endpoint: h.Endpoint(baseURL, key, client)}
+	if h.pinsPhala {
+		sender = phala.PinSessions(h.Endpoint(baseURL, key, client), model, client)
+	}
 	return &openaicompat.Provider{
-		Sender:          openaicompat.HTTPSender{Endpoint: h.Endpoint(baseURL, key, client)},
+		Sender:          sender,
 		Model:           model,
 		Force:           maps.Clone(h.force),
 		ContinuousUsage: h.usageEachChunk,
@@ -84,5 +91,6 @@ func (h Host) NewChat(baseURL, key, model string, fixes catalog.Fixes, client *h
 		ReasoningKeys:   h.reasoningKeys,
 		SendsCacheKey:   h.sendsCacheKey,
 		CacheKeyHeader:  h.cacheKeyHeader,
+		StreamsOnly:     h.streamsOnly,
 	}
 }
