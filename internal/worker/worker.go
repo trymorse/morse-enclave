@@ -128,6 +128,7 @@ type Opening struct {
 	veilHead      json.RawMessage
 	veilPartition string
 	clipKey       string
+	ctx           context.Context
 }
 
 func ContentHeaders(from http.Header) http.Header {
@@ -166,7 +167,6 @@ type ChatAdmission struct {
 	Affinity    affinity.Digest `json:",omitzero"`
 	ByOpening   bool            `json:",omitempty"`
 	MaxPrice    money.PriceCap  `json:",omitzero"`
-	Sealable    bool
 	OnBehalf    bool
 	PromptSize  int
 	PromptBytes limits.Kibibytes
@@ -182,6 +182,10 @@ type ChatAdmission struct {
 	Character     chat.Character
 	// PrivacyVeil is set when the chat asked for the Veil, which scans it when it runs.
 	PrivacyVeil *VeilAdmission `json:",omitempty"`
+	SealedNonce string         `json:",omitempty"`
+	// why: a sealed Phala chat's pinned session ids reach the gateway, never the model, so the prompt estimate and
+	// its hold leave them out; PromptSize keeps them, since it bounds what a smaller host must carry.
+	PinBytes int `json:",omitempty"`
 }
 
 func (ChatAdmission) kind() admissionKind { return admitsChat }
@@ -306,6 +310,7 @@ type Measured struct {
 	SealedStatus      int    `json:",omitempty"`
 	SealedCode        string `json:",omitempty"`
 	Health            health.Observation
+	ResultRefused     string `json:",omitempty"`
 	Follow            Follow
 	Unsampled         bool                `json:"-"`
 	Refusal           measure.RefusalCode `json:",omitempty"`

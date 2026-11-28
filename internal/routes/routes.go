@@ -3,6 +3,7 @@ package routes
 import (
 	"fmt"
 	"slices"
+	"time"
 
 	"morse/backend/internal/attester"
 	"morse/backend/internal/billing/measure"
@@ -176,6 +177,19 @@ func (rt Route) Hedgeable() bool {
 func (rt Route) SilentWhileReasoning() bool {
 	up, vendor := rt.Upstream.(Vendor)
 	return vendor && capabilities[up.Provider].silentWhileReasoning
+}
+
+// why: the person waits on a silent call this long before they hear it failed, whatever its route's longest think.
+const maxAnswerWait = 10 * time.Minute
+
+func (rt Route) AnswerWait() time.Duration {
+	c, ok := ChatOf(rt.Serves)
+	if !ok || !rt.SilentWhileReasoning() || c.ReasoningView.Summarizes() || c.HiddenReasoningTPS <= 0 {
+		return 0
+	}
+	// why: a first chunk that waits out hidden reasoning may be as late as the whole output limit thought through at
+	// the route's measured rate. Zero asks for no wait of the route's own.
+	return min(time.Duration(c.MaxOutputTokens)*time.Second/time.Duration(c.HiddenReasoningTPS), maxAnswerWait)
 }
 
 type Upstream interface {

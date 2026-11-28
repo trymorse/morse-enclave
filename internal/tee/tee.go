@@ -226,7 +226,7 @@ func (g phalaGate) Route(up attester.Upstream) chat.VerbatimRoute { return g.rou
 func (g phalaGate) Plain(up attester.Upstream) (Plain, bool) { return g.route(up), true }
 
 func (g phalaGate) route(up attester.Upstream) *phala.Route {
-	return phala.New(up.BaseURL, up.Model, up.APIKey, phala.Clients{Plaintext: g.Client(), Sealed: g.Unbound()}, g)
+	return phala.New(up.BaseURL, up.Model, up.APIKey, phala.Clients{Chats: g.Client(), Objects: g.Unbound()}, g)
 }
 
 type nearVendor struct{ vendor }

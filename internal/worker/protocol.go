@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"morse/backend/internal/apierr"
+	"morse/backend/internal/catalog"
 	"morse/backend/internal/chat"
 	"morse/backend/internal/e2ee"
 	"morse/backend/internal/e2ee/ehbp"
@@ -64,7 +65,7 @@ func protocolRefusal(err error) apierr.Error {
 
 func hintedHexOnly(err error) error {
 	var e apierr.Error
-	if !errors.As(err, &e) || e.Code != e2ee.ErrHeaderMissing.Type {
+	if !errors.As(err, &e) || e.Code != e2ee.ErrHeaderMissing.Type && e.Code != catalog.ErrKeyE2EE.Code {
 		return err
 	}
 	e.Message += " A plain message made only of long hex reads as ciphertext. Add any other text to it to send it plain."

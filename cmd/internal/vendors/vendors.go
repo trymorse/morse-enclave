@@ -32,20 +32,19 @@ import (
 )
 
 const (
-	responseHeaderTimeout = 2 * time.Minute
-	maxIdleConnsPerHost   = 64
+	maxIdleConnsPerHost = 64
 	// why: Go's default 90 s drop made a send after a pause pay a new TCP and TLS handshake through the
 	// enclave's egress; a vendor that closes an idle connection sooner tells the transport, which dials afresh.
 	idleConnTimeout = 15 * time.Minute
 	// why: a free HTTP/2 PING on a quiet connection finds one the path dropped silently, which the longer idle
-	// keep would otherwise hand a request that then waits out responseHeaderTimeout.
+	// keep would otherwise hand a request that then waits out upstream.HeaderWait or its endpoint's AnswerWait.
 	sendPingTimeout = 30 * time.Second
 	pingTimeout     = 10 * time.Second
 )
 
 func NewClient() (*http.Transport, *http.Client) {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
-	transport.ResponseHeaderTimeout = responseHeaderTimeout
+	transport.ResponseHeaderTimeout = upstream.HeaderWait
 	transport.MaxIdleConnsPerHost = maxIdleConnsPerHost
 	transport.IdleConnTimeout = idleConnTimeout
 	transport.HTTP2 = &http.HTTP2Config{SendPingTimeout: sendPingTimeout, PingTimeout: pingTimeout}
@@ -124,7 +123,7 @@ func ChatProvider(rt routes.Route, key string, client *http.Client) (chat.Provid
 		if up.Attester != attester.Phala {
 			return nil, fmt.Errorf("route %q: %s serves no plaintext chat", rt.Model, up.Attester.Name)
 		}
-		return phala.New(rt.BaseURL, rt.UpstreamModel, key, phala.Clients{Plaintext: client, Sealed: client}, nil), nil
+		return phala.New(rt.BaseURL, rt.UpstreamModel, key, phala.Clients{Chats: client, Objects: client}, nil), nil
 	}
 	c, isChat := routes.ChatOf(rt.Serves)
 	newProvider := chatProviders[rt.Upstream.(routes.Vendor).Provider]
@@ -274,7 +273,7 @@ func openAIProvider(rt routes.Route, _ routes.Chat, key string, d Deps) chat.Pro
 func translating(newProvider func(baseURL, key, model string, client *http.Client) *completions.Provider) newChatProvider {
 	return func(rt routes.Route, c routes.Chat, key string, d Deps) chat.Provider {
 		p := newProvider(rt.BaseURL, key, rt.UpstreamModel, d.Client)
-		p.ReasoningView = c.ReasoningView
+		p.ReasoningView, p.AnswerWait = c.ReasoningView, rt.AnswerWait()
 		return p
 	}
 }

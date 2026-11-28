@@ -140,32 +140,31 @@ func NewGateway(baseURL, apiKey string, client *http.Client) Gateway {
 	return Gateway{upstream.Objects(baseURL, apiKey, client)}
 }
 
-// Clients are the two ways a route reaches its gateway. A prompt in the clear travels only on Plaintext.
-// Sealed carries what its reader checks against the enclave's quote: a sealed body, the report, a receipt.
+// why: every chat, sealed or not, must reach a TLS key a verified report lists. The report, a receipt and a session
+// record are checked against the enclave's quote on their own, so Objects may reach any key.
 type Clients struct {
-	Plaintext *http.Client
-	Sealed    *http.Client
+	Chats   *http.Client
+	Objects *http.Client
 }
 
 func New(baseURL, upstreamModel, apiKey string, clients Clients, keys Keys) *Route {
-	objects := NewGateway(baseURL, apiKey, clients.Sealed)
-	sealed := objects.Endpoint
-	sealed.Refuse = refuseSealed
-	plaintext := sealed
-	plaintext.HTTP = clients.Plaintext
+	objects := NewGateway(baseURL, apiKey, clients.Objects)
+	chats := objects.Endpoint
+	chats.HTTP = clients.Chats
+	chats.Refuse = refuseSealed
 	// why: a plain chat's list is read over the same verified TLS its prompt travels.
-	own := &pins{gateway: NewGateway(baseURL, apiKey, clients.Plaintext), model: upstreamModel}
+	own := &pins{gateway: NewGateway(baseURL, apiKey, clients.Chats), model: upstreamModel}
 	provider := func(sender openaicompat.Sender) openaicompat.Provider {
 		sender = pinnedSender{next: sender, pins: own}
 		return openaicompat.Provider{Sender: sender, Model: upstreamModel, Force: maps.Clone(constraint), LimitField: openaicompat.MaxTokens, ContinuousUsage: true}
 	}
-	inTheClear := provider(openaicompat.HTTPSender{Endpoint: plaintext})
+	inTheClear := provider(openaicompat.HTTPSender{Endpoint: chats})
 	inTheClear.ReasoningKeys = []string{"reasoning_content"}
 	return &Route{
 		Provider: inTheClear,
 		Gateway:  objects,
-		verbatim: openaicompat.Relay{Endpoint: sealed, Model: upstreamModel, Force: maps.Clone(constraint), Admits: map[string]func(json.RawMessage) bool{"provider": admitsProvider}, Receipt: openaicompat.ReceiptHeaders(chat.ReceiptHeaders...), Proves: objects.prover(upstreamModel, keys)},
-		onBehalf: provider(openaicompat.SealedSender{Endpoint: plaintext, Sealer: sealer{model: upstreamModel, keys: keys}}),
+		verbatim: openaicompat.Relay{Endpoint: chats, Model: upstreamModel, Force: maps.Clone(constraint), Admits: map[string]func(json.RawMessage) bool{"provider": admitsProvider}, Receipt: openaicompat.ReceiptHeaders(chat.ReceiptHeaders...), Proves: objects.prover(upstreamModel, keys)},
+		onBehalf: provider(openaicompat.SealedSender{Endpoint: chats, Sealer: sealer{model: upstreamModel, keys: keys}}),
 		keys:     keys,
 		sealed:   &pins{gateway: objects, model: upstreamModel},
 	}
@@ -174,6 +173,39 @@ func New(baseURL, upstreamModel, apiKey string, clients Clients, keys Keys) *Rou
 func (*Route) Speaks() *chat.Scheme { return e2ee.Scheme }
 
 func (r *Route) Check(req *chat.Request) error { return r.verbatim.Check(req) }
+
+// why: Phala's gateway sends a request that names no session to any server that meets the constraint, Chutes'
+// included.
+func PinsSessions(req *chat.Request) bool {
+	raw, ok := req.Field("provider")
+	if !ok {
+		return false
+	}
+	var p struct {
+		Sessions json.RawMessage `json:"aci_session_ids"`
+	}
+	if json.Unmarshal(raw, &p) != nil {
+		return true
+	}
+	ids := bytes.TrimSpace(p.Sessions)
+	return len(ids) > 0 && !bytes.Equal(ids, []byte("null")) && !bytes.Equal(bytes.Join(bytes.Fields(ids), nil), []byte("[]"))
+}
+
+func PinnedSessions(req *chat.Request) []string {
+	raw, ok := req.Field("provider")
+	if !ok {
+		return nil
+	}
+	var p struct {
+		Sessions []string `json:"aci_session_ids"`
+	}
+	if json.Unmarshal(raw, &p) != nil {
+		return nil
+	}
+	return p.Sessions
+}
+
+var ErrSessionsRequired = apierr.Invalid(http.StatusBadRequest, "e2ee_sessions_required", `On Phala e2ee models, set provider to {"aci_verified":true,"zdr":true,"aci_session_ids":[...]} naming 1 to 16 sessions from GET /v1/aci/sessions that you audited, so the gateway sends the request only to a model server already checked.`)
 
 func (r *Route) Relay(ctx context.Context, c chat.Call, sealed chat.E2EE, begin func(chat.Relayed) io.Writer) (chat.Replied, error) {
 	if err := r.sealed.admitSealed(ctx, c.Verbatim()); err != nil {
@@ -200,6 +232,18 @@ func (r *Route) SealPrompt(sealed chat.E2EE, prompt string) (string, error) {
 		return "", err
 	}
 	return e2ee.Seal(key, p.RequestAAD(r.verbatim.Model, 0), []byte(prompt))
+}
+
+func (r *Route) SealPromptForClient(sealed chat.E2EE, prompt string) (string, error) {
+	p, ok := sealed.(e2ee.Params)
+	if !ok {
+		return "", fmt.Errorf("phala: a request sealed under %T", sealed)
+	}
+	key, err := p.ClientX25519()
+	if err != nil {
+		return "", err
+	}
+	return e2ee.Seal(key, p.PromptAAD(r.verbatim.Model), []byte(prompt))
 }
 
 func (r *Route) OnBehalf() chat.Provider { return &r.onBehalf }

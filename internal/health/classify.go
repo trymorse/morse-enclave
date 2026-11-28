@@ -67,9 +67,9 @@ func Classify(e Evidence) Outcome {
 		return OK
 	case e.Err == nil:
 		return cutOutcomes[e.Cut]
-	case errors.Is(e.Err, upstream.ErrEgressRefused):
-		// The Privacy Veil kept a body that still held a detail from leaving: nothing reached the vendor, so this says
-		// nothing about it.
+	case errors.Is(e.Err, upstream.ErrEgressRefused), errors.Is(e.Err, upstream.ErrDispatchLimit):
+		// why: the Privacy Veil or a validation dispatch limit refused the chat before it left, so the vendor was not
+		// reached and the outcome says nothing about it.
 		return ClientError
 	case errors.Is(e.Err, upstream.ErrUnreachable):
 		return Unreachable

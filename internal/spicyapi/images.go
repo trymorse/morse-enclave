@@ -11,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	"morse/backend/internal/dataurl"
+	"morse/backend/internal/health"
 	"morse/backend/internal/media"
 	"morse/backend/internal/strictjson"
 	"morse/backend/internal/uuid"
@@ -196,11 +197,15 @@ func (p *Images) run(ctx context.Context, req *media.ImageRequest) (media.Images
 		return media.Images{}, err
 	}
 	if rec.State != succeeded {
-		return media.Images{Cost: p.settle(ctx, rec).cost()}, failure(rec.ErrorCode)
+		return media.Images{Cost: p.settle(ctx, rec).cost()}, health.ResultRefused{Why: stateReason(rec), Err: failure(rec.ErrorCode)}
 	}
 	var imgs []media.Image
+	missing := health.RefusedNoAsset
 	for _, a := range rec.Output.Assets {
 		if a.Unavailable || a.URL == "" {
+			if a.Unavailable {
+				missing = health.RefusedAssetUnavailable
+			}
 			continue
 		}
 		img, err := p.fetch(ctx, a.URL)
@@ -210,7 +215,7 @@ func (p *Images) run(ctx context.Context, req *media.ImageRequest) (media.Images
 		imgs = append(imgs, img)
 	}
 	if len(imgs) == 0 {
-		return media.Images{}, media.ErrNoImages
+		return media.Images{}, health.ResultRefused{Why: missing, Err: media.ErrNoImages}
 	}
 	return p.delivered(ctx, rec, imgs), nil
 }

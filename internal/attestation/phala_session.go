@@ -204,3 +204,35 @@ func phalaDirectPayload(data string) (string, error) {
 	}
 	return evidence.NvidiaPayload, nil
 }
+
+// why: NRAS judges the GPUs only from an nvidia_payload bound to the record's request_nonce, so a record with no
+// payload fails: no one judged its GPUs.
+func (p Policy) VerifyCheckedPhalaSession(ctx context.Context, id string, record []byte) (PhalaDirectSession, error) {
+	session, err := p.VerifyPhalaDirectSession(ctx, id, record)
+	if err != nil {
+		return PhalaDirectSession{}, err
+	}
+	var s phalaSession
+	if err := json.Unmarshal(record, &s); err != nil {
+		return PhalaDirectSession{}, fmt.Errorf("%w: %w", ErrSessionShape, err)
+	}
+	raw, err := evidenceBytes(s.Evidence.Data)
+	if err != nil {
+		return PhalaDirectSession{}, fmt.Errorf("%w: %w", ErrSessionShape, err)
+	}
+	var e phalaDirectEvidence
+	if err := json.Unmarshal(raw, &e); err != nil {
+		return PhalaDirectSession{}, fmt.Errorf("%w: the evidence: %w", ErrSessionShape, err)
+	}
+	if e.NvidiaPayload == "" {
+		return PhalaDirectSession{}, fmt.Errorf("%w: the session evidence carries no nvidia_payload", ErrGPU)
+	}
+	nonce, err := sized(e.RequestNonce, len(Nonce{}), "request_nonce")
+	if err != nil {
+		return PhalaDirectSession{}, err
+	}
+	if _, err := p.verifyBoundGPU(ctx, e.NvidiaPayload, Nonce(nonce), p.now()); err != nil {
+		return PhalaDirectSession{}, err
+	}
+	return session, nil
+}

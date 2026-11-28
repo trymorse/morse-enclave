@@ -21,8 +21,10 @@ import (
 	"morse/backend/internal/compaction"
 	"morse/backend/internal/consoles"
 	"morse/backend/internal/dialect"
+	"morse/backend/internal/e2ee"
 	"morse/backend/internal/health"
 	"morse/backend/internal/openaicompat"
+	"morse/backend/internal/phala"
 	"morse/backend/internal/plans/limits"
 	"morse/backend/internal/tokenizer"
 	"morse/backend/internal/upstream"
@@ -138,6 +140,9 @@ func (o *openedChat) played(cast chat.Cast) chat.Character {
 
 func (w *InProcess) openChat(o Opening, d dialect.Dialect, compaction bool) (Admission, error) {
 	p := protocolOf(o.Header.Get)
+	if o.KeyCaller && p.scheme != nil {
+		return nil, catalog.ErrKeyE2EE
+	}
 	reply := func() dialect.Encoder { return dialect.ChatCompletions{} }
 	if !d.Native() {
 		decoded, err := w.decode(o, p, d)
@@ -209,10 +214,16 @@ func (w *InProcess) openChat(o Opening, d dialect.Dialect, compaction bool) (Adm
 	route := routes[0]
 	oc := &openedChat{cuts: newCuts(), routes: routes, first: route, protocol: p, call: chat.Call{Request: req, RouteEffort: route.DefaultReasoningEffort, Efforts: route.ReasoningEfforts, Settings: settings, CarryReasoning: !o.KeyCaller && p.scheme == nil && req.CarriesReasoning()}, launch: o.Launch, own: o.Own, writing: o.Writing, dialect: d, reply: reply,
 		relayNamed: o.inTheClear(ask), ownCacheKey: w.ownCacheKey(o, ask, name.model, req), successor: w.retired[req.Model]}
-	if compaction {
+	switch {
+	case w.phalaPinsRequired && p.scheme == e2ee.Scheme && !phala.PinsSessions(req):
+		err = phala.ErrSessionsRequired
+	case compaction:
 		err = oc.compact(o.Cast)
-	} else {
+	default:
 		err = route.Upstream.admit(oc, o.Cast)
+	}
+	if err == nil && w.phalaPinsRequired && p.scheme == e2ee.Scheme {
+		err = w.pinsListed(o.context(), route, req)
 	}
 	if err == nil && route.onBehalf {
 		err = unsealableRefusal(openaicompat.Unsealable(oc.call.Request, route.NativeTools), route.NativeTools)
@@ -223,10 +234,17 @@ func (w *InProcess) openChat(o Opening, d dialect.Dialect, compaction bool) (Adm
 	if err != nil {
 		return nil, err
 	}
+	var sealedNonce string
+	if params, ok := p.params.(e2ee.Params); ok {
+		if err := w.nonces.admit(params, w.now()); err != nil {
+			return nil, protocolRefusal(err)
+		}
+		sealedNonce = params.Nonce()
+	}
 	admission := ChatAdmission{
-		admitted: admitted{w.keep(o, oc)}, Model: name.model, Candidates: endpointsOf(routes), Affinity: digest, ByOpening: byOpening, MaxPrice: want.maxPrice, Sealable: name.sealable(), OnBehalf: route.onBehalf,
+		admitted: admitted{w.keep(o, oc)}, Model: name.model, Candidates: endpointsOf(routes), Affinity: digest, ByOpening: byOpening, MaxPrice: want.maxPrice, OnBehalf: route.onBehalf,
 		PromptSize: oc.call.Size(), PromptBytes: limits.KibibytesCovering(oc.promptBytes), TextMessages: textMessages(oc.call), PromptCounted: promptCounted(oc.call), OutputAsked: oc.asked,
-		Stream: req.Stream, Compaction: compaction, Character: oc.character,
+		Stream: req.Stream, Compaction: compaction, Character: oc.character, SealedNonce: sealedNonce, PinBytes: pinBytes(req),
 	}
 	if oc.veil != nil {
 		admission.PrivacyVeil = oc.veil.admission()
@@ -268,7 +286,7 @@ func keeping(applies bool, keep func(chatRoute) bool, refuse func([]chatRoute) e
 // none applies to it.
 func plaintextNarrowings(name chatName, req *chat.Request, want providerAsk, o Opening, compaction bool, settings *[]string) []narrowing {
 	steps := []narrowing{
-		func(routes []chatRoute) ([]chatRoute, error) { return name.atFloor(routes, want.floor) },
+		func(routes []chatRoute) ([]chatRoute, error) { return name.atFloor(routes, want.floor, o.KeyCaller) },
 		withoutUnsealable(req),
 		func(routes []chatRoute) ([]chatRoute, error) { return want.narrow(name, routes, o.KeyFloor) },
 	}
@@ -639,11 +657,11 @@ func unsealableRefusal(err error, tools bool) error {
 	if !ok {
 		return err
 	}
-	advice := "Send only system, user, and assistant messages with string content, or seal the request yourself."
+	advice := "Send only system, user, and assistant messages with string content."
 	if tools {
-		advice = "Send messages with string content, tools with only a name, a description, and parameters, tool_choice auto, none, or required, and tool call ids of letters, digits, _ and -, or seal the request yourself."
+		advice = "Send messages with string content, tools with only a name, a description, and parameters, tool_choice auto, none, or required, and tool call ids of letters, digits, _ and -."
 	}
-	return apierr.Invalid(http.StatusBadRequest, "unsealable_request", "Field "+unsealable.Name+" is refused in a plaintext request to an e2ee model, whose vendor's encryption would carry it in the clear. "+advice)
+	return apierr.Invalid(http.StatusBadRequest, "unsealable_request", "Field "+unsealable.Name+" is refused in a plaintext request to this model, whose vendor's encryption would carry it in the clear. "+advice)
 }
 
 func (Plain) admit(o *openedChat, cast chat.Cast) error {
@@ -789,7 +807,7 @@ func (s served) evidence(end ending, a attempt, g ChatGrant) measure.Evidence {
 		Cut:                end.cut(),
 		Unsent:             errors.Is(s.callErr, upstream.ErrNotSent),
 		Upstream:           s.reported,
-		PromptBytes:        c.Size() - attachmentBytes,
+		PromptBytes:        c.Size() - attachmentBytes - pinBytes(c.Request),
 		Attachments:        attachments,
 		PromptBound:        a.promptBound,
 		Budgeted:           g.Budgeted,

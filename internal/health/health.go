@@ -1,6 +1,7 @@
 package health
 
 import (
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -154,8 +155,10 @@ func (r *Recorder) Meter(k Key) *Meter {
 }
 
 type Meter struct {
-	key    Key
-	series [pathCount][outcomeCount]atomic.Pointer[series]
+	key     Key
+	series  [pathCount][outcomeCount]atomic.Pointer[series]
+	mu      sync.Mutex
+	refused map[string]uint64
 }
 
 // Key is the series key the meter flushes under. A nil meter, one no recorder made, has none.
@@ -212,6 +215,42 @@ func (m *Meter) Observe(o Observation) {
 	if o.FailedOver {
 		s.failedOver.Add(1)
 	}
+}
+
+func (m *Meter) Refused(why string) {
+	if m == nil || !slices.Contains(ResultRefusals, why) {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.refused == nil {
+		m.refused = map[string]uint64{}
+	}
+	m.refused[why]++
+}
+
+type RefusedRow struct {
+	Key
+	Why string
+	N   uint64
+}
+
+func (r *Recorder) DrainRefused() []RefusedRow {
+	if r == nil {
+		return nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var rows []RefusedRow
+	for _, m := range r.meters {
+		m.mu.Lock()
+		for why, n := range m.refused {
+			rows = append(rows, RefusedRow{Key: m.key, Why: why, N: n})
+		}
+		m.refused = nil
+		m.mu.Unlock()
+	}
+	return rows
 }
 
 // DecodeRate is a reply's decode speed in whole tokens a second, rounded down, so a rate reaches a floor only when it

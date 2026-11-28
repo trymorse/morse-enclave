@@ -71,8 +71,8 @@ func (g *Gate[K]) earliestExpiry() (time.Time, bool) {
 	defer g.mu.Unlock()
 	var earliest time.Time
 	for _, ep := range g.endpoints {
-		if earliest.IsZero() || ep.notAfter.Before(earliest) {
-			earliest = ep.notAfter
+		if until := g.untilLocked(ep); earliest.IsZero() || until.Before(earliest) {
+			earliest = until
 		}
 	}
 	return earliest, !earliest.IsZero()

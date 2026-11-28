@@ -71,15 +71,6 @@ func TestParseHeadersReadsVersion3WithOrWithoutAllFields(t *testing.T) {
 			t.Errorf("%s: forwards version %q all-fields %q, want 3 and true", name, sent[HeaderVersion], sent[HeaderAllFields])
 		}
 	}
-	v2, _, err := ParseHeaders(headers(validHeaders()...))
-	if err != nil || v2.V3 || v2.SealsTools() {
-		t.Errorf("version 2: v3 %t err %v, want a v2 request that seals no tools", v2.V3, err)
-	}
-	sent := map[string]string{}
-	v2.Forward(func(name, value string) { sent[name] = value })
-	if sent[HeaderVersion] != "2" {
-		t.Errorf("a version 2 client's params forward %q, want 2: the proxy relays the version the client sealed on", sent[HeaderVersion])
-	}
 }
 
 func TestParseHeadersRefusesVersion3WithAllFieldsOffAndAnyLaterVersion(t *testing.T) {
@@ -121,8 +112,8 @@ func TestParamsSealAFieldUnderTheV3AADOnlyOnVersion3(t *testing.T) {
 	}
 }
 
-func TestTheSchemeListsBothVersionsOldestFirst(t *testing.T) {
-	if got := Scheme.Protocols; len(got) != 2 || got[0] != Protocol || got[1] != ProtocolV3 {
-		t.Errorf("Scheme.Protocols = %v, want [%s %s]", got, Protocol, ProtocolV3)
+func TestTheSchemeAdvertisesVersion3Alone(t *testing.T) {
+	if got := Scheme.Protocols; len(got) != 1 || got[0] != "near-ed25519-v3" {
+		t.Errorf("Scheme.Protocols = %v, want [near-ed25519-v3]", got)
 	}
 }

@@ -16,6 +16,7 @@ import (
 
 	"morse/backend/internal/apierr"
 	"morse/backend/internal/billing/money"
+	"morse/backend/internal/health"
 	"morse/backend/internal/jsonx"
 	"morse/backend/internal/media"
 	"morse/backend/internal/upstream"
@@ -53,6 +54,7 @@ var (
 	fileURI = regexp.MustCompile(`^spicy://f/fil_[0-9A-Za-z]{1,64}$`)
 
 	errOffBucket = fmt.Errorf("%w: a link outside spicyapi.ai's bucket", upstream.ErrMalformed)
+	errUntrusted = health.ResultRefused{Why: health.RefusedUntrustedLink, Err: errOffBucket}
 )
 
 type bucket struct {
@@ -301,7 +303,7 @@ func (c client) storageAt(link string) upstream.Endpoint {
 // (https://docs.spicyapi.ai/docs/media#download).
 func (c client) fetch(ctx context.Context, link string) (media.Image, error) {
 	if !c.holdsResult(link) {
-		return media.Image{}, errOffBucket
+		return media.Image{}, errUntrusted
 	}
 	reply, err := c.storageAt(link).JSON(ctx, upstream.Request{Method: http.MethodGet, Header: http.Header{"Accept": {"*/*"}}}, nil, media.MaxImagesBody)
 	if err != nil {
@@ -328,8 +330,11 @@ func (c client) upload(ctx context.Context, mediaType string, data []byte) (stri
 	if err := c.call(ctx, upstream.Request{Method: http.MethodPost, Path: ticketPath, Body: body}, &t); err != nil {
 		return "", err
 	}
-	if !fileID.MatchString(t.FileID) || t.Method != http.MethodPut || !c.inputs.holds(t.UploadURL) {
+	if !fileID.MatchString(t.FileID) || t.Method != http.MethodPut {
 		return "", errOffBucket
+	}
+	if !c.inputs.holds(t.UploadURL) {
+		return "", errUntrusted
 	}
 	put := upstream.Request{Method: http.MethodPut, Header: http.Header{"Content-Type": {mediaType}}, Body: data}
 	if _, err := c.storageAt(t.UploadURL).JSON(ctx, put, nil, media.MaxReplyBody); err != nil {

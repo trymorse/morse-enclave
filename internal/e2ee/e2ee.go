@@ -21,6 +21,8 @@ const (
 	HeaderLegacy    = "X-Signing-Algo"
 	HeaderApplied   = "X-E2EE-Applied"
 	HeaderAlgo      = "X-E2EE-Algo"
+	HeaderPrompt    = "X-E2EE-Prompt"
+	PromptToClient  = "client"
 	Version         = "2"
 	Protocol        = "phala-aci-v2"
 )
@@ -84,12 +86,13 @@ func (s Suite) IsCiphertext(rawJSON []byte) bool {
 }
 
 type Params struct {
-	suite     Suite
-	clientKey string
-	modelKey  string
-	nonce     string
-	timestamp string
-	ts        int64
+	suite          Suite
+	clientKey      string
+	modelKey       string
+	nonce          string
+	timestamp      string
+	ts             int64
+	promptToClient bool
 }
 
 func NewParams(client *ecdh.PrivateKey, model *ecdh.PublicKey, ts int64) (Params, error) {
@@ -109,6 +112,13 @@ func NewParams(client *ecdh.PrivateKey, model *ecdh.PublicKey, ts int64) (Params
 }
 
 func (p Params) Suite() Suite { return p.suite }
+
+func (p Params) PromptToClient() bool { return p.promptToClient }
+
+func (p Params) Timestamp() int64 { return p.ts }
+
+// why: Phala reads the nonce's hex in either case, so two spellings of one nonce must compare equal.
+func (p Params) Nonce() string { return strings.ToLower(p.nonce) }
 
 func (p Params) ClientX25519() (*ecdh.PublicKey, error) { return p.x25519Key(p.clientKey) }
 
@@ -144,11 +154,13 @@ var (
 	ErrInvalidKey       = &Error{"e2ee_invalid_public_key", "A public key is not valid hex of a supported suite's length."}
 	ErrInvalidNonce     = &Error{"e2ee_invalid_nonce", "X-E2EE-Nonce must be exactly 64 hexadecimal characters."}
 	ErrInvalidTimestamp = &Error{"e2ee_invalid_timestamp", "X-E2EE-Timestamp must be Unix seconds."}
+	ErrStaleTimestamp   = &Error{"e2ee_stale_timestamp", "X-E2EE-Timestamp is more than 10 minutes from the proxy's clock. Seal the request again at the current time."}
+	ErrNonceReused      = &Error{"e2ee_nonce_reused", "X-E2EE-Nonce was already used by an earlier request. Seal every request under a fresh nonce."}
 )
 
 var ErrNotApplied = errors.New("e2ee: upstream did not confirm E2EE v2 with the requested suite")
 
-var Scheme = &chat.Scheme{Name: Protocol, Version: Version, Headers: []string{HeaderVersion, HeaderClientKey, HeaderModelKey, HeaderNonce, HeaderTimestamp, HeaderLegacy, HeaderAlgo}, Parse: parse, ErrHeaderMissing: ErrHeaderMissing, Vendor: "Phala", ProviderRule: `must carry provider exactly {"aci_verified":true,"zdr":true}`}
+var Scheme = &chat.Scheme{Name: Protocol, Version: Version, Headers: []string{HeaderVersion, HeaderClientKey, HeaderModelKey, HeaderNonce, HeaderTimestamp, HeaderLegacy, HeaderAlgo, HeaderPrompt}, Parse: parse, ErrHeaderMissing: ErrHeaderMissing, Vendor: "Phala", ProviderRule: `must carry provider as {"aci_verified":true,"zdr":true} with aci_session_ids added and nothing else`}
 
 func parse(get func(name string) string) (chat.E2EE, bool, error) {
 	params, sealed, err := ParseHeaders(get)
@@ -190,7 +202,7 @@ func ParseHeaders(get func(name string) string) (params Params, sealed bool, err
 	if err != nil {
 		return Params{}, true, ErrInvalidTimestamp
 	}
-	return Params{suite: suite, clientKey: clientKey, modelKey: modelKey, nonce: nonce, timestamp: timestamp, ts: ts}, true, nil
+	return Params{suite: suite, clientKey: clientKey, modelKey: modelKey, nonce: nonce, timestamp: timestamp, ts: ts, promptToClient: get(HeaderPrompt) == PromptToClient}, true, nil
 }
 
 func (p Params) Forward(set func(name, value string)) {

@@ -220,7 +220,7 @@ func (p *Videos) PollVideo(ctx context.Context, vendorID string) (jobs.Poll, err
 		case "success":
 			poll.Cost = cost(item)
 			if !p.Accepts(item.VideoURL) {
-				poll.Status, poll.Failure = jobs.Failed, jobs.UpstreamError
+				poll.Status, poll.Failure, poll.Why = jobs.Failed, jobs.UpstreamError, media.LinkRefusal(item.VideoURL)
 				return poll, nil
 			}
 			poll.Status, poll.OutputURL = jobs.Completed, item.VideoURL

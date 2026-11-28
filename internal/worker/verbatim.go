@@ -13,6 +13,7 @@ import (
 	"morse/backend/internal/apierr"
 	"morse/backend/internal/billing/measure"
 	"morse/backend/internal/chat"
+	"morse/backend/internal/e2ee"
 	"morse/backend/internal/e2ee/near"
 )
 
@@ -141,11 +142,29 @@ func (u Verbatim) sealLaunch(o *openedChat, prompt string) error {
 	if err != nil {
 		return err
 	}
-	if o.protocol.scheme == near.Scheme {
+	switch {
+	case o.protocol.scheme == near.Scheme:
 		o.promptComment = near.PromptComment(sealed)
+	case promptToClient(o.protocol.params):
+		if s, ok := u.Route.(clientSealer); ok {
+			forClient, err := s.SealPromptForClient(o.protocol.params, prompt)
+			if err != nil {
+				return err
+			}
+			o.promptComment = near.PromptComment(forClient)
+		}
 	}
 	o.call.Request, err = o.call.Request.Prepend("system", sealed)
 	return err
+}
+
+type clientSealer interface {
+	SealPromptForClient(sealed chat.E2EE, prompt string) (string, error)
+}
+
+func promptToClient(params chat.E2EE) bool {
+	p, ok := params.(e2ee.Params)
+	return ok && p.PromptToClient()
 }
 
 func (u Verbatim) serve(ctx context.Context, w *InProcess, o *openedChat, a attempt, reply *replyWriter) served {
@@ -239,6 +258,9 @@ var (
 )
 
 func bodyRefusal(err error) apierr.Error {
+	if refusal, ok := errors.AsType[apierr.Error](err); ok {
+		return refusal
+	}
 	var m *chat.Mismatch
 	if !errors.As(err, &m) {
 		return apierr.ErrInvalidBody

@@ -14,6 +14,7 @@ import (
 	"morse/backend/internal/catalog"
 	"morse/backend/internal/clip"
 	"morse/backend/internal/frameconsent"
+	"morse/backend/internal/health"
 	"morse/backend/internal/jobs"
 	"morse/backend/internal/media"
 	"morse/backend/internal/promptcheck"
@@ -163,7 +164,7 @@ func (w *InProcess) streamVideo(ctx context.Context, rw *replyWriter, g VideoRea
 	switch {
 	case errors.Is(err, media.ErrVideoGone):
 		apierr.WriteError(rw, ErrVideoExpired)
-		return Measured{Measurement: measure.Measurement{Outcome: measure.Rejected}}
+		return Measured{Measurement: measure.Measurement{Outcome: measure.Rejected}, ResultRefused: health.WhyRefused(err)}
 	case err != nil:
 		apierr.WriteError(rw, apierr.ErrUpstream)
 		return Measured{Measurement: measure.Measurement{Outcome: measure.Failed}}
@@ -283,7 +284,7 @@ func submit(c cuts, endpoint catalog.EndpointID, reply http.ResponseWriter, queu
 		writeErr = writeJSONBody(rw, func(w io.Writer) error { return json.NewEncoder(w).Encode(queued) })
 	}
 	end := endingOf(c.client, writeErr, err)
-	m := Measured{Measurement: measure.Measurement{Outcome: end.outcome()}, Cut: end.cut(), Served: err == nil, Refusal: end.refusal(err), Endpoint: endpoint}
+	m := Measured{Measurement: measure.Measurement{Outcome: end.outcome()}, Cut: end.cut(), Served: err == nil, Refusal: end.refusal(err), Endpoint: endpoint, ResultRefused: health.WhyRefused(err)}
 	m.Health = rw.observed(ctx, err, false, opened, returned)
 	if rw.unsent(err) {
 		refuse(ctx, rw, err)

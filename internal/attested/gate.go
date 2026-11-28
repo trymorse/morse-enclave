@@ -15,7 +15,11 @@ import (
 )
 
 const (
+	// why: a gateway's replicas answer the report in turn, so one may go unreturned for several refreshes.
 	trustedFor = time.Hour
+	// why: once no report verifies, as when Intel's collateral is unreachable, two refreshes may fail and the host
+	// stays pinned; it unpins at the third.
+	outageFor = 30 * time.Minute
 )
 
 var (
@@ -127,6 +131,7 @@ type Gate[K Key] struct {
 	generation  uint64
 	attempt     *attempt
 	lastAttempt time.Time
+	verifiedAt  time.Time
 }
 
 func newGate[K Key](c Config[K], changed func(generation uint64)) *Gate[K] {
@@ -228,7 +233,11 @@ func (g *Gate[K]) admit(verdicts attestation.Verdicts[K], judged []attestation.R
 	ev := Event{Kind: Verified}
 	anchor, changed := g.rebuild(func() {
 		now := g.now()
+		// why: extending the outage window first would revive endpoints whose window closed before this report;
+		// only the ones it names below are trusted again.
+		g.pruneLocked(now)
 		g.round++
+		g.verifiedAt = now
 		g.forgetLocked(judged)
 		for _, e := range verdicts.Endpoints {
 			notAfter := e.NotAfter
@@ -254,7 +263,14 @@ func (g *Gate[K]) forgetLocked(judged []attestation.Refusal) {
 }
 
 func (g *Gate[K]) pruneLocked(now time.Time) {
-	maps.DeleteFunc(g.endpoints, func(_ string, ep endpoint[K]) bool { return !now.Before(ep.notAfter) })
+	maps.DeleteFunc(g.endpoints, func(_ string, ep endpoint[K]) bool { return !now.Before(g.untilLocked(ep)) })
+}
+
+func (g *Gate[K]) untilLocked(ep endpoint[K]) time.Time {
+	if outage := g.verifiedAt.Add(outageFor); outage.Before(ep.notAfter) {
+		return outage
+	}
+	return ep.notAfter
 }
 
 func (g *Gate[K]) reanchor() { g.prune(func() {}, ErrLapsed) }
@@ -317,12 +333,13 @@ func (g *Gate[K]) rebuild(mutate func()) (*Anchor[K], bool) {
 	endpoints := map[string]Held[K]{}
 	anyServed := false
 	for id, ep := range g.endpoints {
-		h := Held[K]{Keys: ep.keys, NotAfter: ep.notAfter, Served: g.serve != nil && ep.round == g.round}
+		until := g.untilLocked(ep)
+		h := Held[K]{Keys: ep.keys, NotAfter: until, Served: g.serve != nil && ep.round == g.round}
 		endpoints[id] = h
 		anyServed = anyServed || h.Served
 		for _, k := range ep.keys {
-			if ep.notAfter.After(keys[k]) {
-				keys[k] = ep.notAfter
+			if until.After(keys[k]) {
+				keys[k] = until
 			}
 		}
 	}

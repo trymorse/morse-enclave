@@ -22,41 +22,44 @@ import (
 )
 
 type InProcess struct {
-	chats          map[string]chatName
-	retired        map[string]string
-	images         map[string]media.ImageGenerator
-	videos         map[string]media.VideoGenerator
-	uploadsVideo   map[string]bool
-	searches       map[string]web.Searcher
-	fetches        map[string]web.Fetcher
-	researchers    map[string]research.Researcher
-	transcribers   map[string]transcriber
-	speakers       map[string]speech.Speaker
-	endpoints      map[string]catalog.EndpointID
-	lookup         *lookup.Relay
-	plugins        *plugins.Relay
-	reports        Reporter
-	unpinned       func() []attested.UnpinnedRelease
-	vendorPins     func() *VendorPinsLag
-	vendorPinsMode string
-	routesData     func() *RoutesData
-	now            func() time.Time
-	keepaliveEvery time.Duration
-	videoSubmit    time.Duration
-	proofBudget    time.Duration
-	counters       counters
-	sealing        sealedState
-	privacyVeil    *PrivacyVeil
-	promptCheck    *PromptCheck
-	screened       map[string]Screened
-	instance       string
-	clips          *SealedClips
-	mu             sync.Mutex
-	last           uint64
-	opened         map[Handle]*entry
-	tiers          map[string]catalog.Tier
-	runs           map[Handle]*taskRun
-	taskLife       time.Duration
+	phalaPinsRequired bool
+	chats             map[string]chatName
+	retired           map[string]string
+	images            map[string]media.ImageGenerator
+	videos            map[string]media.VideoGenerator
+	uploadsVideo      map[string]bool
+	searches          map[string]web.Searcher
+	fetches           map[string]web.Fetcher
+	researchers       map[string]research.Researcher
+	transcribers      map[string]transcriber
+	speakers          map[string]speech.Speaker
+	endpoints         map[string]catalog.EndpointID
+	lookup            *lookup.Relay
+	plugins           *plugins.Relay
+	reports           Reporter
+	unpinned          func() []attested.UnpinnedRelease
+	vendorPins        func() *VendorPinsLag
+	vendorPinsMode    string
+	routesData        func() *RoutesData
+	now               func() time.Time
+	keepaliveEvery    time.Duration
+	videoSubmit       time.Duration
+	proofBudget       time.Duration
+	counters          counters
+	sealing           sealedState
+	nonces            sealedNonces
+	pinLists          pinLists
+	privacyVeil       *PrivacyVeil
+	promptCheck       *PromptCheck
+	screened          map[string]Screened
+	instance          string
+	clips             *SealedClips
+	mu                sync.Mutex
+	last              uint64
+	opened            map[Handle]*entry
+	tiers             map[string]catalog.Tier
+	runs              map[Handle]*taskRun
+	taskLife          time.Duration
 }
 
 type Reporter interface {
@@ -80,25 +83,33 @@ func (NopReporter) VendorUsageMissing(string)                 {}
 func (NopReporter) VideoRefused(string, string)               {}
 
 type Config struct {
-	Models         map[string]Model
-	Retired        map[string]string
-	Lookup         *lookup.Relay
-	Plugins        *plugins.Relay
-	Reports        Reporter
-	Now            func() time.Time
-	CountingSlots  int
-	Sealing        Sealing
-	Keepalive      time.Duration
-	VideoSubmit    time.Duration
-	ProofBudget    time.Duration
-	Unpinned       func() []attested.UnpinnedRelease
-	VendorPins     func() *VendorPinsLag
-	VendorPinsMode string
-	RoutesData     func() *RoutesData
-	PrivacyVeil    *PrivacyVeil
-	PromptCheck    *PromptCheck
-	Clips          *SealedClips
+	Models            map[string]Model
+	Retired           map[string]string
+	Lookup            *lookup.Relay
+	Plugins           *plugins.Relay
+	Reports           Reporter
+	Now               func() time.Time
+	CountingSlots     int
+	Sealing           Sealing
+	Keepalive         time.Duration
+	VideoSubmit       time.Duration
+	ProofBudget       time.Duration
+	Unpinned          func() []attested.UnpinnedRelease
+	VendorPins        func() *VendorPinsLag
+	VendorPinsMode    string
+	RoutesData        func() *RoutesData
+	PrivacyVeil       *PrivacyVeil
+	PromptCheck       *PromptCheck
+	Clips             *SealedClips
+	PhalaPinsRequired bool
 }
+
+// why: core and mobile still send sealed Phala chats unpinned (MORS-736), so prod admits them until those clients
+// ship; the standalone worker and the proxy's in-process one both set PhalaPinsRequired from their environment here.
+func PhalaPinsRequiredIn(environment string) bool { return environment != "prod" }
+
+// why: lets the commands' build checks read the rule each built worker holds, without sending it a chat.
+func (w *InProcess) PhalaPinsRequired() bool { return w.phalaPinsRequired }
 
 func NewInProcess(cfg Config) (*InProcess, error) {
 	for name, m := range cfg.Models {
@@ -111,7 +122,7 @@ func NewInProcess(cfg Config) (*InProcess, error) {
 		searches: map[string]web.Searcher{}, fetches: map[string]web.Fetcher{}, researchers: map[string]research.Researcher{}, transcribers: map[string]transcriber{},
 		speakers:  map[string]speech.Speaker{},
 		endpoints: map[string]catalog.EndpointID{},
-		lookup:    cfg.Lookup, plugins: cfg.Plugins, reports: cfg.Reports, unpinned: cfg.Unpinned, vendorPins: cfg.VendorPins, vendorPinsMode: cfg.VendorPinsMode, routesData: cfg.RoutesData, privacyVeil: cfg.PrivacyVeil, promptCheck: cfg.PromptCheck, screened: map[string]Screened{}, instance: rand.Text(), clips: cfg.Clips,
+		lookup:    cfg.Lookup, plugins: cfg.Plugins, reports: cfg.Reports, unpinned: cfg.Unpinned, vendorPins: cfg.VendorPins, vendorPinsMode: cfg.VendorPinsMode, routesData: cfg.RoutesData, privacyVeil: cfg.PrivacyVeil, promptCheck: cfg.PromptCheck, screened: map[string]Screened{}, instance: rand.Text(), clips: cfg.Clips, phalaPinsRequired: cfg.PhalaPinsRequired,
 		now: cfg.Now, keepaliveEvery: cmp.Or(cfg.Keepalive, keepalive), videoSubmit: cmp.Or(cfg.VideoSubmit, videoSubmitTimeout), proofBudget: cmp.Or(cfg.ProofBudget, proofBudget), opened: map[Handle]*entry{},
 		tiers: map[string]catalog.Tier{}, runs: map[Handle]*taskRun{}, taskLife: taskrun.RunLife,
 	}

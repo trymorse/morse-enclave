@@ -66,6 +66,16 @@ const (
 )
 
 func build(getenv func(string) string, log *logger) (built, error) {
+	attester := nitro.Open()
+	if _, enclave := attester.(nitro.NSM); !enclave && getenv("PROXY_ENVIRONMENT") == "prod" {
+		return built{}, errors.New("PROXY_ENVIRONMENT=prod needs /dev/nsm: off an enclave the worker could attest only with a stand-in document")
+	}
+	return buildOn(attester, getenv, log)
+}
+
+// why: split from build so a test can assemble a prod worker off an enclave on the stand-in attester; build alone
+// holds the check that keeps a deployed prod worker on /dev/nsm.
+func buildOn(attester nitro.Attester, getenv func(string) string, log *logger) (built, error) {
 	addr := getenv("PROXY_WORKER_ADDR")
 	if addr == "" {
 		return built{}, errors.New("PROXY_WORKER_ADDR is required")
@@ -88,10 +98,6 @@ func build(getenv func(string) string, log *logger) (built, error) {
 	environment := getenv("PROXY_ENVIRONMENT")
 	if environment != "dev" && environment != "prod" {
 		return built{}, errors.New("PROXY_ENVIRONMENT must be dev or prod, the environment the web app checks in each attestation")
-	}
-	attester := nitro.Open()
-	if _, enclave := attester.(nitro.NSM); !enclave && environment == "prod" {
-		return built{}, errors.New("PROXY_ENVIRONMENT=prod needs /dev/nsm: off an enclave the worker could attest only with a stand-in document")
 	}
 	identity, taskKey, err := nitro.Key(attester, getenv("PROXY_HPKE_DEV_KEY"))
 	if err != nil {
@@ -204,11 +210,12 @@ func build(getenv func(string) string, log *logger) (built, error) {
 			}
 			return &worker.VendorPinsLag{Worker: instance, Newest: lag.Newest, Taken: lag.Taken, Behind: lag.Behind}
 		},
-		VendorPinsMode: string(mode),
-		RoutesData:     seen.report,
-		PrivacyVeil:    veil,
-		PromptCheck:    promptCheck,
-		Clips:          clips,
+		VendorPinsMode:    string(mode),
+		RoutesData:        seen.report,
+		PrivacyVeil:       veil,
+		PromptCheck:       promptCheck,
+		Clips:             clips,
+		PhalaPinsRequired: worker.PhalaPinsRequiredIn(environment),
 	})
 	if err != nil {
 		return built{}, err

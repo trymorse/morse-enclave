@@ -11,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	"morse/backend/internal/dataurl"
+	"morse/backend/internal/health"
 	"morse/backend/internal/jobs"
 	"morse/backend/internal/media"
 	"morse/backend/internal/strictjson"
@@ -19,12 +20,6 @@ import (
 )
 
 const expired = "expired"
-
-const (
-	noAsset          = "no_asset"
-	assetUnavailable = "asset_unavailable"
-	untrustedLink    = "untrusted_link"
-)
 
 type videoModel struct {
 	media.VideoSpec
@@ -216,21 +211,25 @@ func videoFailure(rec record) jobs.Failure {
 func stateReason(rec record) string {
 	switch {
 	case rec.ErrorCode == contentRejected:
-		return contentRejected
-	case rec.State == "failed", rec.State == expired, rec.State == "canceled":
-		return "state_" + rec.State
+		return health.RefusedContentRejected
+	case rec.State == "failed":
+		return health.RefusedStateFailed
+	case rec.State == expired:
+		return health.RefusedStateExpired
+	case rec.State == "canceled":
+		return health.RefusedStateCanceled
 	}
-	return "state_unknown"
+	return health.RefusedStateUnknown
 }
 
 func (p *Videos) result(rec record) (link, why string) {
-	why = noAsset
+	why = health.RefusedNoAsset
 	for _, a := range rec.Output.Assets {
 		switch {
 		case a.Unavailable:
-			why = assetUnavailable
+			why = health.RefusedAssetUnavailable
 		case !p.holdsResult(a.URL):
-			why = untrustedLink
+			why = health.RefusedUntrustedLink
 		default:
 			return a.URL, ""
 		}
@@ -249,7 +248,10 @@ func (p *Videos) OpenVideo(ctx context.Context, out media.Output) (io.ReadCloser
 		return nil, 0, err
 	}
 	link, why := p.result(rec)
-	if rec.State != succeeded || why != "" {
+	switch {
+	case rec.State == succeeded && why == health.RefusedUntrustedLink:
+		return nil, 0, health.ResultRefused{Why: why, Err: media.ErrVideoGone}
+	case rec.State != succeeded || why != "":
 		return nil, 0, media.ErrVideoGone
 	}
 	return media.Stream(ctx, p.storage, link, []int{http.StatusNotFound, http.StatusForbidden, http.StatusGone})

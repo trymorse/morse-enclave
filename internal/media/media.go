@@ -23,6 +23,7 @@ import (
 	"morse/backend/internal/billing/money"
 	"morse/backend/internal/dataurl"
 	"morse/backend/internal/frameconsent"
+	"morse/backend/internal/health"
 	"morse/backend/internal/strictjson"
 	"morse/backend/internal/upstream"
 )
@@ -425,8 +426,9 @@ func ImageOf(data []byte) (Image, error) {
 func (i Image) MIME() string { return http.DetectContentType(i.data) }
 
 type Images struct {
-	List []Image
-	Cost money.Reported
+	List    []Image
+	Cost    money.Reported
+	Refused string
 }
 
 const (
@@ -452,6 +454,7 @@ func PollUntil(ctx context.Context, every time.Duration, step func(context.Conte
 func (out Images) Partial(n int, err error) (Images, error) {
 	if len(out.List) > 0 {
 		out.List = out.List[:min(len(out.List), n)]
+		out.Refused = health.WhyRefused(err)
 		return out, nil
 	}
 	return out, cmp.Or(err, ErrNoImages)

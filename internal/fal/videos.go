@@ -162,7 +162,11 @@ func (p *Videos) PollVideo(ctx context.Context, vendorID string) (jobs.Poll, err
 	failed := jobs.FailedBy(err)
 	failed.Cost = r.cost
 	var out videoOutput
-	if o == finalFailure || json.Unmarshal(r.Body, &out) != nil || !p.Accepts(out.Video.URL) {
+	if o == finalFailure || json.Unmarshal(r.Body, &out) != nil {
+		return failed, nil
+	}
+	if !p.Accepts(out.Video.URL) {
+		failed.Why = media.LinkRefusal(out.Video.URL)
 		return failed, nil
 	}
 	return jobs.Poll{Status: jobs.Completed, OutputURL: out.Video.URL, Cost: r.cost}, nil

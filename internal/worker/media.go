@@ -13,6 +13,7 @@ import (
 	"morse/backend/internal/billing/measure"
 	"morse/backend/internal/catalog"
 	"morse/backend/internal/frameconsent"
+	"morse/backend/internal/health"
 	"morse/backend/internal/media"
 	"morse/backend/internal/promptcheck"
 	"morse/backend/internal/strictjson"
@@ -98,7 +99,7 @@ func (o *openedImages) run(_ context.Context, w *InProcess, h Handle, g Grant, r
 	if err == nil {
 		delivered = len(imgs.List)
 	}
-	m := Measured{Served: err == nil, Delivered: delivered, Cost: imgs.Cost, Endpoint: o.endpoint}
+	m := Measured{Served: err == nil, Delivered: delivered, Cost: imgs.Cost, Endpoint: o.endpoint, ResultRefused: cmp.Or(imgs.Refused, health.WhyRefused(err))}
 	end := endingOf(o.cuts.client, nil, nil)
 	cutForCaller := end == cutByClient && cancels
 	if end != cutByClient {

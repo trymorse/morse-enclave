@@ -119,6 +119,7 @@ func (w *InProcess) Open(ctx context.Context, o Opening) (Admission, error) {
 			return nil, err
 		}
 	}
+	o.ctx = ctx
 	call := &openCall{worker: w, opening: o}
 	r := &http.Request{Method: o.Method, URL: &url.URL{Path: o.Path, RawQuery: o.Query}}
 	mux.ServeHTTP(call, r.WithContext(ctx))

@@ -47,6 +47,12 @@ func (p Params) ResponseAAD(model, id string, field ResponseField) AAD {
 	return AAD{suite: p.suite, purpose: responsePurpose, model: model, id: id, field: field.String(), nonce: p.nonce, ts: p.ts}
 }
 
+// why: no reply field of the ACI protocol is named messages.0.content, so a prompt sealed under the response
+// purpose cannot be opened as reply text.
+func (p Params) PromptAAD(model string) AAD {
+	return AAD{suite: p.suite, purpose: responsePurpose, model: model, field: "messages.0.content", nonce: p.nonce, ts: p.ts}
+}
+
 func (a AAD) Bytes() []byte {
 	out := append([]byte(`{"algo":`), jcs.String(a.suite.Algo())...)
 	out = jcs.AppendString(append(out, `,"field":`...), a.field)

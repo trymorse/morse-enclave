@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"morse/backend/internal/health"
 	"morse/backend/internal/upstream"
 	"net/http"
 	"net/url"
@@ -220,6 +221,13 @@ func (v VendorHosted) Accepts(raw string) bool {
 	}
 	sub, ok := strings.CutSuffix(u.Hostname(), v.HostSuffix)
 	return ok && sub != ""
+}
+
+func LinkRefusal(link string) string {
+	if link == "" {
+		return health.RefusedNoAsset
+	}
+	return health.RefusedUntrustedLink
 }
 
 var vendorGone = []int{http.StatusNotFound, http.StatusForbidden, http.StatusGone}

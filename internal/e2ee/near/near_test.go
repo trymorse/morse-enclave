@@ -147,10 +147,10 @@ func headers(pairs ...string) func(string) string {
 }
 
 func validHeaders() []string {
-	return []string{HeaderSigningAlgo, "ed25519", HeaderClientKey, otherPublicKey, HeaderModelKey, vectorPublicKey, HeaderVersion, "2", HeaderAllFields, "true"}
+	return []string{HeaderSigningAlgo, "ed25519", HeaderClientKey, otherPublicKey, HeaderModelKey, vectorPublicKey, HeaderVersion, "3", HeaderAllFields, "true"}
 }
 
-func TestParseHeadersReadsNEARsEd25519V2Set(t *testing.T) {
+func TestParseHeadersReadsNEARsEd25519V3Set(t *testing.T) {
 	params, sealed, err := ParseHeaders(headers(append(validHeaders(), HeaderSigningAlgo, "Ed25519", HeaderAllFields, "TRUE")...))
 	if !sealed || err != nil {
 		t.Fatalf("sealed %t err %v", sealed, err)
@@ -169,9 +169,9 @@ func TestParseHeadersRefusesEveryOtherNEARSet(t *testing.T) {
 		{"ecdsa", append(validHeaders(), HeaderSigningAlgo, "ecdsa", HeaderClientKey, strings.Repeat("ab", 64)), ErrInvalidAlgo},
 		{"unknown algo", append(validHeaders(), HeaderSigningAlgo, "rsa"), ErrInvalidAlgo},
 		{"version 1", append(validHeaders(), HeaderVersion, "1"), ErrInvalidVersion},
+		{"version 2, which binds no reply key", append(validHeaders(), HeaderVersion, "2"), ErrInvalidVersion},
 		{"no version, which NEAR reads as 1", append(validHeaders(), HeaderVersion, ""), ErrInvalidVersion},
 		{"all fields false", append(validHeaders(), HeaderAllFields, "false"), ErrPartialFields},
-		{"no all fields", append(validHeaders(), HeaderAllFields, ""), ErrPartialFields},
 		{"no model key", append(validHeaders(), HeaderModelKey, ""), ErrHeaderMissing},
 		{"no client key", append(validHeaders(), HeaderClientKey, ""), ErrHeaderMissing},
 		{"client key 31 bytes", append(validHeaders(), HeaderClientKey, otherPublicKey[:62]), ErrInvalidKey},

@@ -37,7 +37,11 @@ type openedTokenCount struct {
 }
 
 func (w *InProcess) openTokenCount(o Opening) (Admission, error) {
-	decoded, err := w.decode(o, protocolOf(o.Header.Get), messages.CountDialect)
+	protocol := protocolOf(o.Header.Get)
+	if o.KeyCaller && protocol.scheme != nil {
+		return nil, catalog.ErrKeyE2EE
+	}
+	decoded, err := w.decode(o, protocol, messages.CountDialect)
 	if err != nil {
 		return nil, err
 	}
@@ -48,6 +52,17 @@ func (w *InProcess) openTokenCount(o Opening) (Admission, error) {
 	name, known := w.chats[req.Model]
 	if !known {
 		return nil, apierr.ErrModelNotFound
+	}
+	if o.KeyCaller {
+		if name.sealedOnly() {
+			return nil, catalog.ErrKeyE2EE
+		}
+		if want, err := floorOf(req); err == nil && want.floor.Sealed() {
+			return nil, catalog.FloorError{Floor: want.floor, KeyCaller: true}
+		}
+		if o.KeyFloor.Sealed() {
+			return nil, catalog.FloorError{Floor: o.KeyFloor, Key: true, KeyCaller: true}
+		}
 	}
 	routes := slices.Concat(name.named, name.plaintext)
 	counted := slices.IndexFunc(routes, func(r chatRoute) bool { return r.Counter != nil })

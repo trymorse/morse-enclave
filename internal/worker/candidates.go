@@ -142,10 +142,13 @@ func (n chatName) reach(p protocol, ask chatAsk, compaction bool, want providerA
 	if n.floorlessInTheClear(ask) {
 		return n.plaintext, nil
 	}
-	if (ask == askPlain || ask == askOnBehalf) && n.idOnly && p.scheme == nil && p.err == nil && !compaction {
+	if ask == askPlain && n.idOnly && p.scheme == nil && p.err == nil && !compaction {
 		return nil, n.sealUnder()
 	}
 	r := vendorFor(n.named, p)
+	if (ask == askOnBehalf || ask == askLooksSealed) && r.tier.Sealed() {
+		return nil, catalog.ErrKeyE2EE
+	}
 	if err := r.misserved(p, compaction); err != nil {
 		return nil, err
 	}
@@ -193,18 +196,20 @@ func atTier(routes []chatRoute, tier catalog.Tier) []chatRoute {
 	return slices.DeleteFunc(slices.Clone(routes), func(r chatRoute) bool { return r.tier != tier })
 }
 
+func (n chatName) sealedOnly() bool { return len(n.plaintext) == 0 && len(n.onBehalf) == 0 }
+
 func (n chatName) sealable() bool {
 	return !n.alias && slices.ContainsFunc(n.named, func(r chatRoute) bool { return r.tier.Sealed() })
 }
 
-func (n chatName) atFloor(routes []chatRoute, floor catalog.Tier) ([]chatRoute, error) {
+func (n chatName) atFloor(routes []chatRoute, floor catalog.Tier, keyCaller bool) ([]chatRoute, error) {
 	kept := slices.DeleteFunc(slices.Clone(routes), func(r chatRoute) bool { return r.tier < floor })
 	if len(kept) > 0 {
 		return kept, nil
 	}
 	highest := slices.MaxFunc(routes, func(a, b chatRoute) int { return cmp.Compare(a.tier, b.tier) }).tier
-	sealed := n.sealable()
-	return nil, catalog.FloorError{Tier: highest, Floor: floor, InTheClear: !n.alias && (len(routes) > 1 || sealed), Sealable: sealed}
+	sealed := n.sealable() && !keyCaller
+	return nil, catalog.FloorError{Tier: highest, Floor: floor, KeyCaller: keyCaller, InTheClear: !n.alias && (len(routes) > 1 || sealed), Sealable: sealed}
 }
 
 func endpointsOf(routes []chatRoute) []catalog.EndpointID {

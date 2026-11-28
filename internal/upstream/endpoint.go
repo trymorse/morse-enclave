@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 
 	"morse/backend/internal/apierr"
 	"morse/backend/internal/capped"
@@ -56,6 +57,9 @@ type Endpoint struct {
 	Refuse  func(Reply) error // nil: apierr.SanitizedUpstreamError
 	Failed  error             // wraps a transport failure and an unusable reply; nil: they pass through bare
 	Confirm func(get func(name string) string) error
+	// why: a vendor that thinks before its headers needs longer than the transport every vendor shares allows; a wait
+	// no longer than HTTP's ResponseHeaderTimeout changes nothing.
+	AnswerWait time.Duration
 }
 
 type Request struct {
@@ -234,7 +238,7 @@ func (e Endpoint) send(ctx context.Context, r Request) (*http.Response, error) {
 		req.Body, _ = req.GetBody()
 	}
 	req.Header = h
-	return Do(e.HTTP, req)
+	return Do(awaiting(e.HTTP, e.AnswerWait), req)
 }
 
 func (e Endpoint) confirm(resp *http.Response) error {

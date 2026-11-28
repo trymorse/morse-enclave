@@ -3,11 +3,13 @@ package upstream
 import (
 	"context"
 	"errors"
+	"expvar"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptrace"
 	"net/url"
+	"strings"
 	"sync/atomic"
 
 	"morse/backend/internal/apierr"
@@ -35,6 +37,10 @@ func Stalled(err error) error {
 	return ErrStalled
 }
 
+// why: one count with no host or path, so nothing a request names outlives it; it counts a chat request whose headers
+// reached the vendor's connection, which says nothing of whether the vendor accepted or served it.
+var chatHeadersWritten = expvar.NewInt("upstream_chat_headers_written")
+
 func Do(client *http.Client, req *http.Request) (*http.Response, error) {
 	if _, set := req.Header["User-Agent"]; !set {
 		req.Header["User-Agent"] = []string{""}
@@ -43,7 +49,18 @@ func Do(client *http.Client, req *http.Request) (*http.Response, error) {
 		return nil, err
 	}
 	var wrote atomic.Bool
-	req = req.WithContext(httptrace.WithClientTrace(req.Context(), &httptrace.ClientTrace{WroteHeaders: func() { wrote.Store(true) }}))
+	chat := req.Method == http.MethodPost && strings.HasSuffix(req.URL.Path, "/chat/completions")
+	if limit := dispatchLimit.Load(); chat && limit != nil {
+		if err := limit.reserve(req); err != nil {
+			return nil, notSent(err)
+		}
+	}
+	req = req.WithContext(httptrace.WithClientTrace(req.Context(), &httptrace.ClientTrace{WroteHeaders: func() {
+		wrote.Store(true)
+		if chat {
+			chatHeadersWritten.Add(1)
+		}
+	}}))
 	resp, err := noRedirects(client).Do(req)
 	if err != nil {
 		return nil, transportFailure(req.Context(), err, wrote.Load())

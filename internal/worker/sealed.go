@@ -272,6 +272,9 @@ func (s *sealedReply) finish(m *Measured) {
 	if m.Health.Outcome == health.ContentFilter {
 		m.Health.Outcome = health.ClientError
 	}
+	if m.ResultRefused == health.RefusedContentRejected {
+		m.ResultRefused = ""
+	}
 }
 
 const sealedCodeOther = "other"
